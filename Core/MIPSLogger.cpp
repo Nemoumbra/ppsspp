@@ -5,6 +5,10 @@
 
 MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) : max_count(max_count_), forbidden_ranges() {}
 
+u32 MIPSLoggerSettings::getMaxCount() {
+	return max_count;
+}
+
 bool MIPSLoggerSettings::log_address(u32 address) {
 	auto lower = forbidden_ranges.lower_bound(address);
 	return lower == forbidden_ranges.end() || address >= lower->first + lower->second;
@@ -45,3 +49,8 @@ bool MIPSLoggerSettings::allow_range(u32 start, u32 size) {
 	return true;
 }
 
+MIPSLogger::MIPSLogger() {
+}
+
+MIPSLogger::~MIPSLogger() {
+}
