@@ -25,6 +25,8 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
 #include "Core/Reporting.h"
+#include "Core/MIPSLogger.h"
+
 
 DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 	// No need to bind or alloc state, these are all global.
@@ -36,6 +38,7 @@ DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 	map["cpu.setReg"] = &WebSocketCPUSetReg;
 	map["cpu.evaluate"] = &WebSocketCPUEvaluate;
 
+	map["cpu.startLogging"] = &WebSocketCPUStartLogging;
 	return nullptr;
 }
 
@@ -93,6 +96,37 @@ void WebSocketCPUResume(DebuggerRequest &req) {
 		Core_DoSingleStep();
 	}
 	Core_EnableStepping(false);
+}
+
+// Stop stepping and resume the CPU (cpu.resume)
+//
+// No parameters.
+//
+// No immediate response.  Once CPU is stepping, a "cpu.resume" event will be sent.
+void WebSocketCPUStartLogging(DebuggerRequest &req) {
+	if (!currentDebugMIPS->isAlive()) {
+		return req.Fail("CPU not started");
+	}
+	if (!Core_IsStepping() || coreState == CORE_POWERDOWN) {
+		return req.Fail("CPU not stepping");
+	}
+
+	std::string filename;
+	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
+		if (!mipsLogger.startLogger()) {
+			return;
+		}
+		JsonWriter& json = req.Respond();
+		json.writeString("Logging enabled");
+		return;
+	}
+	std::shared_ptr<std::ofstream> logfile = std::make_shared<std::ofstream> (new std::ofstream(filename));
+	if (!mipsLogger.selectLogStream(logfile) || !mipsLogger.startLogger()) {
+		return req.Fail("Cannot open file " + filename);
+	}
+	JsonWriter& json = req.Respond();
+	json.writeString("Logging enabled");
+	return;
 }
 
 // Request the current CPU status (cpu.status)

@@ -95,6 +95,7 @@ bool MIPSLogger::Log(u32 pc) {
 		disasm_buffer << " // " << additional;
 	}
 	logs_storage.push_back(disasm_buffer.str());
+	disasm_buffer.clear();
 	if (logs_storage.size() == cur_settings->getMaxCount()) {
 		// we are done, let's start stepping
 		Core_EnableStepping(true, "mipslogger.overflow");
@@ -102,12 +103,38 @@ bool MIPSLogger::Log(u32 pc) {
 	return false;
 }
 
+bool MIPSLogger::selectLogStream(std::ofstream& output_stream) {
+	if (!output_stream) return false;
+	//output = output_stream;
+	output = std::make_shared<std::ofstream>(output_stream);
+	return true;
+}
+
+bool MIPSLogger::selectLogStream(std::shared_ptr<std::ofstream> output_stream) {
+	if (!*output_stream) return false;
+	output = output_stream;
+	return true;
+}
+
 void MIPSLogger::stopLogger() {
 	logging_on = false;
 }
 
 bool MIPSLogger::flush_to_file() {
-	if (logging_on) {
+	if (logging_on || !output || !output->is_open()) {
 		return false;
 	}
+	for (const auto& log : logs_storage) {
+		*output << log << "\n";
+	}
+	// Not catching exceptions here.
+
+	//*output << disasm_buffer.rdbuf();
+	//disasm_buffer.clear();
+}
+
+bool MIPSLogger::startLogger() {
+	if (!output || !*output) return false;
+	logging_on = true;
+	return true;
 }

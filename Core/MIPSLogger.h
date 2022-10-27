@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <fstream>
 #include "MIPS/MIPS.h"
 #include "Core/Debugger/DisassemblyManager.h"
 
@@ -30,6 +31,7 @@ class MIPSLogger {
 	DisassemblyManager disasm;
 	DisassemblyLineInfo disasm_line;
 	std::stringstream disasm_buffer;
+	std::shared_ptr<std::ofstream> output;
 	
 public:
 	std::shared_ptr <MIPSLoggerSettings> cur_settings;
@@ -38,6 +40,10 @@ public:
 	bool isLogging();
 	bool Log(u32 pc);
 
+	bool selectLogStream(std::ofstream& output_stream);
+	bool selectLogStream(std::shared_ptr<std::ofstream> output_stream);
 	void stopLogger();
 	bool flush_to_file();
+
+	bool startLogger();
 };
