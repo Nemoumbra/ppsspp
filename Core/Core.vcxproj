@@ -576,6 +576,7 @@
     <ClCompile Include="KeyMap.cpp" />
     <ClCompile Include="KeyMapDefaults.cpp" />
     <ClCompile Include="MemFault.cpp" />
+    <ClCompile Include="MIPSLogger.cpp" />
     <ClCompile Include="MIPS\fake\FakeJit.cpp" />
     <ClCompile Include="MIPS\IR\IRAsm.cpp" />
     <ClCompile Include="MIPS\IR\IRCompALU.cpp" />
@@ -1146,6 +1147,7 @@
     <ClInclude Include="KeyMap.h" />
     <ClInclude Include="KeyMapDefaults.h" />
     <ClInclude Include="MemFault.h" />
+    <ClInclude Include="MIPSLogger.h" />
     <ClInclude Include="MIPS\fake\FakeJit.h" />
     <ClInclude Include="MIPS\IR\IRFrontend.h" />
     <ClInclude Include="MIPS\IR\IRInst.h" />
