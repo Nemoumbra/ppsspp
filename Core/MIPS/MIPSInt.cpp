@@ -79,6 +79,8 @@ static inline void SkipLikely() {
 int MIPS_SingleStep()
 {
 	MIPSOpcode op = Memory::Read_Opcode_JIT(mipsr4k.pc);
+	mipsLogger.Log(mipsr4k.pc);
+
 	if (mipsr4k.inDelaySlot) {
 		MIPSInterpret(op);
 		if (mipsr4k.inDelaySlot) {
