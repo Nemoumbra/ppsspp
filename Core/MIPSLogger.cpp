@@ -7,11 +7,11 @@
 
 MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) : max_count(max_count_), forbidden_ranges() {}
 
-u32 MIPSLoggerSettings::getMaxCount() {
+u32 MIPSLoggerSettings::getMaxCount() const {
 	return max_count;
 }
 
-bool MIPSLoggerSettings::log_address(u32 address) {
+bool MIPSLoggerSettings::log_address(u32 address) const {
 	auto lower = forbidden_ranges.lower_bound(address);
 	return lower == forbidden_ranges.end() || address >= lower->first + lower->second;
 }
@@ -64,7 +64,7 @@ bool MIPSLoggerSettings::remove_additional_log(u32 address) {
 	return true;
 }
 
-bool MIPSLoggerSettings::get_additional_log(u32 address, std::string & log_info) {
+bool MIPSLoggerSettings::get_additional_log(u32 address, std::string & log_info) const {
 	auto iter = additional_info.find(address);
 	if (iter == additional_info.end()) {
 		return false;
@@ -100,19 +100,27 @@ bool MIPSLogger::Log(u32 pc) {
 		// we are done, let's start stepping
 		Core_EnableStepping(true, "mipslogger.overflow");
 	}
-	return false;
-}
-
-bool MIPSLogger::selectLogStream(std::ofstream& output_stream) {
-	if (!output_stream) return false;
-	//output = output_stream;
-	output = std::make_shared<std::ofstream>(output_stream);
 	return true;
 }
 
-bool MIPSLogger::selectLogStream(std::shared_ptr<std::ofstream> output_stream) {
-	if (!*output_stream) return false;
-	output = output_stream;
+//bool MIPSLogger::selectLogStream(std::ofstream& output_stream) {
+//	if (!output_stream) return false;
+//	//output = output_stream;
+//	output = std::make_shared<std::ofstream>(output_stream);
+//	return true;
+//}
+//
+//bool MIPSLogger::selectLogStream(std::shared_ptr<std::ofstream> output_stream) {
+//	if (!*output_stream) return false;
+//	output = output_stream;
+//	return true;
+//}
+
+bool MIPSLogger::selectLogPath(const std::string& output_path) {
+	// let's open the file
+	//output = std::make_shared<std::ofstream>(new std::ofstream(output_path));
+	output.open(output_path);
+	if (!output) return false;
 	return true;
 }
 
@@ -121,20 +129,21 @@ void MIPSLogger::stopLogger() {
 }
 
 bool MIPSLogger::flush_to_file() {
-	if (logging_on || !output || !output->is_open()) {
+	if (logging_on || !output) {
 		return false;
 	}
 	for (const auto& log : logs_storage) {
-		*output << log << "\n";
+		output << log << "\n";
 	}
 	// Not catching exceptions here.
 
 	//*output << disasm_buffer.rdbuf();
 	//disasm_buffer.clear();
+	return true;
 }
 
 bool MIPSLogger::startLogger() {
-	if (!output || !*output) return false;
+	if (!output) return false;
 	logging_on = true;
 	return true;
 }

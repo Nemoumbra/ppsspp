@@ -367,7 +367,7 @@ void Core_Run(GraphicsContext *ctx) {
 
 void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
 	// stop logger
-	mipsLogger.stopLogger();
+	//mipsLogger.stopLogger();
 
 	host->SetDebugMode(step);
 	if (step) {
