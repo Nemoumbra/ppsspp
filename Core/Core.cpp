@@ -43,6 +43,8 @@
 #include "Core/MIPS/MIPS.h"
 #include "GPU/Debugger/Stepping.h"
 
+#include "Core/MIPSLogger.h"
+
 #ifdef _WIN32
 #include "Common/CommonWindows.h"
 #include "Windows/InputDevice.h"
@@ -367,7 +369,7 @@ void Core_Run(GraphicsContext *ctx) {
 
 void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
 	// stop logger
-	//mipsLogger.stopLogger();
+	mipsLogger.stopLogger();
 
 	host->SetDebugMode(step);
 	if (step) {

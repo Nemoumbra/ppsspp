@@ -24,7 +24,7 @@
 #include "Common/Data/Random/Rng.h"
 #include "Common/CommonTypes.h"
 #include "Core/Opcode.h"
-//#include "Core/MIPSLogger.h"
+// #include "Core/MIPSLogger.h"
 
 class PointerWrap;
 
@@ -282,6 +282,5 @@ class MIPSDebugInterface;
 extern MIPSState *currentMIPS;
 extern MIPSDebugInterface *currentDebugMIPS;
 extern MIPSState mipsr4k;
-//extern MIPSLogger mipsLogger;
 
 extern const float cst_constants[32];

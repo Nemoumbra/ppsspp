@@ -50,3 +50,6 @@ public:
 
 	bool startLogger();
 };
+
+
+extern MIPSLogger mipsLogger;

@@ -98,36 +98,36 @@ void WebSocketCPUResume(DebuggerRequest &req) {
 	Core_EnableStepping(false);
 }
 
-//// Stop stepping and resume the CPU (cpu.resume)
-////
-//// No parameters.
-////
-//// No immediate response.  Once CPU is stepping, a "cpu.resume" event will be sent.
-//void WebSocketCPUStartLogging(DebuggerRequest &req) {
-//	if (!currentDebugMIPS->isAlive()) {
-//		return req.Fail("CPU not started");
-//	}
-//	if (!Core_IsStepping() || coreState == CORE_POWERDOWN) {
-//		return req.Fail("CPU not stepping");
-//	}
+// Stop stepping and resume the CPU (cpu.resume)
 //
-//	std::string filename;
-//	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
-//		if (!mipsLogger.startLogger()) {
-//			return;
-//		}
-//		JsonWriter& json = req.Respond();
-//		json.writeString("Logging enabled");
-//		return;
-//	}
-//	std::shared_ptr<std::ofstream> logfile = std::make_shared<std::ofstream> (new std::ofstream(filename));
-//	if (!mipsLogger.selectLogStream(logfile) || !mipsLogger.startLogger()) {
-//		return req.Fail("Cannot open file " + filename);
-//	}
-//	JsonWriter& json = req.Respond();
-//	json.writeString("Logging enabled");
-//	return;
-//}
+// No parameters.
+//
+// No immediate response.  Once CPU is stepping, a "cpu.resume" event will be sent.
+void WebSocketCPUStartLogging(DebuggerRequest &req) {
+	if (!currentDebugMIPS->isAlive()) {
+		return req.Fail("CPU not started");
+	}
+	if (!Core_IsStepping() || coreState == CORE_POWERDOWN) {
+		return req.Fail("CPU not stepping");
+	}
+
+	std::string filename;
+	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
+		if (!mipsLogger.startLogger()) {
+			return;
+		}
+		JsonWriter& json = req.Respond();
+		json.writeString("Logging enabled");
+		return;
+	}
+	// std::shared_ptr<std::ofstream> logfile = std::make_shared<std::ofstream> (new std::ofstream(filename));
+	if (!mipsLogger.selectLogPath(filename) || !mipsLogger.startLogger()) {
+		return req.Fail("Cannot open file " + filename);
+	}
+	JsonWriter& json = req.Respond();
+	json.writeString("Logging enabled");
+	return;
+}
 
 // Request the current CPU status (cpu.status)
 //

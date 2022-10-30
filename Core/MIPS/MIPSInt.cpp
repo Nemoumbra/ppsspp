@@ -37,6 +37,8 @@
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/System.h"
 
+#include "Core/MIPSLogger.h"
+
 #define R(i) (currentMIPS->r[i])
 #define F(i) (currentMIPS->f[i])
 #define FI(i) (currentMIPS->fi[i])
@@ -79,7 +81,7 @@ static inline void SkipLikely() {
 int MIPS_SingleStep()
 {
 	MIPSOpcode op = Memory::Read_Opcode_JIT(mipsr4k.pc);
-	//mipsLogger.Log(mipsr4k.pc);
+	mipsLogger.Log(mipsr4k.pc);
 
 	if (mipsr4k.inDelaySlot) {
 		MIPSInterpret(op);

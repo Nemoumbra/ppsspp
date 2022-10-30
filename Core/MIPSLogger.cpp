@@ -74,7 +74,7 @@ bool MIPSLoggerSettings::get_additional_log(u32 address, std::string & log_info)
 }
 
 MIPSLogger::MIPSLogger() {
-	// disasm.setCpu(currentDebugMIPS);
+	//disasm.setCpu(currentDebugMIPS);
 }
 
 MIPSLogger::~MIPSLogger() {
@@ -147,3 +147,5 @@ bool MIPSLogger::startLogger() {
 	logging_on = true;
 	return true;
 }
+
+MIPSLogger mipsLogger;

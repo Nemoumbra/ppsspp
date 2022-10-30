@@ -18,6 +18,7 @@
 #pragma once
 
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
+#include "Core/MIPSLogger.h"
 
 DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map);
 
@@ -28,4 +29,4 @@ void WebSocketCPUGetAllRegs(DebuggerRequest &req);
 void WebSocketCPUGetReg(DebuggerRequest &req);
 void WebSocketCPUSetReg(DebuggerRequest &req);
 void WebSocketCPUEvaluate(DebuggerRequest &req);
-//void WebSocketCPUStartLogging(DebuggerRequest &req);
+void WebSocketCPUStartLogging(DebuggerRequest &req);
