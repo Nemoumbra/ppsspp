@@ -24,7 +24,6 @@
 #include "Common/Data/Random/Rng.h"
 #include "Common/CommonTypes.h"
 #include "Core/Opcode.h"
-// #include "Core/MIPSLogger.h"
 
 class PointerWrap;
 

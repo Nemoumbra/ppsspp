@@ -38,7 +38,8 @@ DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 	map["cpu.setReg"] = &WebSocketCPUSetReg;
 	map["cpu.evaluate"] = &WebSocketCPUEvaluate;
 
-	//map["cpu.startLogging"] = &WebSocketCPUStartLogging;
+	map["cpu.startLogging"] = &WebSocketCPUStartLogging;
+	map["cpu.flushLogs"] = &WebSocketCPUFlushLogs;
 	return nullptr;
 }
 
@@ -112,20 +113,39 @@ void WebSocketCPUStartLogging(DebuggerRequest &req) {
 	}
 
 	std::string filename;
+
+	mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
 	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
+		// mipsLogger.cur_settings = &default_MIPSLogger_settings;
 		if (!mipsLogger.startLogger()) {
 			return;
 		}
 		JsonWriter& json = req.Respond();
-		json.writeString("Logging enabled");
+		json.writeBool("logging_on", true);
 		return;
 	}
 	// std::shared_ptr<std::ofstream> logfile = std::make_shared<std::ofstream> (new std::ofstream(filename));
 	if (!mipsLogger.selectLogPath(filename) || !mipsLogger.startLogger()) {
-		return req.Fail("Cannot open file " + filename);
+		return req.Fail("Cannot open file \"" + filename + "\"");
 	}
 	JsonWriter& json = req.Respond();
-	json.writeString("Logging enabled");
+	json.writeBool("logging_on", true);
+	return;
+}
+
+// Stop stepping and resume the CPU (cpu.resume)
+//
+// No parameters.
+//
+// No immediate response.  Once CPU is stepping, a "cpu.resume" event will be sent.
+void WebSocketCPUFlushLogs(DebuggerRequest &req) {
+	if (mipsLogger.isLogging()) {
+		return req.Fail("Logging is on");
+	}
+
+	mipsLogger.flush_to_file();
+	req.Respond();
 	return;
 }
 

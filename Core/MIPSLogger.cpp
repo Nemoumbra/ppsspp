@@ -5,10 +5,26 @@
 
 // #include <map>
 
-MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) : max_count(max_count_), forbidden_ranges() {}
+MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) :
+	max_count(max_count_),
+	forbidden_ranges(),
+	additional_info(),
+	flush_when_full(false)
+{}
+
+MIPSLoggerSettings::MIPSLoggerSettings() : 
+	max_count(10),
+	forbidden_ranges(),
+	additional_info(),
+	flush_when_full(false)
+{} // random number
 
 u32 MIPSLoggerSettings::getMaxCount() const {
 	return max_count;
+}
+
+bool MIPSLoggerSettings::getFlushWhenFull() const {
+	return flush_when_full;
 }
 
 bool MIPSLoggerSettings::log_address(u32 address) const {
@@ -73,8 +89,19 @@ bool MIPSLoggerSettings::get_additional_log(u32 address, std::string & log_info)
 	return true;
 }
 
+bool MIPSLoggerSettings::instance_made = false;
+std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::_only_instance;
+
+std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::getInstance() {
+	if (!instance_made) {
+		instance_made = true;
+		_only_instance = std::make_shared<MIPSLoggerSettings>();
+	}
+	return _only_instance;
+}
+
 MIPSLogger::MIPSLogger() {
-	//disasm.setCpu(currentDebugMIPS);
+	// disasm.setCpu(currentDebugMIPS);
 }
 
 MIPSLogger::~MIPSLogger() {
@@ -86,7 +113,7 @@ bool MIPSLogger::isLogging() {
 }
 
 bool MIPSLogger::Log(u32 pc) {
-	if (!logging_on || !cur_settings->log_address(pc)) return false;
+	if (!logging_on || !cur_settings || !cur_settings->log_address(pc)) return false;
 
 	// disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
 	disasm_buffer << "PC = " << std::hex << std::to_string(pc) << " ";
@@ -95,10 +122,14 @@ bool MIPSLogger::Log(u32 pc) {
 		disasm_buffer << " // " << additional;
 	}
 	logs_storage.push_back(disasm_buffer.str());
-	disasm_buffer.clear();
+	// disasm_buffer.clear();
+	disasm_buffer.str(std::string());
 	if (logs_storage.size() == cur_settings->getMaxCount()) {
 		// we are done, let's start stepping
 		Core_EnableStepping(true, "mipslogger.overflow");
+		if (cur_settings->getFlushWhenFull()) {
+			flush_to_file();
+		}
 	}
 	return true;
 }
@@ -118,8 +149,10 @@ bool MIPSLogger::Log(u32 pc) {
 
 bool MIPSLogger::selectLogPath(const std::string& output_path) {
 	// let's open the file
-	//output = std::make_shared<std::ofstream>(new std::ofstream(output_path));
-	output.open(output_path);
+	if (output) {
+		output.close();
+	}
+	output.open(output_path, std::ios_base::app);
 	if (!output) return false;
 	return true;
 }
@@ -139,13 +172,16 @@ bool MIPSLogger::flush_to_file() {
 
 	//*output << disasm_buffer.rdbuf();
 	//disasm_buffer.clear();
+	output.flush();
 	return true;
 }
 
 bool MIPSLogger::startLogger() {
-	if (!output) return false;
+	if (!output || !cur_settings) return false;
 	logging_on = true;
 	return true;
 }
 
 MIPSLogger mipsLogger;
+
+// std::shared_ptr<MIPSLoggerSettings> default_MIPSLogger_settings;

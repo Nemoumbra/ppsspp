@@ -368,11 +368,11 @@ void Core_Run(GraphicsContext *ctx) {
 }
 
 void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
-	// stop logger
-	mipsLogger.stopLogger();
-
 	host->SetDebugMode(step);
 	if (step) {
+		// stop logger
+		mipsLogger.stopLogger();
+
 		Core_UpdateState(CORE_STEPPING);
 		steppingCounter++;
 		_assert_msg_(reason != nullptr, "No reason specified for break");

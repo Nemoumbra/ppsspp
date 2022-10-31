@@ -31,6 +31,8 @@
 
 #include "JitCommon/JitCommon.h"
 
+#include "Core/MIPSLogger.h"
+
 enum MipsEncoding {
 	Imme,
 	Spec,
