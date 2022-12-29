@@ -26,6 +26,7 @@
 #include "Core/MIPS/MIPSDebugInterface.h"
 #include "Core/Reporting.h"
 //#include "Core/MIPSLogger.h"
+#include "Core/ConfigValues.h"
 
 
 DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
@@ -110,6 +111,9 @@ void WebSocketCPUStartLogging(DebuggerRequest &req) {
 	}
 	if (!Core_IsStepping() || coreState == CORE_POWERDOWN) {
 		return req.Fail("CPU not stepping");
+	}
+	if (PSP_CoreParameter().cpuCore != CPUCore::INTERPRETER) {
+		return req.Fail("CPU Core is not \"Interpreter\"");
 	}
 
 	std::string filename;
