@@ -384,6 +384,9 @@ void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
 		coreState = CORE_RUNNING;
 		coreStatePending = false;
 		m_StepCond.notify_all();
+
+		// TEMPORARY CHANGE!
+		CBreakPoints::SetSkipFirst(currentMIPS->pc);
 	}
 }
 

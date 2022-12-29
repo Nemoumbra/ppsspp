@@ -1,6 +1,7 @@
 #include "CommonTypes.h"
 #include "Core/MIPSLogger.h"
 #include "Core/Core.h"
+#include "Core/Mips/MIPSDebugInterface.h"
 #include <vector>
 
 // #include <map>
@@ -12,8 +13,8 @@ MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) :
 	flush_when_full(false)
 {}
 
-MIPSLoggerSettings::MIPSLoggerSettings() : 
-	max_count(10),
+MIPSLoggerSettings::MIPSLoggerSettings() :
+	max_count(100000),
 	forbidden_ranges(),
 	additional_info(),
 	flush_when_full(false)
@@ -35,6 +36,7 @@ bool MIPSLoggerSettings::log_address(u32 address) const {
 bool MIPSLoggerSettings::forbide_range(u32 start, u32 size) {
 	if (!forbidden_ranges.size()) {
 		forbidden_ranges.insert({ start, size });
+		// forbidden_ranges.emplace(start, size);
 		return true;
 	}
 
@@ -45,6 +47,7 @@ bool MIPSLoggerSettings::forbide_range(u32 start, u32 size) {
 			return false;
 		}
 		forbidden_ranges.insert({ start, size });
+		// forbidden_ranges.emplace(start, size);
 		return true;
 	}
 	// let's check start and end
@@ -55,6 +58,7 @@ bool MIPSLoggerSettings::forbide_range(u32 start, u32 size) {
 		return false;
 	}
 	forbidden_ranges.insert({ start, size });
+	// forbidden_ranges.emplace(start, size);
 	return true;
 }
 
@@ -80,7 +84,7 @@ bool MIPSLoggerSettings::remove_additional_log(u32 address) {
 	return true;
 }
 
-bool MIPSLoggerSettings::get_additional_log(u32 address, std::string & log_info) const {
+bool MIPSLoggerSettings::get_additional_log(u32 address, std::string& log_info) const {
 	auto iter = additional_info.find(address);
 	if (iter == additional_info.end()) {
 		return false;
@@ -101,7 +105,7 @@ std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::getInstance() {
 }
 
 MIPSLogger::MIPSLogger() {
-	// disasm.setCpu(currentDebugMIPS);
+	disasm.setCpu(currentDebugMIPS);
 }
 
 MIPSLogger::~MIPSLogger() {
@@ -115,15 +119,16 @@ bool MIPSLogger::isLogging() {
 bool MIPSLogger::Log(u32 pc) {
 	if (!logging_on || !cur_settings || !cur_settings->log_address(pc)) return false;
 
-	// disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
-	disasm_buffer << "PC = " << std::hex << std::to_string(pc) << " ";
+	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
+	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
+	disasm_buffer << disasm_line.name << " " << disasm_line.params;
 	std::string additional;
 	if (cur_settings->get_additional_log(pc, additional)) {
 		disasm_buffer << " // " << additional;
 	}
 	logs_storage.push_back(disasm_buffer.str());
-	// disasm_buffer.clear();
 	disasm_buffer.str(std::string());
+
 	if (logs_storage.size() == cur_settings->getMaxCount()) {
 		// we are done, let's start stepping
 		Core_EnableStepping(true, "mipslogger.overflow");
