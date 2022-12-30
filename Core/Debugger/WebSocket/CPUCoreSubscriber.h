@@ -31,3 +31,7 @@ void WebSocketCPUSetReg(DebuggerRequest &req);
 void WebSocketCPUEvaluate(DebuggerRequest &req);
 void WebSocketCPUStartLogging(DebuggerRequest &req);
 void WebSocketCPUFlushLogs(DebuggerRequest& req);
+void WebSocketCPUGetLoggingSettings(DebuggerRequest& req);
+void WebSocketCPUGetLoggerForbiddenRanges(DebuggerRequest& req);
+void WebSocketCPULoggerForbideRange(DebuggerRequest& req);
+void WebSocketCPULoggerAllowRange(DebuggerRequest& req);

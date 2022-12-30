@@ -11,7 +11,7 @@
 
 class MIPSLoggerSettings {
 private:
-	std::map <u32, u32> forbidden_ranges;
+	std::map<u32, u32> forbidden_ranges;
 	u32 max_count;
 	std::map<u32, std::string> additional_info;
 	bool flush_when_full;
@@ -23,9 +23,16 @@ public:
 
 	u32 getMaxCount() const;
 	bool getFlushWhenFull() const;
+	const std::map<u32, u32>& getForbiddenRanges() const;
+	const std::map<u32, std::string>& getAdditionalInfo() const;
+
+	void setMaxCount(u32 new_value);
+	void setFlushWhenFull(bool new_value);
+
 	bool log_address(u32 address) const;
-	bool forbide_range(u32 start, u32 size);
+	bool forbid_range(u32 start, u32 size);
 	bool allow_range(u32 start, u32 size);
+
 	void update_additional_log(u32 address, std::string log_info);
 	bool remove_additional_log(u32 address);
 	bool get_additional_log(u32 address, std::string& log_info) const;

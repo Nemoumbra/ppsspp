@@ -41,6 +41,10 @@ DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 
 	map["cpu.startLogging"] = &WebSocketCPUStartLogging;
 	map["cpu.flushLogs"] = &WebSocketCPUFlushLogs;
+	map["cpu.getLoggingSettings"] = &WebSocketCPUGetLoggingSettings;
+	map["cpu.getLoggingForbiddenRanges"] = &WebSocketCPUGetLoggerForbiddenRanges;
+	map["cpu.loggerForbidRange"] = &WebSocketCPULoggerForbideRange;
+	map["cpu.loggerAllowRange"] = &WebSocketCPULoggerAllowRange;
 	return nullptr;
 }
 
@@ -151,6 +155,85 @@ void WebSocketCPUFlushLogs(DebuggerRequest &req) {
 	mipsLogger.flush_to_file();
 	req.Respond();
 	return;
+}
+
+void WebSocketCPUGetLoggingSettings(DebuggerRequest &req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	
+	JsonWriter& json = req.Respond();
+	json.writeUint("maxCount", settings->getMaxCount());
+	json.writeBool("flushWhenFull", settings->getFlushWhenFull());
+	json.writeUint("forbiddenRangesCount", settings->getForbiddenRanges().size());
+	json.writeUint("additionalInfoCount", settings->getAdditionalInfo().size());
+	// and 3 million on the way...
+}
+
+void WebSocketCPUGetLoggerForbiddenRanges(DebuggerRequest &req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
+	JsonWriter& json = req.Respond();
+	const auto& ranges = settings->getForbiddenRanges();
+
+	json.pushArray("ranges");
+	for (const auto[start, size] : ranges) {
+		json.pushDict();
+		json.writeUint("start", start);
+		json.writeUint("size", size);
+		json.end();
+	}
+	json.end();
+}
+
+void WebSocketCPULoggerForbideRange(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
+	if (mipsLogger.isLogging()) {
+		req.Fail("Logging is on");
+	}
+
+	u32 start;
+	if (!req.ParamU32("start", &start)) {
+		return;
+	}
+	u32 size;
+	if (!req.ParamU32("size", &size)) {
+		return;
+	}
+	if (size == 0) {
+		req.Fail("The size should be positive");
+	}
+
+	bool success = settings->forbid_range(start, size);
+	if (!success) {
+		req.Fail("The range intersects an already existing one");
+	}
+	req.Respond();
+}
+
+void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
+	if (mipsLogger.isLogging()) {
+		req.Fail("Logging is on");
+	}
+
+	u32 start;
+	if (!req.ParamU32("start", &start)) {
+		return;
+	}
+	u32 size;
+	if (!req.ParamU32("size", &size)) {
+		return;
+	}
+	bool success = settings->allow_range(start, size);
+	if (!success) {
+		req.Fail("The range is not forbidden");
+	}
+	req.Respond();
 }
 
 // Request the current CPU status (cpu.status)

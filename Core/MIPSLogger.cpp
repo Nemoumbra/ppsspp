@@ -29,36 +29,47 @@ bool MIPSLoggerSettings::getFlushWhenFull() const {
 }
 
 bool MIPSLoggerSettings::log_address(u32 address) const {
-	auto lower = forbidden_ranges.lower_bound(address);
-	return lower == forbidden_ranges.end() || address >= lower->first + lower->second;
+	auto first_gt = forbidden_ranges.upper_bound(address);
+	// first greater than
+	if (first_gt == forbidden_ranges.begin()) {
+		return true;
+	}
+	--first_gt;
+	return address >= first_gt->first + first_gt->second;
 }
 
-bool MIPSLoggerSettings::forbide_range(u32 start, u32 size) {
+bool MIPSLoggerSettings::forbid_range(u32 start, u32 size) {
 	if (!forbidden_ranges.size()) {
-		forbidden_ranges.insert({ start, size });
-		// forbidden_ranges.emplace(start, size);
+		forbidden_ranges.emplace(start, size);
 		return true;
 	}
 
-	auto lower = forbidden_ranges.lower_bound(start);
-	if (lower == forbidden_ranges.end()) {
-		// does the given range intersect the first one?
-		if (forbidden_ranges.lower_bound(start + size - 1) != forbidden_ranges.end()) {
-			return false;
+	auto first_gt = forbidden_ranges.upper_bound(start);
+
+	if (first_gt == forbidden_ranges.begin()) {
+		if (start + size - 1 < first_gt->first) {
+			forbidden_ranges.emplace(start, size);
+			return true;
 		}
-		forbidden_ranges.insert({ start, size });
-		// forbidden_ranges.emplace(start, size);
-		return true;
-	}
-	// let's check start and end
-	if (start < lower->first + lower->second) {
 		return false;
 	}
-	if (lower != forbidden_ranges.lower_bound(start + size - 1)) {
+	if (first_gt == forbidden_ranges.end()) {
+		--first_gt;
+		if (start > first_gt->first + first_gt->second - 1) {
+			forbidden_ranges.emplace(start, size);
+			return true;
+		}
 		return false;
 	}
-	forbidden_ranges.insert({ start, size });
-	// forbidden_ranges.emplace(start, size);
+	--first_gt;
+	if (start <= first_gt->first + first_gt->second - 1) {
+		return false;
+	}
+	++first_gt;
+	if (first_gt->first <= start + size - 1) {
+		return false;
+	}
+	forbidden_ranges.emplace(start, size);
 	return true;
 }
 
@@ -91,6 +102,22 @@ bool MIPSLoggerSettings::get_additional_log(u32 address, std::string& log_info) 
 	}
 	log_info = iter->second;
 	return true;
+}
+
+const std::map<u32, u32>& MIPSLoggerSettings::getForbiddenRanges() const {
+	return forbidden_ranges;
+}
+
+const std::map<u32, std::string>& MIPSLoggerSettings::getAdditionalInfo() const {
+	return additional_info;
+}
+
+void MIPSLoggerSettings::setMaxCount(u32 new_value) {
+	max_count = new_value;
+}
+
+void MIPSLoggerSettings::setFlushWhenFull(bool new_value) {
+	flush_when_full = new_value;
 }
 
 bool MIPSLoggerSettings::instance_made = false;
@@ -138,19 +165,6 @@ bool MIPSLogger::Log(u32 pc) {
 	}
 	return true;
 }
-
-//bool MIPSLogger::selectLogStream(std::ofstream& output_stream) {
-//	if (!output_stream) return false;
-//	//output = output_stream;
-//	output = std::make_shared<std::ofstream>(output_stream);
-//	return true;
-//}
-//
-//bool MIPSLogger::selectLogStream(std::shared_ptr<std::ofstream> output_stream) {
-//	if (!*output_stream) return false;
-//	output = output_stream;
-//	return true;
-//}
 
 bool MIPSLogger::selectLogPath(const std::string& output_path) {
 	// let's open the file
