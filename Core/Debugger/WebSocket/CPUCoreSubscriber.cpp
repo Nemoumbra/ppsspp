@@ -45,6 +45,9 @@ DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 	map["cpu.getLoggingForbiddenRanges"] = &WebSocketCPUGetLoggerForbiddenRanges;
 	map["cpu.loggerForbidRange"] = &WebSocketCPULoggerForbideRange;
 	map["cpu.loggerAllowRange"] = &WebSocketCPULoggerAllowRange;
+	map["cpu.loggerUpdateInfo"] = &WebSocketCPULoggerUpdateInfo;
+	map["cpu.getLoggerInfoAt"] = &WebSocketCPUGetLoggerInfoAt;
+	map["cpu.getLoggerInfo"] = &WebSocketCPUGetLoggerInfo;
 	return nullptr;
 }
 
@@ -234,6 +237,64 @@ void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
 		req.Fail("The range is not forbidden");
 	}
 	req.Respond();
+}
+
+void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	u32 address;
+	if (!req.ParamU32("address", &address)) {
+		return;
+	}
+
+	std::string log_info;
+	if (!req.ParamString("log_info", &log_info, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
+	if (log_info.empty()) {
+		if (!settings->remove_additional_log(address)) {
+			req.Fail("Can't assign an empty log string");
+		}
+	}
+	else {
+		settings->update_additional_log(address, log_info);
+	}
+	req.Respond();
+}
+
+void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	u32 address;
+	if (!req.ParamU32("address", &address)) {
+		return;
+	}
+	JsonWriter& json = req.Respond();
+	std::string log_info;
+	if (!settings->get_additional_log(address, log_info)) {
+		json.writeBool("hasLogInfo", false);
+	}
+	else {
+		json.writeBool("hasLogInfo", false);
+		json.writeString("comment", log_info);
+	}
+
+}
+
+void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	JsonWriter& json = req.Respond();
+	const auto& logs_info = settings->getAdditionalInfo();
+	json.writeUint("count", logs_info.size());
+	json.pushArray("comments");
+	for (const auto&[address, comment] : logs_info) {
+		json.pushDict();
+		json.writeUint("address", address);
+		json.writeString("comment", comment);
+		json.end();
+	}
+	json.end();
 }
 
 // Request the current CPU status (cpu.status)
