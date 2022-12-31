@@ -206,7 +206,7 @@ void WebSocketCPULoggerForbideRange(DebuggerRequest& req) {
 		return;
 	}
 	if (size == 0) {
-		req.Fail("The size should be positive");
+		return req.Fail("The size should be positive");
 	}
 
 	bool success = settings->forbid_range(start, size);
@@ -253,10 +253,17 @@ void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
 	}
 	if (log_info.empty()) {
 		if (!settings->remove_additional_log(address)) {
-			req.Fail("Can't assign an empty log string");
+			return req.Fail("Can't assign an empty log string");
 		}
 	}
 	else {
+		// let's see if this expression makes sense
+		if (!currentDebugMIPS->isAlive()) {
+			return req.Fail("CPU not started");
+		}
+		if (!CBreakPoints::ValidateLogFormat(currentDebugMIPS, log_info)) {
+			return req.Fail("Cannot parse the log string");
+		}
 		settings->update_additional_log(address, log_info);
 	}
 	req.Respond();

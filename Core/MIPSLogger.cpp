@@ -2,6 +2,7 @@
 #include "Core/MIPSLogger.h"
 #include "Core/Core.h"
 #include "Core/Mips/MIPSDebugInterface.h"
+#include "Core/Debugger/Breakpoints.h"
 #include <vector>
 
 // #include <map>
@@ -149,9 +150,16 @@ bool MIPSLogger::Log(u32 pc) {
 	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
 	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
 	disasm_buffer << disasm_line.name << " " << disasm_line.params;
-	std::string additional;
-	if (cur_settings->get_additional_log(pc, additional)) {
-		disasm_buffer << " // " << additional;
+	std::string format;
+	if (cur_settings->get_additional_log(pc, format)) {
+		disasm_buffer << " // ";
+		std::string additional;
+		if (CBreakPoints::EvaluateLogFormat(currentDebugMIPS, format, additional)) {
+			disasm_buffer << additional;
+		}
+		else {
+			disasm_buffer << format;
+		}
 	}
 	logs_storage.push_back(disasm_buffer.str());
 	disasm_buffer.str(std::string());
@@ -177,6 +185,9 @@ bool MIPSLogger::selectLogPath(const std::string& output_path) {
 }
 
 void MIPSLogger::stopLogger() {
+	if (output) {
+		output.close();
+	}
 	logging_on = false;
 }
 
