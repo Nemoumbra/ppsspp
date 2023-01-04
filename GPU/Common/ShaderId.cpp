@@ -67,21 +67,23 @@ std::string VertexShaderDesc(const VShaderID &id) {
 	return desc.str();
 }
 
-void ComputeVertexShaderID(VShaderID *id_out, u32 vertType, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode) {
+void ComputeVertexShaderID(VShaderID *id_out, VertexDecoder *vertexDecoder, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode) {
+	u32 vertType = vertexDecoder->VertexType();
+
 	bool isModeThrough = (vertType & GE_VTYPE_THROUGH) != 0;
 	bool doTexture = gstate.isTextureMapEnabled() && !gstate.isModeClear();
 	bool doShadeMapping = doTexture && (gstate.getUVGenMode() == GE_TEXMAP_ENVIRONMENT_MAP);
 	bool doFlatShading = gstate.getShadeMode() == GE_SHADE_FLAT && !gstate.isModeClear();
 
-	bool hasColor = (vertType & GE_VTYPE_COL_MASK) != 0;
-	bool hasNormal = (vertType & GE_VTYPE_NRM_MASK) != 0;
-	bool hasTexcoord = (vertType & GE_VTYPE_TC_MASK) != 0;
+	bool vtypeHasColor = (vertType & GE_VTYPE_COL_MASK) != 0;
+	bool vtypeHasNormal = (vertType & GE_VTYPE_NRM_MASK) != 0;
+	bool vtypeHasTexcoord = (vertType & GE_VTYPE_TC_MASK) != 0;
 
 	bool doBezier = gstate_c.submitType == SubmitType::HW_BEZIER;
 	bool doSpline = gstate_c.submitType == SubmitType::HW_SPLINE;
 
 	if (doBezier || doSpline) {
-		_assert_(hasNormal);
+		_assert_(vtypeHasNormal);
 	}
 
 	bool lmode = gstate.isUsingSecondaryColor() && gstate.isLightingEnabled() && !isModeThrough && !gstate.isModeClear();
@@ -91,7 +93,7 @@ void ComputeVertexShaderID(VShaderID *id_out, u32 vertType, bool useHWTransform,
 	VShaderID id;
 	id.SetBit(VS_BIT_LMODE, lmode);
 	id.SetBit(VS_BIT_IS_THROUGH, isModeThrough);
-	id.SetBit(VS_BIT_HAS_COLOR, hasColor);
+	id.SetBit(VS_BIT_HAS_COLOR, vtypeHasColor);
 	id.SetBit(VS_BIT_VERTEX_RANGE_CULLING, vertexRangeCulling);
 
 	if (!isModeThrough && gstate_c.Use(GPU_USE_SINGLE_PASS_STEREO)) {
@@ -107,7 +109,7 @@ void ComputeVertexShaderID(VShaderID *id_out, u32 vertType, bool useHWTransform,
 
 	if (useHWTransform) {
 		id.SetBit(VS_BIT_USE_HW_TRANSFORM);
-		id.SetBit(VS_BIT_HAS_NORMAL, hasNormal);
+		id.SetBit(VS_BIT_HAS_NORMAL, vtypeHasNormal);
 
 		// The next bits are used differently depending on UVgen mode
 		if (gstate.getUVGenMode() == GE_TEXMAP_TEXTURE_MATRIX) {
@@ -118,6 +120,7 @@ void ComputeVertexShaderID(VShaderID *id_out, u32 vertType, bool useHWTransform,
 		}
 
 		// Bones.
+		u32 vertType = vertexDecoder->VertexType();
 		bool enableBones = !useSkinInDecode && vertTypeIsSkinningEnabled(vertType);
 		id.SetBit(VS_BIT_ENABLE_BONES, enableBones);
 		if (enableBones) {
@@ -147,7 +150,7 @@ void ComputeVertexShaderID(VShaderID *id_out, u32 vertType, bool useHWTransform,
 		}
 
 		id.SetBit(VS_BIT_NORM_REVERSE, gstate.areNormalsReversed());
-		id.SetBit(VS_BIT_HAS_TEXCOORD, hasTexcoord);
+		id.SetBit(VS_BIT_HAS_TEXCOORD, vtypeHasTexcoord);
 
 		if (useHWTessellation) {
 			id.SetBit(VS_BIT_BEZIER, doBezier);
@@ -186,8 +189,6 @@ std::string FragmentShaderDesc(const FShaderID &id) {
 	if (id.Bit(FS_BIT_DO_TEXTURE_PROJ)) desc << "TexProj ";
 	if (id.Bit(FS_BIT_TEXALPHA)) desc << "TexAlpha ";
 	if (id.Bit(FS_BIT_TEXTURE_AT_OFFSET)) desc << "TexOffs ";
-	if (id.Bit(FS_BIT_LMODE)) desc << "LM ";
-	if (id.Bit(FS_BIT_ENABLE_FOG)) desc << "Fog ";
 	if (id.Bit(FS_BIT_COLOR_DOUBLE)) desc << "2x ";
 	if (id.Bit(FS_BIT_FLATSHADE)) desc << "Flat ";
 	if (id.Bit(FS_BIT_BGRA_TEXTURE)) desc << "BGRA ";
@@ -279,7 +280,6 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 		id.SetBit(FS_BIT_CLEARMODE);
 	} else {
 		bool isModeThrough = gstate.isModeThrough();
-		bool lmode = gstate.isUsingSecondaryColor() && gstate.isLightingEnabled() && !isModeThrough;
 		bool enableFog = gstate.isFogEnabled() && !isModeThrough;
 		bool enableAlphaTest = gstate.isAlphaTestEnabled() && !IsAlphaTestTriviallyTrue();
 		bool enableColorTest = gstate.isColorTestEnabled() && !IsColorTestTriviallyTrue();
@@ -320,7 +320,6 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 			id.SetBit(FS_BIT_3D_TEXTURE, gstate_c.curTextureIs3D);
 		}
 
-		id.SetBit(FS_BIT_LMODE, lmode);
 		if (enableAlphaTest) {
 			// 5 bits total.
 			id.SetBit(FS_BIT_ALPHA_TEST);
@@ -337,7 +336,6 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 			id.SetBit(FS_BIT_TEST_DISCARD_TO_ZERO, !NeedsTestDiscard());
 		}
 
-		id.SetBit(FS_BIT_ENABLE_FOG, enableFog);
 		id.SetBit(FS_BIT_DO_TEXTURE_PROJ, doTextureProjection);
 		id.SetBit(FS_BIT_COLOR_DOUBLE, enableColorDoubling);
 
@@ -404,7 +402,6 @@ std::string GeometryShaderDesc(const GShaderID &id) {
 	desc << StringFromFormat("%08x:%08x ", id.d[1], id.d[0]);
 	if (id.Bit(GS_BIT_ENABLED)) desc << "ENABLED ";
 	if (id.Bit(GS_BIT_DO_TEXTURE)) desc << "TEX ";
-	if (id.Bit(GS_BIT_LMODE)) desc << "LMODE ";
 	return desc.str();
 }
 
@@ -436,9 +433,6 @@ void ComputeGeometryShaderID(GShaderID *id_out, const Draw::Bugs &bugs, int prim
 	if (gstate.isModeClear()) {
 		// No attribute bits.
 	} else {
-		bool lmode = gstate.isUsingSecondaryColor() && gstate.isLightingEnabled() && !isModeThrough;
-
-		id.SetBit(GS_BIT_LMODE, lmode);
 		if (gstate.isTextureMapEnabled()) {
 			id.SetBit(GS_BIT_DO_TEXTURE);
 		}

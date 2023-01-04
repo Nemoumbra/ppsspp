@@ -1195,6 +1195,9 @@
     <ClCompile Include="MIPSLogger.cpp">
       <Filter>MIPS</Filter>
     </ClCompile>
+    <ClCompile Include="..\ext\riscv-disas.cpp">
+      <Filter>Ext</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ELF\ElfReader.h">
@@ -1931,6 +1934,9 @@
     </ClInclude>
     <ClInclude Include="MIPSLogger.h">
       <Filter>MIPS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ext\riscv-disas.h">
+      <Filter>Ext</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

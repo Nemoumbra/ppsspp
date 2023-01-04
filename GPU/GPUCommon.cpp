@@ -83,13 +83,13 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_ZBUFWIDTH, FLAG_FLUSHBEFOREONCHANGE },
 
 	{ GE_CMD_FOGCOLOR, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOLOR },
-	{ GE_CMD_FOG1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOEF },
-	{ GE_CMD_FOG2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOEF },
+	{ GE_CMD_FOG1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOEFENABLE },
+	{ GE_CMD_FOG2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOEFENABLE },
 
 	// These affect the fragment shader so need flushing.
 	{ GE_CMD_CLEARMODE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE },
 	{ GE_CMD_TEXTUREMAPENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE },
-	{ GE_CMD_FOGENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAGMENTSHADER_STATE },
+	{ GE_CMD_FOGENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FOGCOEFENABLE },
 	{ GE_CMD_TEXMODE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_TEXTURE_PARAMS | DIRTY_FRAGMENTSHADER_STATE },
 	{ GE_CMD_TEXSHADELS, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VERTEXSHADER_STATE },
 	// Raster state for Direct3D 9, uncommon.
@@ -1197,6 +1197,13 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 // Maybe should write this in ASM...
 void GPUCommon::FastRunLoop(DisplayList &list) {
 	PROFILE_THIS_SCOPE("gpuloop");
+
+	if (!Memory::IsValidAddress(list.pc)) {
+		// We're having some serious problems here, just bail and try to limp along and not crash the app.
+		downcount = 0;
+		return;
+	}
+
 	const CommandInfo *cmdInfo = cmdInfo_;
 	int dc = downcount;
 	for (; dc > 0; --dc) {
@@ -1475,11 +1482,11 @@ void GPUCommon::DoExecuteCall(u32 target) {
 
 	// Bone matrix optimization - many games will CALL a bone matrix (!).
 	// We don't optimize during recording - so the matrix data gets recorded.
-	if (!debugRecording_ && (Memory::ReadUnchecked_U32(target) >> 24) == GE_CMD_BONEMATRIXDATA) {
+	if (!debugRecording_ && Memory::IsValidRange(target, 13 * 4) && (Memory::ReadUnchecked_U32(target) >> 24) == GE_CMD_BONEMATRIXDATA) {
 		// Check for the end
 		if ((Memory::ReadUnchecked_U32(target + 11 * 4) >> 24) == GE_CMD_BONEMATRIXDATA &&
-				(Memory::ReadUnchecked_U32(target + 12 * 4) >> 24) == GE_CMD_RET &&
-				(gstate.boneMatrixNumber & 0x00FFFFFF) <= 96 - 12) {
+			(Memory::ReadUnchecked_U32(target + 12 * 4) >> 24) == GE_CMD_RET &&
+			(gstate.boneMatrixNumber & 0x00FFFFFF) <= 96 - 12) {
 			// Yep, pretty sure this is a bone matrix call.  Double check stall first.
 			if (target > currentList->stall || target + 12 * 4 < currentList->stall) {
 				FastLoadBoneMatrix(target);
@@ -1744,8 +1751,9 @@ void GPUCommon::Execute_VertexType(u32 op, u32 diff) {
 		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
 	if (diff & (GE_VTYPE_TC_MASK | GE_VTYPE_THROUGH_MASK)) {
 		gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+		// Switching between through and non-through, we need to invalidate a bunch of stuff.
 		if (diff & GE_VTYPE_THROUGH_MASK)
-			gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_CULLRANGE);
+			gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_CULLRANGE | DIRTY_FOGCOEFENABLE);
 	}
 }
 

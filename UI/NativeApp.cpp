@@ -870,6 +870,8 @@ bool CreateGlobalPipelines();
 bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 	INFO_LOG(SYSTEM, "NativeInitGraphics");
 
+	_assert_(screenManager);
+
 	// We set this now so any resize during init is processed later.
 	resized = false;
 
@@ -1496,16 +1498,19 @@ bool NativeIsRestarting() {
 }
 
 void NativeShutdown() {
-	if (screenManager)
+	if (screenManager) {
 		screenManager->shutdown();
-	delete screenManager;
-	screenManager = nullptr;
+		delete screenManager;
+		screenManager = nullptr;
+	}
 
-	host->ShutdownGraphics();
+	if (host) {
+		host->ShutdownGraphics();
+		delete host;
+		host = nullptr;
+	}
 
 #if !PPSSPP_PLATFORM(UWP)
-	delete host;
-	host = nullptr;
 #endif
 	g_Config.Save("NativeShutdown");
 

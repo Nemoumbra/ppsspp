@@ -25,6 +25,17 @@ If you want to download regularly updated builds for Android, Windows x86 and x6
 
 For game compatibility, see [community compatibility feedback](https://report.ppsspp.org/games).
 
+What's new in 1.14.4
+====================
+* Multiple shader compatibility fixes for older devices/drivers: ([#16710], [#16709], [#16708])
+* A few other minor fixes: ([#16703], [#16706])
+
+What's new in 1.14.3
+====================
+* Several crash/hang fixes ([#16690], [#16689], [#16683], [#16685], [#16680], [#16697], [#16681], more)
+* Minor UI fixes ([#16698], [#16684], [#16674], [#16677])
+* Fix confirm/cancel button reversal ([#16692])
+
 What's new in 1.14.2
 ====================
 * Fix Toca/DTM and others (culling) on Mali again ([#16645])
@@ -376,7 +387,8 @@ Credit goes to:
 [#16608]: https://github.com/hrydgard/ppsspp/issues/16608 "Cleanup value corrections in config load/save"
 [#16615]: https://github.com/hrydgard/ppsspp/issues/16615 "D3D9: Support old-style user clip planes"
 [#16619]: https://github.com/hrydgard/ppsspp/issues/16619 "Debugger: Don't hang memory dump if stepping in GE"
-[#16595]: https://github.com/hrydgard/ppsspp/issues/16595 "Transparent background option"[#16645]: https://github.com/hrydgard/ppsspp/issues/16645 "Fix vertex shader range culling - the driver bug check was wrong."
+[#16595]: https://github.com/hrydgard/ppsspp/issues/16595 "Transparent background option"
+[#16645]: https://github.com/hrydgard/ppsspp/issues/16645 "Fix vertex shader range culling - the driver bug check was wrong."
 [#16656]: https://github.com/hrydgard/ppsspp/issues/16656 "Fix rendering of lines with the same x/y but different z."
 [#16673]: https://github.com/hrydgard/ppsspp/issues/16673 "Show bluescreen properly on memory errors that we failed to ignore."
 [#16662]: https://github.com/hrydgard/ppsspp/issues/16662 "Correct some reversed dependencies, minor other cleanup"
@@ -384,3 +396,20 @@ Credit goes to:
 [#16644]: https://github.com/hrydgard/ppsspp/issues/16644 "Additional Android cleanup"
 [#16636]: https://github.com/hrydgard/ppsspp/issues/16636 "Crash: Ensure we never handle faults in faults"
 [#16639]: https://github.com/hrydgard/ppsspp/issues/16639 "Minor initialization cleanup, setup for Vulkan validation layers on Android"
+[#16690]: https://github.com/hrydgard/ppsspp/issues/16690 "softgpu: Detect binner alloc fail and bail"
+[#16689]: https://github.com/hrydgard/ppsspp/issues/16689 "Vulkan: Avoid race in compile thread exit"
+[#16683]: https://github.com/hrydgard/ppsspp/issues/16683 "Assorted fixes after looking at crash data"
+[#16685]: https://github.com/hrydgard/ppsspp/issues/16685 "Replacement: Verify out stride"
+[#16680]: https://github.com/hrydgard/ppsspp/issues/16680 "Make sure we don't multithread libzip access"
+[#16697]: https://github.com/hrydgard/ppsspp/issues/16697 "Check for valid memory range when doing fast bone matrix loads"
+[#16681]: https://github.com/hrydgard/ppsspp/issues/16681 "Cleanup some mic data reading"
+[#16698]: https://github.com/hrydgard/ppsspp/issues/16698 "Screen background fixes"
+[#16684]: https://github.com/hrydgard/ppsspp/issues/16684 "Enabled CPU breakpoints unchecked"
+[#16674]: https://github.com/hrydgard/ppsspp/issues/16674 "Broken menus after using Break on Load"
+[#16677]: https://github.com/hrydgard/ppsspp/issues/16677 "D3D11: Fix Draw state issues on pause screen"
+[#16692]: https://github.com/hrydgard/ppsspp/issues/16692 "Dialog: Fix confirm/cancel button reversal"
+[#16710]: https://github.com/hrydgard/ppsspp/issues/16710 "GLES: Use uint for uint shift amounts"
+[#16709]: https://github.com/hrydgard/ppsspp/issues/16709 "Correct some shader errors in reporting"
+[#16708]: https://github.com/hrydgard/ppsspp/issues/16708 "Additional fixes from both our reports and Play reports"
+[#16703]: https://github.com/hrydgard/ppsspp/issues/16703 "Minor fixes based on the latest Google Play report"
+[#16706]: https://github.com/hrydgard/ppsspp/issues/16706 "softgpu: Fix lighting with 0 exp"
