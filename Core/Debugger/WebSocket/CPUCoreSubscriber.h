@@ -38,3 +38,4 @@ void WebSocketCPULoggerAllowRange(DebuggerRequest& req);
 void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req);
 void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req);
 void WebSocketCPUGetLoggerInfo(DebuggerRequest& req);
+void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req);

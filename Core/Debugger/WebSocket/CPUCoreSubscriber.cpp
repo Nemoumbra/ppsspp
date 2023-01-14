@@ -169,6 +169,8 @@ void WebSocketCPUGetLoggingSettings(DebuggerRequest &req) {
 	json.writeBool("flushWhenFull", settings->getFlushWhenFull());
 	json.writeUint("forbiddenRangesCount", settings->getForbiddenRanges().size());
 	json.writeUint("additionalInfoCount", settings->getAdditionalInfo().size());
+	json.writeString("mode", to_string(settings->getLoggingMode()));
+	json.writeBool("ignoreForbiddenWhenRecording", settings->getIgnoreForbiddenWhenRecording());
 	// and 3 million on the way...
 }
 
@@ -242,6 +244,11 @@ void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
 void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
 	// If this is the first call to our MIPSLogger methods, we want to initialize it
 	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
+	if (mipsLogger.isLogging()) {
+		req.Fail("Logging is on");
+	}
+
 	u32 address;
 	if (!req.ParamU32("address", &address)) {
 		return;
@@ -282,7 +289,7 @@ void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
 		json.writeBool("hasLogInfo", false);
 	}
 	else {
-		json.writeBool("hasLogInfo", false);
+		json.writeBool("hasLogInfo", true);
 		json.writeString("comment", log_info);
 	}
 
@@ -302,6 +309,44 @@ void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
 		json.end();
 	}
 	json.end();
+}
+
+void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req) {
+	// If this is the first call to our MIPSLogger methods, we want to initialize it
+	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+
+	if (mipsLogger.isLogging()) {
+		req.Fail("Logging is on");
+	}
+
+	std::string mode;
+	if (req.ParamString("mode", &mode, DebuggerParamType::OPTIONAL)) {
+		if (mode == "Normal") {
+			settings->setLoggingMode(LoggingMode::Normal);
+		}
+		else if (mode == "LogLastNLines") {
+			settings->setLoggingMode(LoggingMode::LogLastNLines);
+		}
+		else {
+			req.Fail("Invalid mode, must be either Normal or LogLastNLines");
+		}
+	}
+
+	u32 maxCount;
+	if (req.ParamU32("maxCount", &maxCount, false, DebuggerParamType::OPTIONAL)) {
+		settings->setMaxCount(maxCount);
+	}
+
+	bool flushWhenFull;
+	if (req.ParamBool("flushWhenFull", &flushWhenFull, DebuggerParamType::OPTIONAL)) {
+		settings->setFlushWhenFull(flushWhenFull);
+	}
+	
+	bool ignoreForbiddenWhenRecording;
+	if (req.ParamBool("ignoreForbiddenWhenRecording", &ignoreForbiddenWhenRecording, DebuggerParamType::OPTIONAL)) {
+		settings->setIgnoreForbiddenWhenRecording(ignoreForbiddenWhenRecording);
+	}
+	req.Respond();
 }
 
 // Request the current CPU status (cpu.status)

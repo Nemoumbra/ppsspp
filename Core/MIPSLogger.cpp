@@ -7,6 +7,7 @@
 
 // #include <map>
 
+
 MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) :
 	max_count(max_count_),
 	forbidden_ranges(),
@@ -21,12 +22,20 @@ MIPSLoggerSettings::MIPSLoggerSettings() :
 	flush_when_full(false)
 {} // random number
 
+LoggingMode MIPSLoggerSettings::getLoggingMode() const {
+	return mode;
+}
+
 u32 MIPSLoggerSettings::getMaxCount() const {
 	return max_count;
 }
 
 bool MIPSLoggerSettings::getFlushWhenFull() const {
 	return flush_when_full;
+}
+
+bool MIPSLoggerSettings::getIgnoreForbiddenWhenRecording() const {
+	return ignore_forbidden_when_recording;
 }
 
 bool MIPSLoggerSettings::log_address(u32 address) const {
@@ -113,6 +122,10 @@ const std::map<u32, std::string>& MIPSLoggerSettings::getAdditionalInfo() const 
 	return additional_info;
 }
 
+void MIPSLoggerSettings::setLoggingMode(LoggingMode new_mode) {
+	mode = new_mode;
+}
+
 void MIPSLoggerSettings::setMaxCount(u32 new_value) {
 	max_count = new_value;
 }
@@ -120,6 +133,11 @@ void MIPSLoggerSettings::setMaxCount(u32 new_value) {
 void MIPSLoggerSettings::setFlushWhenFull(bool new_value) {
 	flush_when_full = new_value;
 }
+
+void MIPSLoggerSettings::setIgnoreForbiddenWhenRecording(bool new_value) {
+	ignore_forbidden_when_recording = new_value;
+}
+
 
 bool MIPSLoggerSettings::instance_made = false;
 std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::_only_instance;
@@ -131,6 +149,10 @@ std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::getInstance() {
 	}
 	return _only_instance;
 }
+
+
+
+
 
 MIPSLogger::MIPSLogger() {
 	disasm.setCpu(currentDebugMIPS);
@@ -145,7 +167,8 @@ bool MIPSLogger::isLogging() {
 }
 
 bool MIPSLogger::Log(u32 pc) {
-	if (!logging_on || !cur_settings || !cur_settings->log_address(pc)) return false;
+	if (!logging_on || !cur_settings) return false;
+	if (!cur_settings->log_address(pc)) return false;
 
 	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
 	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";

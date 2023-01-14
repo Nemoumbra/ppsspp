@@ -8,26 +8,52 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/Debugger/DisassemblyManager.h"
 
+enum class LoggingMode {
+	Normal,
+	LogLastNLines
+};
+
+constexpr const char* to_string(LoggingMode mode) {
+	switch (mode) {
+		case LoggingMode::Normal: {
+			return "Normal";
+		}
+		case LoggingMode::LogLastNLines: {
+			return "LogLastNLines";
+		}
+		default: {
+			return "Not implemented!";
+		}
+	}
+}
+
 
 class MIPSLoggerSettings {
 private:
+	LoggingMode mode;
 	std::map<u32, u32> forbidden_ranges;
-	u32 max_count;
+	u32 max_count; // The size of the logs storage can only increase
 	std::map<u32, std::string> additional_info;
 	bool flush_when_full;
+	bool ignore_forbidden_when_recording;
 
 	static std::shared_ptr<MIPSLoggerSettings> _only_instance;
 public:
 	MIPSLoggerSettings(int max_count_);
 	MIPSLoggerSettings();
 
+	LoggingMode getLoggingMode() const;
 	u32 getMaxCount() const;
 	bool getFlushWhenFull() const;
+	bool getIgnoreForbiddenWhenRecording() const;
 	const std::map<u32, u32>& getForbiddenRanges() const;
 	const std::map<u32, std::string>& getAdditionalInfo() const;
 
+
+	void setLoggingMode(LoggingMode new_mode);
 	void setMaxCount(u32 new_value);
 	void setFlushWhenFull(bool new_value);
+	void setIgnoreForbiddenWhenRecording(bool new_value);
 
 	bool log_address(u32 address) const;
 	bool forbid_range(u32 start, u32 size);
@@ -40,6 +66,8 @@ public:
 	static std::shared_ptr<MIPSLoggerSettings> getInstance();
 	static bool instance_made;
 };
+
+
 
 class MIPSLogger {
 private:
