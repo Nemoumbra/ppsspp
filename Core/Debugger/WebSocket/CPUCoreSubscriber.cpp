@@ -48,6 +48,7 @@ DebuggerSubscriber *WebSocketCPUCoreInit(DebuggerEventHandlerMap &map) {
 	map["cpu.loggerUpdateInfo"] = &WebSocketCPULoggerUpdateInfo;
 	map["cpu.getLoggerInfoAt"] = &WebSocketCPUGetLoggerInfoAt;
 	map["cpu.getLoggerInfo"] = &WebSocketCPUGetLoggerInfo;
+	map["cpu.updateLoggerSettings"] = &WebSocketCPUUpdateLoggerSettings;
 	return nullptr;
 }
 
@@ -128,7 +129,6 @@ void WebSocketCPUStartLogging(DebuggerRequest &req) {
 	mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
 
 	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
-		// mipsLogger.cur_settings = &default_MIPSLogger_settings;
 		if (!mipsLogger.startLogger()) {
 			return;
 		}
@@ -136,10 +136,16 @@ void WebSocketCPUStartLogging(DebuggerRequest &req) {
 		json.writeBool("logging_on", true);
 		return;
 	}
-	// std::shared_ptr<std::ofstream> logfile = std::make_shared<std::ofstream> (new std::ofstream(filename));
-	if (!mipsLogger.selectLogPath(filename) || !mipsLogger.startLogger()) {
-		return req.Fail("Cannot open file \"" + filename + "\"");
+	auto mode = mipsLogger.cur_settings->getLoggingMode();
+	if (mode == LoggingMode::Normal) {
+		if (!mipsLogger.selectLogPath(filename) || !mipsLogger.startLogger()) {
+			return req.Fail("Cannot open file \"" + filename + "\"");
+		}
 	}
+	else {
+		mipsLogger.startLogger();
+	}
+	
 	JsonWriter& json = req.Respond();
 	json.writeBool("logging_on", true);
 	return;
@@ -154,8 +160,12 @@ void WebSocketCPUFlushLogs(DebuggerRequest &req) {
 	if (mipsLogger.isLogging()) {
 		return req.Fail("Logging is on");
 	}
+	std::string filename;
+	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
 
-	mipsLogger.flush_to_file();
+	mipsLogger.flush_to_file(filename);
 	req.Respond();
 	return;
 }
@@ -316,11 +326,14 @@ void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req) {
 	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
 
 	if (mipsLogger.isLogging()) {
-		req.Fail("Logging is on");
+		return req.Fail("Logging is on");
 	}
 
 	std::string mode;
-	if (req.ParamString("mode", &mode, DebuggerParamType::OPTIONAL)) {
+	if (!req.ParamString("mode", &mode, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
+	if (req.HasParam("mode")) {
 		if (mode == "Normal") {
 			settings->setLoggingMode(LoggingMode::Normal);
 		}
@@ -333,19 +346,37 @@ void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req) {
 	}
 
 	u32 maxCount;
-	if (req.ParamU32("maxCount", &maxCount, false, DebuggerParamType::OPTIONAL)) {
+	if (!req.ParamU32("maxCount", &maxCount, false, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
+	if (req.HasParam("maxCount")) {
 		settings->setMaxCount(maxCount);
 	}
 
 	bool flushWhenFull;
-	if (req.ParamBool("flushWhenFull", &flushWhenFull, DebuggerParamType::OPTIONAL)) {
+	if (!req.ParamBool("flushWhenFull", &flushWhenFull, DebuggerParamType::OPTIONAL)) {
+		settings->setFlushWhenFull(flushWhenFull);
+	}
+	if (req.HasParam("flushWhenFull")) {
 		settings->setFlushWhenFull(flushWhenFull);
 	}
 	
 	bool ignoreForbiddenWhenRecording;
-	if (req.ParamBool("ignoreForbiddenWhenRecording", &ignoreForbiddenWhenRecording, DebuggerParamType::OPTIONAL)) {
+	if (!req.ParamBool("ignoreForbiddenWhenRecording", &ignoreForbiddenWhenRecording, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
+	if (req.HasParam("ignoreForbiddenWhenRecording")) {
 		settings->setIgnoreForbiddenWhenRecording(ignoreForbiddenWhenRecording);
 	}
+	
+	bool lastLinesCount;
+	if (!req.ParamBool("lastLinesCount", &lastLinesCount, DebuggerParamType::OPTIONAL)) {
+		return;
+	}
+	if (req.HasParam("lastLinesCount")) {
+		settings->setLineCount(lastLinesCount);
+	}
+
 	req.Respond();
 }
 

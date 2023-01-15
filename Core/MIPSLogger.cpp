@@ -7,20 +7,58 @@
 
 // #include <map>
 
+void MIPSLogger::LastNLines::store_line(const std::string & line, u32 lineCount) {
+	
+	if (lines.size() < lineCount) {
+		lines.push_back(line);
+		return;
+	}
+	// else lines.size() == N
+	lines[cur_index] = line;
+	++cur_index;
+	if (cur_index == lineCount) {
+		cur_index = 0;
+	}
+}
+
+bool MIPSLogger::LastNLines::flush_to_file(const std::string & filename, u32 lineCount) {
+	std::ofstream output(filename);
+	if (!output) return false;
+	if (lines.size() < lineCount) {
+		for (const auto& line : lines) {
+			output << line << "\n";
+		}
+		return true;
+	}
+
+	for (u32 i = cur_index; i < lineCount; ++i) {
+		output << lines[i] << "\n";
+	}
+	for (u32 i = 0; i < cur_index; ++i) {
+		output << lines[i] << "\n";
+	}
+	return true;
+}
 
 MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) :
+	mode(LoggingMode::Normal),
 	max_count(max_count_),
 	forbidden_ranges(),
 	additional_info(),
-	flush_when_full(false)
+	flush_when_full(false),
+	ignore_forbidden_when_recording(false),
+	lineCount(100)
 {}
 
 MIPSLoggerSettings::MIPSLoggerSettings() :
+	mode(LoggingMode::Normal),
 	max_count(100000),
 	forbidden_ranges(),
 	additional_info(),
-	flush_when_full(false)
-{} // random number
+	flush_when_full(false),
+	ignore_forbidden_when_recording(false),
+	lineCount(100)
+{}
 
 LoggingMode MIPSLoggerSettings::getLoggingMode() const {
 	return mode;
@@ -36,6 +74,10 @@ bool MIPSLoggerSettings::getFlushWhenFull() const {
 
 bool MIPSLoggerSettings::getIgnoreForbiddenWhenRecording() const {
 	return ignore_forbidden_when_recording;
+}
+
+u32 MIPSLoggerSettings::getLineCount() const {
+	return lineCount;
 }
 
 bool MIPSLoggerSettings::log_address(u32 address) const {
@@ -138,6 +180,10 @@ void MIPSLoggerSettings::setIgnoreForbiddenWhenRecording(bool new_value) {
 	ignore_forbidden_when_recording = new_value;
 }
 
+void MIPSLoggerSettings::setLineCount(u32 new_value) {
+	lineCount = new_value;
+}
+
 
 bool MIPSLoggerSettings::instance_made = false;
 std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::_only_instance;
@@ -152,7 +198,25 @@ std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::getInstance() {
 
 
 
-
+std::string MIPSLogger::compute_line(u32 pc) {
+	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
+	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
+	disasm_buffer << disasm_line.name << " " << disasm_line.params;
+	std::string format;
+	if (cur_settings->get_additional_log(pc, format)) {
+		disasm_buffer << " // ";
+		std::string additional;
+		if (CBreakPoints::EvaluateLogFormat(currentDebugMIPS, format, additional)) {
+			disasm_buffer << additional;
+		}
+		else {
+			disasm_buffer << format;
+		}
+	}
+	std::string res = disasm_buffer.str();
+	disasm_buffer.str(std::string());
+	return res;
+}
 
 MIPSLogger::MIPSLogger() {
 	disasm.setCpu(currentDebugMIPS);
@@ -168,32 +232,35 @@ bool MIPSLogger::isLogging() {
 
 bool MIPSLogger::Log(u32 pc) {
 	if (!logging_on || !cur_settings) return false;
-	if (!cur_settings->log_address(pc)) return false;
 
-	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
-	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
-	disasm_buffer << disasm_line.name << " " << disasm_line.params;
-	std::string format;
-	if (cur_settings->get_additional_log(pc, format)) {
-		disasm_buffer << " // ";
-		std::string additional;
-		if (CBreakPoints::EvaluateLogFormat(currentDebugMIPS, format, additional)) {
-			disasm_buffer << additional;
-		}
-		else {
-			disasm_buffer << format;
+	auto mode = cur_settings->getLoggingMode();
+	if (mode == LoggingMode::Normal) {
+		if (!cur_settings->log_address(pc)) return false;
+		if (logs_storage.size() == cur_settings->getMaxCount()) return false;
+	}
+	else {
+		// we can either ignore or not
+		if (!cur_settings->getIgnoreForbiddenWhenRecording() && !cur_settings->log_address(pc)) return false;
+	}
+	
+	auto line = compute_line(pc);
+
+	if (mode == LoggingMode::LogLastNLines) {
+		auto lastLinesCount = cur_settings->getLineCount();
+		cyclic_buffer.store_line(line, lastLinesCount);
+		return true;
+	}
+	if (mode == LoggingMode::Normal) {
+		logs_storage.push_back(line);
+		if (logs_storage.size() == cur_settings->getMaxCount()) {
+			// we are done, let's start stepping
+			Core_EnableStepping(true, "mipslogger.overflow");
+			if (cur_settings->getFlushWhenFull()) {
+				flush_to_file();
+			}
 		}
 	}
-	logs_storage.push_back(disasm_buffer.str());
-	disasm_buffer.str(std::string());
-
-	if (logs_storage.size() == cur_settings->getMaxCount()) {
-		// we are done, let's start stepping
-		Core_EnableStepping(true, "mipslogger.overflow");
-		if (cur_settings->getFlushWhenFull()) {
-			flush_to_file();
-		}
-	}
+	
 	return true;
 }
 
@@ -208,29 +275,35 @@ bool MIPSLogger::selectLogPath(const std::string& output_path) {
 }
 
 void MIPSLogger::stopLogger() {
-	if (output) {
+	/*if (output) {
 		output.close();
-	}
+	}*/
 	logging_on = false;
 }
 
-bool MIPSLogger::flush_to_file() {
-	if (logging_on || !output) {
+bool MIPSLogger::flush_to_file(const std::string& filename) {
+	// filename is only used in the LogLastNLines mode
+
+	if (logging_on) {
 		return false;
 	}
-	for (const auto& log : logs_storage) {
-		output << log << "\n";
+	auto mode = cur_settings->getLoggingMode();
+	if (mode == LoggingMode::Normal) {
+		if (!output) return false;
+		for (const auto& log : logs_storage) {
+			output << log << "\n";
+		}
+		// Not catching exceptions here.
+		output.flush();
+		return true;
 	}
-	// Not catching exceptions here.
-
-	//*output << disasm_buffer.rdbuf();
-	//disasm_buffer.clear();
-	output.flush();
-	return true;
+	auto lastLinesCount = cur_settings->getLineCount();
+	return cyclic_buffer.flush_to_file(filename, lastLinesCount);
 }
 
 bool MIPSLogger::startLogger() {
-	if (!output || !cur_settings) return false;
+	if (!cur_settings) return false;
+	if ((cur_settings->getLoggingMode() == LoggingMode::Normal) && !output) return false;
 	logging_on = true;
 	return true;
 }
