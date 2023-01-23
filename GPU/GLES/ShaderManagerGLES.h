@@ -27,8 +27,13 @@
 #include "GPU/Common/VertexShaderGenerator.h"
 #include "GPU/Common/FragmentShaderGenerator.h"
 
+class DrawEngineGLES;
 class Shader;
 struct ShaderLanguageDesc;
+
+namespace File {
+class IOFile;
+}
 
 class LinkedShader {
 public:
@@ -37,6 +42,7 @@ public:
 
 	void use(const ShaderID &VSID);
 	void UpdateUniforms(const ShaderID &VSID, bool useBufferedRendering, const ShaderLanguageDesc &shaderLanguage);
+	void Delete();
 
 	GLRenderManager *render_;
 	Shader *vs_;
@@ -96,6 +102,8 @@ public:
 	int u_uvscaleoffset;
 	int u_texclamp;
 	int u_texclampoff;
+	int u_texNoAlpha;
+	int u_texMul;
 
 	// Lighting
 	int u_lightControl;
@@ -177,10 +185,11 @@ public:
 	std::vector<std::string> DebugGetShaderIDs(DebugShaderType type);
 	std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType);
 
-	void Load(const Path &filename);
+	bool LoadCacheFlags(File::IOFile &f, DrawEngineGLES *drawEngine);
+	bool LoadCache(File::IOFile &f);
 	bool ContinuePrecompile(float sliceTime = 1.0f / 60.0f);
 	void CancelPrecompile();
-	void Save(const Path &filename);
+	void SaveCache(const Path &filename, DrawEngineGLES *drawEngine);
 
 private:
 	void Clear();

@@ -23,7 +23,6 @@ std::string VertexShaderDesc(const VShaderID &id) {
 	if (id.Bit(VS_BIT_HAS_NORMAL)) desc << "N ";
 	if (id.Bit(VS_BIT_LMODE)) desc << "LM ";
 	if (id.Bit(VS_BIT_NORM_REVERSE)) desc << "RevN ";
-	if (id.Bit(VS_BIT_DO_TEXTURE)) desc << "Tex ";
 	int uvgMode = id.Bits(VS_BIT_UVGEN_MODE, 2);
 	if (uvgMode == GE_TEXMAP_TEXTURE_MATRIX) {
 		int uvprojMode = id.Bits(VS_BIT_UVPROJ_MODE, 2);
@@ -91,7 +90,6 @@ void ComputeVertexShaderID(VShaderID *id_out, VertexDecoder *vertexDecoder, bool
 		!isModeThrough && gstate_c.submitType == SubmitType::DRAW;  // neither hw nor sw spline/bezier. See #11692
 
 	VShaderID id;
-	id.SetBit(VS_BIT_LMODE, lmode);
 	id.SetBit(VS_BIT_IS_THROUGH, isModeThrough);
 	id.SetBit(VS_BIT_HAS_COLOR, vtypeHasColor);
 	id.SetBit(VS_BIT_VERTEX_RANGE_CULLING, vertexRangeCulling);
@@ -101,8 +99,6 @@ void ComputeVertexShaderID(VShaderID *id_out, VertexDecoder *vertexDecoder, bool
 	}
 
 	if (doTexture) {
-		id.SetBit(VS_BIT_DO_TEXTURE);
-
 		// UV generation mode. doShadeMapping is implicitly stored here.
 		id.SetBits(VS_BIT_UVGEN_MODE, 2, gstate.getUVGenMode());
 	}
@@ -134,6 +130,7 @@ void ComputeVertexShaderID(VShaderID *id_out, VertexDecoder *vertexDecoder, bool
 			// doShadeMapping is stored as UVGenMode, and light type doesn't matter for shade mapping.
 			id.SetBit(VS_BIT_LIGHTING_ENABLE);
 			if (gstate_c.Use(GPU_USE_LIGHT_UBERSHADER)) {
+				lmode = false;  // handled dynamically.
 				id.SetBit(VS_BIT_LIGHT_UBERSHADER);
 			} else {
 				id.SetBits(VS_BIT_MATERIAL_UPDATE, 3, gstate.getMaterialUpdate());
@@ -165,6 +162,7 @@ void ComputeVertexShaderID(VShaderID *id_out, VertexDecoder *vertexDecoder, bool
 		}
 	}
 
+	id.SetBit(VS_BIT_LMODE, lmode);
 	id.SetBit(VS_BIT_FLATSHADE, doFlatShading);
 
 	// These two bits cannot be combined, otherwise havoc occurs. We get reports that indicate this happened somehow... "ERROR: 0:14: 'u_proj' : undeclared identifier"
@@ -191,9 +189,6 @@ std::string FragmentShaderDesc(const FShaderID &id) {
 	if (id.Bit(FS_BIT_CLEARMODE)) desc << "Clear ";
 	if (id.Bit(FS_BIT_DO_TEXTURE)) desc << (id.Bit(FS_BIT_3D_TEXTURE) ? "Tex3D " : "Tex ");
 	if (id.Bit(FS_BIT_DO_TEXTURE_PROJ)) desc << "TexProj ";
-	if (id.Bit(FS_BIT_TEXALPHA)) desc << "TexAlpha ";
-	if (id.Bit(FS_BIT_TEXTURE_AT_OFFSET)) desc << "TexOffs ";
-	if (id.Bit(FS_BIT_COLOR_DOUBLE)) desc << "2x ";
 	if (id.Bit(FS_BIT_FLATSHADE)) desc << "Flat ";
 	if (id.Bit(FS_BIT_BGRA_TEXTURE)) desc << "BGRA ";
 	switch ((ShaderDepalMode)id.Bits(FS_BIT_SHADER_DEPAL_MODE, 2)) {
@@ -288,9 +283,7 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 		bool enableFog = gstate.isFogEnabled() && !isModeThrough;
 		bool enableAlphaTest = gstate.isAlphaTestEnabled() && !IsAlphaTestTriviallyTrue();
 		bool enableColorTest = gstate.isColorTestEnabled() && !IsColorTestTriviallyTrue();
-		bool enableColorDoubling = gstate.isColorDoublingEnabled() && gstate.isTextureMapEnabled();
 		bool doTextureProjection = (gstate.getUVGenMode() == GE_TEXMAP_TEXTURE_MATRIX && MatrixNeedsProjection(gstate.tgenMatrix, gstate.getUVProjMode()));
-		bool doTextureAlpha = gstate.isTextureAlphaUsed();
 		bool doFlatShading = gstate.getShadeMode() == GE_SHADE_FLAT;
 
 		ShaderDepalMode shaderDepalMode = gstate_c.shaderDepalMode;
@@ -302,23 +295,14 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 		SimulateLogicOpType simulateLogicOpType = pipelineState.blendState.simulateLogicOpType;
 		ReplaceAlphaType stencilToAlpha = pipelineState.blendState.replaceAlphaWithStencil;
 
-		// All texfuncs except replace are the same for RGB as for RGBA with full alpha.
-		// Note that checking this means that we must dirty the fragment shader ID whenever textureFullAlpha changes.
-		if (gstate_c.textureFullAlpha && gstate.getTextureFunction() != GE_TEXFUNC_REPLACE) {
-			doTextureAlpha = false;
-		}
-
 		if (gstate.isTextureMapEnabled()) {
 			id.SetBit(FS_BIT_DO_TEXTURE);
 			id.SetBits(FS_BIT_TEXFUNC, 3, gstate.getTextureFunction());
-			id.SetBit(FS_BIT_TEXALPHA, doTextureAlpha & 1); // rgb or rgba
 			if (gstate_c.needShaderTexClamp) {
-				bool textureAtOffset = gstate_c.curTextureXOffset != 0 || gstate_c.curTextureYOffset != 0;
 				// 4 bits total.
 				id.SetBit(FS_BIT_SHADER_TEX_CLAMP);
 				id.SetBit(FS_BIT_CLAMP_S, gstate.isTexCoordClampedS());
 				id.SetBit(FS_BIT_CLAMP_T, gstate.isTexCoordClampedT());
-				id.SetBit(FS_BIT_TEXTURE_AT_OFFSET, textureAtOffset);
 			}
 			id.SetBit(FS_BIT_BGRA_TEXTURE, gstate_c.bgraTexture);
 			id.SetBits(FS_BIT_SHADER_DEPAL_MODE, 2, (int)shaderDepalMode);
@@ -342,7 +326,6 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 		}
 
 		id.SetBit(FS_BIT_DO_TEXTURE_PROJ, doTextureProjection);
-		id.SetBit(FS_BIT_COLOR_DOUBLE, enableColorDoubling);
 
 		// 2 bits
 		id.SetBits(FS_BIT_STENCIL_TO_ALPHA, 2, stencilToAlpha);

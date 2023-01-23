@@ -6,14 +6,14 @@
 
 #include "Common/CommonFuncs.h"
 
-// TODO: There will be additional bits, indicating that groups of these will be
-// sent to the shader and processed there. This will cut down the number of shaders ("ubershader approach")
-// This is probably only really worth doing for lighting and bones.
+// VS_BIT_LIGHT_UBERSHADER indicates that some groups of these will be
+// sent to the shader and processed there. This cuts down the number of shaders ("ubershader approach").
 enum VShaderBit : uint8_t {
 	VS_BIT_LMODE = 0,
 	VS_BIT_IS_THROUGH = 1,
+	// bit 2 is free.
 	VS_BIT_HAS_COLOR = 3,
-	VS_BIT_DO_TEXTURE = 4,
+	// bit 4 is free.
 	VS_BIT_VERTEX_RANGE_CULLING = 5,
 	VS_BIT_SIMPLE_STEREO = 6,
 	// 7 is free.
@@ -68,13 +68,12 @@ enum FShaderBit : uint8_t {
 	FS_BIT_CLEARMODE = 0,
 	FS_BIT_DO_TEXTURE = 1,
 	FS_BIT_TEXFUNC = 2,  // 3 bits
-	FS_BIT_TEXALPHA = 5,
+	// 1 bit free at position 5
 	FS_BIT_3D_TEXTURE = 6,
 	FS_BIT_SHADER_TEX_CLAMP = 7,
 	FS_BIT_CLAMP_S = 8,
 	FS_BIT_CLAMP_T = 9,
-	FS_BIT_TEXTURE_AT_OFFSET = 10,
-	// 1 bit free
+	// 2 bits free
 	FS_BIT_ALPHA_TEST = 12,
 	FS_BIT_ALPHA_TEST_FUNC = 13,  // 3 bits
 	FS_BIT_ALPHA_AGAINST_ZERO = 16,
@@ -83,7 +82,7 @@ enum FShaderBit : uint8_t {
 	FS_BIT_COLOR_AGAINST_ZERO = 20,
 	// 1 free bit
 	FS_BIT_DO_TEXTURE_PROJ = 22,
-	FS_BIT_COLOR_DOUBLE = 23,
+	// 1 free bit
 	FS_BIT_STENCIL_TO_ALPHA = 24,  // 2 bits
 	FS_BIT_REPLACE_ALPHA_WITH_STENCIL_TYPE = 26,  // 4 bits    (ReplaceAlphaType)
 	FS_BIT_SIMULATE_LOGIC_OP_TYPE = 30,  // 2 bits

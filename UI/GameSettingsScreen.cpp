@@ -74,6 +74,10 @@
 #include "GPU/GPUInterface.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 
+#if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
+#include "UI/DarwinMemoryStickManager.h"
+#endif
+
 #if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 #pragma warning(disable:4091)  // workaround bug in VS2015 headers
 #include "Windows/MainWindow.h"
@@ -324,18 +328,6 @@ void GameSettingsScreen::CreateViews() {
 			}
 		}
 	}
-
-#if PPSSPP_PLATFORM(ANDROID)
-	if ((deviceType != DEVICE_TYPE_TV) && (deviceType != DEVICE_TYPE_VR)) {
-		static const char *deviceResolutions[] = { "Native device resolution", "Auto (same as Rendering)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP" };
-		int max_res_temp = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES)) / 480 + 2;
-		if (max_res_temp == 3)
-			max_res_temp = 4;  // At least allow 2x
-		int max_res = std::min(max_res_temp, (int)ARRAY_SIZE(deviceResolutions));
-		UI::PopupMultiChoice *hwscale = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iAndroidHwScale, gr->T("Display Resolution (HW scaler)"), deviceResolutions, 0, max_res, gr->GetName(), screenManager()));
-		hwscale->OnChoice.Handle(this, &GameSettingsScreen::OnHwScaleChange);  // To refresh the display mode
-	}
-#endif
 
 	if (deviceType != DEVICE_TYPE_VR) {
 #if !defined(MOBILE_DEVICE)
@@ -903,6 +895,10 @@ void GameSettingsScreen::CreateViews() {
 	systemSettings->Add(new Choice(sy->T("Show Memory Stick folder")))->OnClick.Handle(this, &GameSettingsScreen::OnOpenMemStick);
 #endif
 
+#if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
+	systemSettings->Add(new Choice(sy->T("Set Memory Stick folder")))->OnClick.Handle(this, &GameSettingsScreen::OnChangeMemStickDir);
+#endif
+
 #if PPSSPP_PLATFORM(ANDROID)
 	memstickDisplay_ = g_Config.memStickDirectory.ToVisualString();
 	auto memstickPath = systemSettings->Add(new ChoiceWithValueDisplay(&memstickDisplay_, sy->T("Memory Stick folder", "Memory Stick folder"), (const char *)nullptr));
@@ -1086,7 +1082,7 @@ void GameSettingsScreen::CreateViews() {
 		vrSettings->Add(new ItemHeader(vr->T("VR camera")));
 		vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fCanvasDistance, 1.0f, 15.0f, vr->T("Distance to 2D menus and scenes"), 1.0f, screenManager(), ""));
 		vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fFieldOfViewPercentage, 100.0f, 200.0f, vr->T("Field of view scale"), 10.0f, screenManager(), vr->T("% of native FoV")));
-		vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fHeadUpDisplayScale, 0.2f, 1.5f, vr->T("Heads-up display scale"), 0.1f, screenManager(), ""));
+		vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fHeadUpDisplayScale, 0.0f, 1.5f, vr->T("Heads-up display scale"), 0.1f, screenManager(), ""));
 
 		vrSettings->Add(new ItemHeader(vr->T("VR controllers")));
 		vrSettings->Add(new CheckBox(&g_Config.bEnableMotions, vr->T("Map controller movements to keys")));
@@ -1156,9 +1152,6 @@ UI::EventReturn GameSettingsScreen::OnAdhocGuides(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnImmersiveModeChange(UI::EventParams &e) {
 	System_SendMessage("immersive", "");
-	if (g_Config.iAndroidHwScale != 0) {
-		RecreateActivity();
-	}
 	return UI::EVENT_DONE;
 }
 
@@ -1173,7 +1166,16 @@ UI::EventReturn GameSettingsScreen::OnJitAffectingSetting(UI::EventParams &e) {
 }
 
 UI::EventReturn GameSettingsScreen::OnChangeMemStickDir(UI::EventParams &e) {
+#if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
+	DarwinMemoryStickManager memoryStickManager;
+	DarwinDirectoryPanelCallback callback = [] (Path thePathChosen) {
+		DarwinMemoryStickManager::setUserPreferredMemoryStickDirectory(thePathChosen);
+    };
+	
+	memoryStickManager.presentDirectoryPanel(callback);
+#else
 	screenManager()->push(new MemStickScreen(false));
+#endif
 	return UI::EVENT_DONE;
 }
 
@@ -1274,16 +1276,8 @@ UI::EventReturn GameSettingsScreen::OnFullscreenMultiChange(UI::EventParams &e) 
 }
 
 UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
-	if (g_Config.iAndroidHwScale == 1) {
-		RecreateActivity();
-	}
 	Reporting::UpdateConfig();
 	NativeMessageReceived("gpu_renderResized", "");
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnHwScaleChange(UI::EventParams &e) {
-	RecreateActivity();
 	return UI::EVENT_DONE;
 }
 

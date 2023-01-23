@@ -141,6 +141,10 @@
 #include <mach-o/dyld.h>
 #endif
 
+#if PPSSPP_PLATFORM(IOS) || PPSSPP_PLATFORM(MAC)
+#include "UI/DarwinMemoryStickManager.h"
+#endif
+
 ScreenManager *screenManager;
 std::string config_filename;
 
@@ -236,22 +240,6 @@ std::string NativeQueryConfig(std::string query) {
 		return std::string(temp);
 	} else if (query == "immersiveMode") {
 		return std::string(g_Config.bImmersiveMode ? "1" : "0");
-	} else if (query == "hwScale") {
-		int scale = g_Config.iAndroidHwScale;
-		// Override hw scale for TV type devices.
-		if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV)
-			scale = 0;
-
-		if (scale == 1) {
-			// If g_Config.iInternalResolution is also set to Auto (1), we fall back to "Device resolution" (0). It works out.
-			scale = g_Config.iInternalResolution;
-		} else if (scale >= 2) {
-			scale -= 1;
-		}
-
-		int max_res = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES)) / 480 + 1;
-		snprintf(temp, sizeof(temp), "%d", std::min(scale, max_res));
-		return std::string(temp);
 	} else if (query == "sustainedPerformanceMode") {
 		return std::string(g_Config.bSustainedPerformanceMode ? "1" : "0");
 	} else if (query == "androidJavaGL") {
@@ -554,11 +542,11 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 
 #elif PPSSPP_PLATFORM(IOS)
 	g_Config.defaultCurrentDirectory = g_Config.internalDataDirectory;
-	g_Config.memStickDirectory = Path(user_data_path);
+	g_Config.memStickDirectory = DarwinMemoryStickManager::appropriateMemoryStickDirectoryToUse();
 	g_Config.flash0Directory = Path(std::string(external_dir)) / "flash0";
 #elif PPSSPP_PLATFORM(MAC)
 	g_Config.defaultCurrentDirectory = Path(getenv("HOME"));
-	g_Config.memStickDirectory = g_Config.defaultCurrentDirectory / ".config/ppsspp";
+	g_Config.memStickDirectory = DarwinMemoryStickManager::appropriateMemoryStickDirectoryToUse();
 	g_Config.flash0Directory = Path(std::string(external_dir)) / "flash0";
 #elif PPSSPP_PLATFORM(SWITCH)
 	g_Config.memStickDirectory = g_Config.internalDataDirectory / "config/ppsspp";
@@ -681,6 +669,10 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 					gotoTouchScreenTest = true;
 				if (!strcmp(argv[i], "--gamesettings"))
 					gotoGameSettings = true;
+				if (!strncmp(argv[i], "--appendconfig=", strlen("--appendconfig=")) && strlen(argv[i]) > strlen("--appendconfig=")) {
+					g_Config.SetAppendedConfigIni(Path(std::string(argv[i] + strlen("--appendconfig="))));
+					g_Config.LoadAppendedConfig();
+				}
 				break;
 			}
 		} else {
@@ -1315,17 +1307,17 @@ bool NativeIsAtTopLevel() {
 	}
 }
 
-bool NativeTouch(const TouchInput &touch) {
-	if (screenManager) {
-		// Brute force prevent NaNs from getting into the UI system
-		if (my_isnan(touch.x) || my_isnan(touch.y)) {
-			return false;
-		}
-		screenManager->touch(touch);
-		return true;
-	} else {
-		return false;
+void NativeTouch(const TouchInput &touch) {
+	if (!screenManager) {
+		return;
 	}
+
+	// Brute force prevent NaNs from getting into the UI system.
+	// Don't think this is actually necessary in practice.
+	if (my_isnan(touch.x) || my_isnan(touch.y)) {
+		return;
+	}
+	screenManager->touch(touch);
 }
 
 bool NativeKey(const KeyInput &key) {
@@ -1353,15 +1345,15 @@ bool NativeKey(const KeyInput &key) {
 	return retval;
 }
 
-bool NativeAxis(const AxisInput &axis) {
+void NativeAxis(const AxisInput &axis) {
 	// VR actions
 	if (IsVREnabled() && !UpdateVRAxis(axis)) {
-		return false;
+		return;
 	}
 
 	if (!screenManager) {
 		// Too early.
-		return false;
+		return;
 	}
 
 	using namespace TiltEventProcessor;
@@ -1369,11 +1361,8 @@ bool NativeAxis(const AxisInput &axis) {
 	// only handle tilt events if tilt is enabled.
 	if (g_Config.iTiltInputType == TILT_NULL) {
 		// if tilt events are disabled, then run it through the usual way.
-		if (screenManager) {
-			return screenManager->axis(axis);
-		} else {
-			return false;
-		}
+		screenManager->axis(axis);
+		return;
 	}
 
 	// create the base coordinate tilt system from the calibration data.
@@ -1404,7 +1393,7 @@ bool NativeAxis(const AxisInput &axis) {
 				if (fabs(axis.value) < 0.8f && g_Config.iTiltOrientation == 2) // Auto tilt switch
 					verticalTilt = false;
 				else
-					return false; // Tilt on Z instead
+					return; // Tilt on Z instead
 			}
 			if (portrait) {
 				currentTilt.x_ = axis.value;
@@ -1426,7 +1415,7 @@ bool NativeAxis(const AxisInput &axis) {
 				if (fabs(axis.value) < 0.8f && g_Config.iTiltOrientation == 2) // Auto tilt switch
 					verticalTilt = true;
 				else
-					return false; // Tilt on X instead
+					return; // Tilt on X instead
 			}
 			if (portrait) {
 				currentTilt.x_ = -axis.value;
@@ -1442,13 +1431,12 @@ bool NativeAxis(const AxisInput &axis) {
 			//Don't know how to handle these. Someone should figure it out.
 			//Does the Ouya even have an accelerometer / gyro? I can't find any reference to these
 			//in the Ouya docs...
-			return false;
+			return;
 
 		default:
 			// Don't take over completely!
-			if (!screenManager)
-				return false;
-			return screenManager->axis(axis);
+			screenManager->axis(axis);
+			return;
 	}
 
 	//figure out the sensitivity of the tilt. (sensitivity is originally 0 - 100)
@@ -1463,7 +1451,6 @@ bool NativeAxis(const AxisInput &axis) {
 	Tilt trueTilt = GenTilt(baseTilt, currentTilt, g_Config.bInvertTiltX, g_Config.bInvertTiltY, g_Config.fDeadzoneRadius, xSensitivity, ySensitivity);
 
 	TranslateTiltToInput(trueTilt);
-	return true;
 }
 
 void NativeMessageReceived(const char *message, const char *value) {

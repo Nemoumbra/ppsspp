@@ -207,6 +207,12 @@ void ShaderManagerDX9::VSSetFloat24Uniform3(int creg, const u32 data[3]) {
 	device_->SetVertexShaderConstantF(creg, f, 1);
 }
 
+void ShaderManagerDX9::VSSetFloat24Uniform3Normalized(int creg, const u32 data[3]) {
+	float f[4];
+	ExpandFloat24x3ToFloat4AndNormalize(f, data);
+	device_->SetVertexShaderConstantF(creg, f, 1);
+}
+
 void ShaderManagerDX9::VSSetColorUniform3Alpha(int creg, u32 color, u8 alpha) {
 	float f[4];
 	Uint8x3ToFloat4_AlphaUint8(f, color, alpha);
@@ -261,7 +267,7 @@ static void ConvertProjMatrixToD3DThrough(Matrix4x4 &in) {
 	in.translateAndScale(Vec3(xoff, yoff, 0.5f), Vec3(1.0f, 1.0f, 0.5f));
 }
 
-const uint64_t psUniforms = DIRTY_TEXENV | DIRTY_ALPHACOLORREF | DIRTY_ALPHACOLORMASK | DIRTY_FOGCOLOR | DIRTY_STENCILREPLACEVALUE | DIRTY_SHADERBLEND | DIRTY_TEXCLAMP | DIRTY_MIPBIAS;
+const uint64_t psUniforms = DIRTY_TEXENV | DIRTY_TEX_ALPHA_MUL | DIRTY_ALPHACOLORREF | DIRTY_ALPHACOLORMASK | DIRTY_FOGCOLOR | DIRTY_STENCILREPLACEVALUE | DIRTY_SHADERBLEND | DIRTY_TEXCLAMP | DIRTY_MIPBIAS;
 
 void ShaderManagerDX9::PSUpdateUniforms(u64 dirtyUniforms) {
 	if (dirtyUniforms & DIRTY_TEXENV) {
@@ -279,7 +285,11 @@ void ShaderManagerDX9::PSUpdateUniforms(u64 dirtyUniforms) {
 	if (dirtyUniforms & DIRTY_STENCILREPLACEVALUE) {
 		PSSetFloat(CONST_PS_STENCILREPLACE, (float)gstate.getStencilTestRef() * (1.0f / 255.0f));
 	}
-
+	if (dirtyUniforms & DIRTY_TEX_ALPHA_MUL) {
+		// NOTE: Reversed value, more efficient in shader.
+		PSSetFloat(CONST_PS_TEX_NO_ALPHA, gstate.isTextureAlphaUsed() ? 0.0f : 1.0f);
+		PSSetFloat(CONST_PS_TEX_MUL, gstate.isColorDoublingEnabled() ? 2.0f : 1.0f);
+	}
 	if (dirtyUniforms & DIRTY_SHADERBLEND) {
 		PSSetColorUniform3(CONST_PS_BLENDFIXA, gstate.getFixA());
 		PSSetColorUniform3(CONST_PS_BLENDFIXB, gstate.getFixB());
@@ -491,21 +501,11 @@ void ShaderManagerDX9::VSUpdateUniforms(u64 dirtyUniforms) {
 	for (int i = 0; i < 4; i++) {
 		if (dirtyUniforms & (DIRTY_LIGHT0 << i)) {
 			if (gstate.isDirectionalLight(i)) {
-				// Prenormalize
-				float x = getFloat24(gstate.lpos[i * 3 + 0]);
-				float y = getFloat24(gstate.lpos[i * 3 + 1]);
-				float z = getFloat24(gstate.lpos[i * 3 + 2]);
-				float len = sqrtf(x*x + y*y + z*z);
-				if (len == 0.0f)
-					len = 1.0f;
-				else
-					len = 1.0f / len;
-				float vec[3] = { x * len, y * len, z * len };
-				VSSetFloatArray(CONST_VS_LIGHTPOS + i, vec, 3);
+				VSSetFloat24Uniform3Normalized(CONST_VS_LIGHTPOS + i, &gstate.lpos[i * 3]);
 			} else {
 				VSSetFloat24Uniform3(CONST_VS_LIGHTPOS + i, &gstate.lpos[i * 3]);
 			}
-			VSSetFloat24Uniform3(CONST_VS_LIGHTDIR + i, &gstate.ldir[i * 3]);
+			VSSetFloat24Uniform3Normalized(CONST_VS_LIGHTDIR + i, &gstate.ldir[i * 3]);
 			VSSetFloat24Uniform3(CONST_VS_LIGHTATT + i, &gstate.latt[i * 3]);
 			float angle_spotCoef[4] = { getFloat24(gstate.lcutoff[i]), getFloat24(gstate.lconv[i]) };
 			VSSetFloatUniform4(CONST_VS_LIGHTANGLE_SPOTCOEF + i, angle_spotCoef);

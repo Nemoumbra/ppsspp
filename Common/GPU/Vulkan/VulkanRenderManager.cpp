@@ -169,10 +169,31 @@ void VKRGraphicsPipeline::DestroyVariants(VulkanContext *vulkan, bool msaaOnly) 
 	sampleCount_ = VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM;
 }
 
+void VKRGraphicsPipeline::DestroyVariantsInstant(VkDevice device) {
+	for (size_t i = 0; i < (size_t)RenderPassType::TYPE_COUNT; i++) {
+		if (pipeline[i]) {
+			vkDestroyPipeline(device, pipeline[i]->BlockUntilReady(), nullptr);
+			delete pipeline[i];
+			pipeline[i] = nullptr;
+		}
+	}
+}
+
+VKRGraphicsPipeline::~VKRGraphicsPipeline() {
+	// This is called from the callbacked queued in QueueForDeletion.
+	// Here we are free to directly delete stuff, don't need to queue.
+	for (size_t i = 0; i < (size_t)RenderPassType::TYPE_COUNT; i++) {
+		_assert_(!pipeline[i]);
+	}
+	if (desc)
+		desc->Release();
+}
+
 void VKRGraphicsPipeline::QueueForDeletion(VulkanContext *vulkan) {
-	DestroyVariants(vulkan, false);
-	vulkan->Delete().QueueCallback([](void *p) {
+	// Can't destroy variants here, the pipeline still lives for a while.
+	vulkan->Delete().QueueCallback([](VulkanContext *vulkan, void *p) {
 		VKRGraphicsPipeline *pipeline = (VKRGraphicsPipeline *)p;
+		pipeline->DestroyVariantsInstant(vulkan->GetDevice());
 		delete pipeline;
 	}, this);
 }
@@ -537,7 +558,7 @@ VkCommandBuffer VulkanRenderManager::GetInitCmd() {
 	return frameData_[curFrame].GetInitCmd(vulkan_);
 }
 
-VKRGraphicsPipeline *VulkanRenderManager::CreateGraphicsPipeline(VKRGraphicsPipelineDesc *desc, PipelineFlags pipelineFlags, uint32_t variantBitmask, VkSampleCountFlagBits sampleCount, const char *tag) {
+VKRGraphicsPipeline *VulkanRenderManager::CreateGraphicsPipeline(VKRGraphicsPipelineDesc *desc, PipelineFlags pipelineFlags, uint32_t variantBitmask, VkSampleCountFlagBits sampleCount, bool cacheLoad, const char *tag) {
 	VKRGraphicsPipeline *pipeline = new VKRGraphicsPipeline(pipelineFlags, tag);
 
 	if (!desc->vertexShader || !desc->fragmentShader) {
@@ -547,8 +568,8 @@ VKRGraphicsPipeline *VulkanRenderManager::CreateGraphicsPipeline(VKRGraphicsPipe
 
 	pipeline->desc = desc;
 	pipeline->desc->AddRef();
-	if (curRenderStep_) {
-		// The common case
+	if (curRenderStep_ && !cacheLoad) {
+		// The common case during gameplay.
 		pipelinesToCheck_.push_back(pipeline);
 	} else {
 		if (!variantBitmask) {

@@ -46,9 +46,9 @@ static bool vrFlatGame = false;
 static float vrMatrix[VR_MATRIX_COUNT][16];
 static bool vrMirroring[VR_MIRRORING_COUNT];
 
-static bool(*NativeAxis)(const AxisInput &axis);
-static bool(*NativeKey)(const KeyInput &key);
-static bool(*NativeTouch)(const TouchInput &touch);
+static void (*NativeAxis)(const AxisInput &axis);
+static bool (*NativeKey)(const KeyInput &key);
+static void (*NativeTouch)(const TouchInput &touch);
 
 /*
 ================================================================================
@@ -189,7 +189,7 @@ void GetVRResolutionPerEye(int* width, int* height) {
 	}
 }
 
-void SetVRCallbacks(bool(*axis)(const AxisInput &axis), bool(*key)(const KeyInput &key), bool(*touch)(const TouchInput &touch)) {
+void SetVRCallbacks(void (*axis)(const AxisInput &axis), bool(*key)(const KeyInput &key), void (*touch)(const TouchInput &touch)) {
 	NativeAxis = axis;
 	NativeKey = key;
 	NativeTouch = touch;
@@ -327,7 +327,7 @@ void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale) {
 					case JOYSTICK_AXIS_Z:
 						if (axis.second < -0.75f) g_Config.fHeadUpDisplayScale -= 0.01f;
 						if (axis.second > 0.75f) g_Config.fHeadUpDisplayScale += 0.01f;
-						g_Config.fHeadUpDisplayScale = clampFloat(g_Config.fHeadUpDisplayScale, 0.2f, 1.5f);
+						g_Config.fHeadUpDisplayScale = clampFloat(g_Config.fHeadUpDisplayScale, 0.0f, 1.5f);
 						break;
 					case JOYSTICK_AXIS_RZ:
 						if (axis.second > 0.75f) g_Config.fCameraDistance -= 0.1f;
@@ -779,10 +779,14 @@ void UpdateVRParams(float* projMatrix, float* viewMatrix) {
 
 		switch (variant) {
 			case 0: //e.g. ATV
-			case 1: //untested
 				vrMirroring[VR_MIRRORING_PITCH] = false;
 				vrMirroring[VR_MIRRORING_YAW] = true;
 				vrMirroring[VR_MIRRORING_ROLL] = true;
+				break;
+			case 1: //e.g. Tales of the World
+				vrMirroring[VR_MIRRORING_PITCH] = false;
+				vrMirroring[VR_MIRRORING_YAW] = false;
+				vrMirroring[VR_MIRRORING_ROLL] = false;
 				break;
 			case 2: //e.g.PES 2014
 			case 3: //untested

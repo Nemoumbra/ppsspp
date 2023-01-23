@@ -419,9 +419,6 @@ public:
 
 	bool bSystemControls;
 
-	// Use the hardware scaler to scale up the image to save fillrate. Similar to Windows' window size, really.
-	int iAndroidHwScale;  // 0 = device resolution. 1 = 480x272 (extended to correct aspect), 2 = 960x544 etc.
-
 	// Risky JIT optimizations
 	bool bDiscardRegsOnJRRA;
 
@@ -570,6 +567,8 @@ public:
 	void ClearRecentIsos();
 
 	const std::map<std::string, std::pair<std::string, int>> &GetLangValuesMapping();
+	bool LoadAppendedConfig();
+	void SetAppendedConfigIni(const Path &path);
 
 protected:
 	void LoadStandardControllerIni();
@@ -588,6 +587,9 @@ private:
 	Path iniFilename_;
 	Path controllerIniFilename_;
 	Path searchPath_;
+	Path appendedConfigFileName_;
+	// A set make more sense, but won't have many entry, and I dont want to include the whole std::set header here
+	std::vector<std::string> appendedConfigUpdatedGames_;
 	ConfigPrivate *private_ = nullptr;
 };
 

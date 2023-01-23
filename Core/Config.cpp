@@ -669,34 +669,6 @@ static int DefaultFastForwardMode() {
 #endif
 }
 
-static int DefaultAndroidHwScale() {
-#ifdef __ANDROID__
-	if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 19 || System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV) {
-		// Arbitrary cutoff at Kitkat - modern devices are usually powerful enough that hw scaling
-		// doesn't really help very much and mostly causes problems. See #11151
-		return 0;
-	}
-
-	// Get the real resolution as passed in during startup, not dp_xres and stuff
-	int xres = System_GetPropertyInt(SYSPROP_DISPLAY_XRES);
-	int yres = System_GetPropertyInt(SYSPROP_DISPLAY_YRES);
-
-	if (xres <= 960) {
-		// Smaller than the PSP*2, let's go native.
-		return 0;
-	} else if (xres <= 480 * 3) {  // 720p xres
-		// Small-ish screen, we should default to 2x
-		return 2 + 1;
-	} else {
-		// Large or very large screen. Default to 3x psp resolution.
-		return 3 + 1;
-	}
-	return 0;
-#else
-	return 1;
-#endif
-}
-
 // See issue 14439. Should possibly even block these devices from selecting VK.
 const char * const vulkanDefaultBlacklist[] = {
 	"Sony:BRAVIA VH1",
@@ -889,7 +861,6 @@ static ConfigSetting graphicsSettings[] = {
 	ReportedConfigSetting("TextureFiltering", &g_Config.iTexFiltering, 1, true, true),
 	ReportedConfigSetting("BufferFiltering", &g_Config.iBufFilter, SCALE_LINEAR, true, true),
 	ReportedConfigSetting("InternalResolution", &g_Config.iInternalResolution, &DefaultInternalResolution, true, true),
-	ReportedConfigSetting("AndroidHwScale", &g_Config.iAndroidHwScale, &DefaultAndroidHwScale),
 	ReportedConfigSetting("HighQualityDepth", &g_Config.bHighQualityDepth, true, true, true),
 	ReportedConfigSetting("FrameSkip", &g_Config.iFrameSkip, 0, true, true),
 	ReportedConfigSetting("FrameSkipType", &g_Config.iFrameSkipType, 0, true, true),
@@ -1338,6 +1309,29 @@ void Config::UpdateIniLocation(const char *iniFileName, const char *controllerIn
 	const char *controlsIniFilename = IsVREnabled() ? "controlsvr.ini" : "controls.ini";
 	controllerIniFilename_ = FindConfigFile(useControllerIniFilename ? controllerIniFilename : controlsIniFilename);
 }
+
+bool Config::LoadAppendedConfig() {
+	IniFile iniFile;
+	if (!iniFile.Load(appendedConfigFileName_)) {
+		ERROR_LOG(LOADER, "Failed to read appended config '%s'.", appendedConfigFileName_.c_str());
+		return false;
+	}
+
+	IterateSettings(iniFile, [&iniFile](Section *section, ConfigSetting *setting) {
+		if (iniFile.Exists(section->name().c_str(), setting->iniKey_))
+			setting->Get(section);
+	});
+
+	INFO_LOG(LOADER, "Loaded appended config '%s'.", appendedConfigFileName_.c_str());
+
+	Save("Loaded appended config"); // Let's prevent reset
+	return true;
+}
+
+void Config::SetAppendedConfigIni(const Path &path) {
+	appendedConfigFileName_ = path;
+}
+
 
 void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 	if (!bUpdatedInstanceCounter) {
@@ -1945,6 +1939,14 @@ bool Config::loadGameConfig(const std::string &pGameId, const std::string &title
 	});
 
 	KeyMap::LoadFromIni(iniFile);
+	
+	if (!appendedConfigFileName_.ToString().empty() && 
+		std::find(appendedConfigUpdatedGames_.begin(), appendedConfigUpdatedGames_.end(), pGameId) == appendedConfigUpdatedGames_.end()) {
+
+		LoadAppendedConfig();
+		appendedConfigUpdatedGames_.push_back(pGameId);
+	}
+
 	PostLoadCleanup(true);
 	return true;
 }

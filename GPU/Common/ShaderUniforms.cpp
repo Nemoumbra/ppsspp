@@ -198,8 +198,13 @@ void BaseUpdateUniforms(UB_VS_FS_Base *ub, uint64_t dirtyUniforms, bool flipView
 		}
 	}
 
+	if (dirtyUniforms & DIRTY_TEX_ALPHA_MUL) {
+		ub->texNoAlpha = gstate.isTextureAlphaUsed() ? 0.0f : 1.0f;
+		ub->texMul = gstate.isColorDoublingEnabled() ? 2.0f : 1.0f;
+	}
+
 	if (dirtyUniforms & DIRTY_STENCILREPLACEVALUE) {
-		ub->stencil = (float)gstate.getStencilTestRef() * (1.0 / 255.0);
+		ub->stencilReplaceValue = (float)gstate.getStencilTestRef() * (1.0 / 255.0);
 	}
 
 	// Note - this one is not in lighting but in transformCommon as it has uses beyond lighting
@@ -274,6 +279,7 @@ void BaseUpdateUniforms(UB_VS_FS_Base *ub, uint64_t dirtyUniforms, bool flipView
 	}
 }
 
+// For "light ubershader" bits.
 uint32_t PackLightControlBits() {
 	// Bit organization
 	// Bottom 4 bits are enable bits for each light.
@@ -288,12 +294,15 @@ uint32_t PackLightControlBits() {
 
 		u32 computation = (u32)gstate.getLightComputation(i);  // 2 bits
 		u32 type = (u32)gstate.getLightType(i);  // 2 bits
+		if (type == 3) { type = 0; }  // Don't want to handle this degenerate case in the shader.
 		lightControl |= computation << (4 + i * 4);
 		lightControl |= type << (4 + i * 4 + 2);
 	}
 
+	// Material update is 3 bits.
 	lightControl |= gstate.getMaterialUpdate() << 20;
-
+	// LMODE is 1 bit.
+	lightControl |= gstate.isUsingSecondaryColor() << 23;
 	return lightControl;
 }
 
@@ -319,20 +328,12 @@ void LightUpdateUniforms(UB_VS_Lights *ub, uint64_t dirtyUniforms) {
 		if (dirtyUniforms & (DIRTY_LIGHT0 << i)) {
 			if (gstate.isDirectionalLight(i)) {
 				// Prenormalize
-				float x = getFloat24(gstate.lpos[i * 3 + 0]);
-				float y = getFloat24(gstate.lpos[i * 3 + 1]);
-				float z = getFloat24(gstate.lpos[i * 3 + 2]);
-				float len = sqrtf(x*x + y*y + z*z);
-				if (len == 0.0f)
-					len = 1.0f;
-				else
-					len = 1.0f / len;
-				float vec[3] = { x * len, y * len, z * len };
-				CopyFloat3To4(ub->lpos[i], vec);
+				ExpandFloat24x3ToFloat4AndNormalize(ub->lpos[i], &gstate.lpos[i * 3]);
 			} else {
 				ExpandFloat24x3ToFloat4(ub->lpos[i], &gstate.lpos[i * 3]);
 			}
-			ExpandFloat24x3ToFloat4(ub->ldir[i], &gstate.ldir[i * 3]);
+			// ldir is only used for spotlights. Prenormalize it.
+			ExpandFloat24x3ToFloat4AndNormalize(ub->ldir[i], &gstate.ldir[i * 3]);
 			ExpandFloat24x3ToFloat4(ub->latt[i], &gstate.latt[i * 3]);
 			float lightAngle_spotCoef[2] = { getFloat24(gstate.lcutoff[i]), getFloat24(gstate.lconv[i]) };
 			CopyFloat2To4(ub->lightAngle_SpotCoef[i], lightAngle_spotCoef);

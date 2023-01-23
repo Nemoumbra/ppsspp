@@ -744,12 +744,10 @@ bool LogoScreen::key(const KeyInput &key) {
 	return false;
 }
 
-bool LogoScreen::touch(const TouchInput &touch) {
+void LogoScreen::touch(const TouchInput &touch) {
 	if (touch.flags & TOUCH_DOWN) {
 		Next();
-		return true;
 	}
-	return false;
 }
 
 void LogoScreen::render() {
@@ -1106,7 +1104,7 @@ void SettingInfoMessage::Draw(UIContext &dc) {
 	}
 
 	if (alpha >= 0.1f) {
-		UI::Style style = dc.theme->popupTitle;
+		UI::Style style = dc.theme->popupStyle;
 		style.background.color = colorAlpha(style.background.color, alpha - 0.1f);
 		dc.FillRect(style.background, bounds_);
 	}
