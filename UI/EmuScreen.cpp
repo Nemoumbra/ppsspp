@@ -25,6 +25,7 @@ using namespace std::placeholders;
 #include "Common/Render/TextureAtlas.h"
 #include "Common/GPU/OpenGL/GLFeatures.h"
 #include "Common/Render/Text/draw_text.h"
+#include "Common/Battery/Battery.h"
 
 #include "Common/UI/Root.h"
 #include "Common/UI/UI.h"
@@ -89,6 +90,8 @@ using namespace std::placeholders;
 #include "UI/ProfilerDraw.h"
 #include "UI/DiscordIntegration.h"
 #include "UI/ChatScreen.h"
+
+#include "Core/Reporting.h"
 
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 #include "Windows/MainWindow.h"
@@ -537,27 +540,6 @@ void EmuScreen::sendMessage(const char *message, const char *value) {
 			}
 		}
 	}
-}
-
-//tiltInputCurve implements a smooth deadzone as described here:
-//http://www.gamasutra.com/blogs/JoshSutphin/20130416/190541/Doing_Thumbstick_Dead_Zones_Right.php
-inline float tiltInputCurve(float x) {
-	const float deadzone = g_Config.fDeadzoneRadius;
-	const float factor = 1.0f / (1.0f - deadzone);
-
-	if (x > deadzone) {
-		return (x - deadzone) * (x - deadzone) * factor;
-	} else if (x < -deadzone) {
-		return -(x + deadzone) * (x + deadzone) * factor;
-	} else {
-		return 0.0f;
-	}
-}
-
-inline float clamp1(float x) {
-	if (x > 1.0f) return 1.0f;
-	if (x < -1.0f) return -1.0f;
-	return x;
 }
 
 void EmuScreen::touch(const TouchInput &touch) {
@@ -1158,7 +1140,7 @@ static const char *CPUCoreAsString(int core) {
 	}
 }
 
-static void DrawCrashDump(UIContext *ctx) {
+static void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
 	const ExceptionInfo &info = Core_GetExceptionInfo();
 
 	auto sy = GetI18NCategory("System");
@@ -1170,12 +1152,22 @@ static void DrawCrashDump(UIContext *ctx) {
 	ctx->Flush();
 	if (ctx->Draw()->GetFontAtlas()->getFont(ubuntu24))
 		ctx->BindFontTexture();
-	ctx->Draw()->SetFontScale(1.2f, 1.2f);
+	ctx->Draw()->SetFontScale(1.1f, 1.1f);
 	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T("Game crashed"), x, y, 0xFFFFFFFF);
 
 	char statbuf[4096];
 	char versionString[256];
 	snprintf(versionString, sizeof(versionString), "%s", PPSSPP_GIT_VERSION);
+
+	char crcStr[16]{};
+	if (Reporting::HasCRC(gamePath)) {
+		u32 crc = Reporting::RetrieveCRC(gamePath);
+		snprintf(crcStr, sizeof(crcStr), "CRC: %08x\n", crc);
+	} else {
+		// Queue it for calculation, we want it!
+		// It's OK to call this repeatedly until we have it, which is natural here.
+		Reporting::QueueCRC(gamePath);
+	}
 
 	// TODO: Draw a lot more information. Full register set, and so on.
 
@@ -1196,23 +1188,24 @@ static void DrawCrashDump(UIContext *ctx) {
 
 	ctx->PushScissor(Bounds(x, y, columnWidth, height));
 
-
 	INFO_LOG(SYSTEM, "DrawCrashDump (%d %d %d %d)", x, y, columnWidth, height);
 
 	snprintf(statbuf, sizeof(statbuf), R"(%s
 %s (%s)
 %s (%s)
 %s v%d (%s)
+%s
 )",
 		ExceptionTypeAsString(info.type),
 		g_paramSFO.GetDiscID().c_str(), g_paramSFO.GetValueString("TITLE").c_str(),
 		versionString, build,
-		sysName.c_str(), sysVersion, GetCompilerABI()
+		sysName.c_str(), sysVersion, GetCompilerABI(),
+		crcStr
 	);
 
 	ctx->Draw()->SetFontScale(.7f, .7f);
 	ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-	y += 140;
+	y += 160;
 
 	if (info.type == ExceptionType::MEMORY) {
 		snprintf(statbuf, sizeof(statbuf), R"(
@@ -1272,6 +1265,7 @@ Invalid / Unknown (%d)
 
 	ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
 	ctx->Flush();
+	ctx->Draw()->SetFontScale(1.0f, 1.0f);
 	ctx->RebindTexture();
 }
 
@@ -1294,23 +1288,30 @@ static void DrawFPS(UIContext *ctx, const Bounds &bounds) {
 	FontID ubuntu24("UBUNTU24");
 	float vps, fps, actual_fps;
 	__DisplayGetFPS(&vps, &fps, &actual_fps);
-	char fpsbuf[256];
-	switch (g_Config.iShowFPSCounter) {
-	case 1:
-		snprintf(fpsbuf, sizeof(fpsbuf), "Speed: %0.1f%%", vps / (59.94f / 100.0f)); break;
-	case 2:
-		snprintf(fpsbuf, sizeof(fpsbuf), "FPS: %0.1f", actual_fps); break;
-	case 3:
-		snprintf(fpsbuf, sizeof(fpsbuf), "%0.0f/%0.0f (%0.1f%%)", actual_fps, fps, vps / (59.94f / 100.0f)); break;
-	default:
-		return;
+
+	char fpsbuf[256]{};
+	if (g_Config.iShowStatusFlags == ((int)ShowStatusFlags::FPS_COUNTER | (int)ShowStatusFlags::SPEED_COUNTER)) {
+		snprintf(fpsbuf, sizeof(fpsbuf), "%0.0f/%0.0f (%0.1f%%)", actual_fps, fps, vps / (59.94f / 100.0f));
+	} else {
+		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) {
+			snprintf(fpsbuf, sizeof(fpsbuf), "FPS: %0.1f", actual_fps);
+		}
+		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::SPEED_COUNTER) {
+			snprintf(fpsbuf, sizeof(fpsbuf), "%s Speed: %0.1f%%", fpsbuf, vps / (59.94f / 100.0f));
+		}
 	}
+	
+#ifdef CAN_DISPLAY_CURRENT_BATTERY_CAPACITY
+	if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::BATTERY_PERCENT) {
+		snprintf(fpsbuf, sizeof(fpsbuf), "%s Battery: %d%%", fpsbuf, getCurrentBatteryCapacity());
+	}
+#endif
 
 	ctx->Flush();
 	ctx->BindFontTexture();
 	ctx->Draw()->SetFontScale(0.7f, 0.7f);
-	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 8, 12, 0xc0000000, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
-	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 10, 10, 0xFF3fFF3f, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
+	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 8, 20, 0xc0000000, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
+	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 10, 19, 0xFF3fFF3f, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
 	ctx->Draw()->SetFontScale(1.0f, 1.0f);
 	ctx->Flush();
 	ctx->RebindTexture();
@@ -1490,7 +1491,7 @@ bool EmuScreen::hasVisibleUI() {
 	// Regular but uncommon UI.
 	if (saveStatePreview_->GetVisibility() != UI::V_GONE || loadingSpinner_->GetVisibility() == UI::V_VISIBLE)
 		return true;
-	if (!osm.IsEmpty() || g_Config.bShowTouchControls || g_Config.iShowFPSCounter != 0)
+	if (!osm.IsEmpty() || g_Config.bShowTouchControls || g_Config.iShowStatusFlags != 0)
 		return true;
 	if (g_Config.bEnableCardboardVR || g_Config.bEnableNetworkChat)
 		return true;
@@ -1537,7 +1538,7 @@ void EmuScreen::renderUI() {
 		DrawAudioDebugStats(ctx, ctx->GetLayoutBounds());
 	}
 
-	if (g_Config.iShowFPSCounter && !invalid_) {
+	if (g_Config.iShowStatusFlags && !invalid_) {
 		DrawFPS(ctx, ctx->GetLayoutBounds());
 	}
 
@@ -1565,7 +1566,7 @@ void EmuScreen::renderUI() {
 	if (coreState == CORE_RUNTIME_ERROR || coreState == CORE_STEPPING) {
 		const ExceptionInfo &info = Core_GetExceptionInfo();
 		if (info.type != ExceptionType::NONE) {
-			DrawCrashDump(ctx);
+			DrawCrashDump(ctx, gamePath_);
 		} else {
 			// We're somehow in ERROR or STEPPING without a crash dump. This case is what lead
 			// to the bare "Resume" and "Reset" buttons without a crash dump before, in cases

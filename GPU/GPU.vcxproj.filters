@@ -461,9 +461,6 @@
     <ClCompile Include="Debugger\Debugger.cpp">
       <Filter>Debugger</Filter>
     </ClCompile>
-    <ClCompile Include="GLES\DepthBufferGLES.cpp">
-      <Filter>GLES</Filter>
-    </ClCompile>
     <ClCompile Include="Debugger\Playback.cpp">
       <Filter>Debugger</Filter>
     </ClCompile>
@@ -516,6 +513,15 @@
       <Filter>Debugger</Filter>
     </ClCompile>
     <ClCompile Include="Common\GeometryShaderGenerator.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\DepthBufferCommon.cpp">
+      <Filter>Common</Filter>
+    </ClCompile>
+    <ClCompile Include="GLES\StencilBufferGLES.cpp">
+      <Filter>GLES</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\VertexDecoderRiscV.cpp">
       <Filter>Common</Filter>
     </ClCompile>
   </ItemGroup>

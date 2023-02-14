@@ -250,9 +250,6 @@ bool VR_InitFrame( engine_t* engine ) {
 
 	OXR(xrWaitFrame(engine->appState.Session, &waitFrameInfo, &frameState));
 	engine->predictedDisplayTime = frameState.predictedDisplayTime;
-	if (!frameState.shouldRender) {
-		return false;
-	}
 
 	// Get the HMD pose, predicted for the middle of the time period during which
 	// the new eye images will be displayed. The number of frames predicted ahead
@@ -464,4 +461,8 @@ void* VR_BindFramebuffer(engine_t *engine) {
 
 XrView VR_GetView(int eye) {
 	return projections[eye];
+}
+
+XrVector3f VR_GetHMDAngles() {
+	return hmdorientation;
 }

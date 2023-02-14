@@ -29,8 +29,6 @@
 
 extern const char *PPSSPP_GIT_VERSION;
 
-extern bool jitForcedOff;
-
 enum ChatPositions {
 	BOTTOM_LEFT = 0,
 	BOTTOM_CENTER = 1,
@@ -226,7 +224,7 @@ public:
 	int iAnalogFpsMode; // 0 = auto, 1 = single direction, 2 = mapped to opposite
 	int iMaxRecent;
 	int iCurrentStateSlot;
-	int iRewindFlipFrequency;
+	int iRewindSnapshotInterval;
 	bool bUISound;
 	bool bEnableStateUndo;
 	std::string sStateLoadUndoGame;
@@ -270,7 +268,7 @@ public:
 
 	// UI
 	bool bShowDebuggerOnLoad;
-	int iShowFPSCounter;
+	int iShowStatusFlags;
 	bool bShowRegionOnGameIcon;
 	bool bShowIDOnGameIcon;
 	float fGameGridScale;
@@ -285,21 +283,19 @@ public:
 	bool bShowAudioDebug;
 	bool bShowGpuProfile;
 
-	//Analog stick tilting
-	//the base x and y tilt. this inclination is treated as (0,0) and the tilt input
-	//considers this orientation to be equal to no movement of the analog stick.
-	float fTiltBaseX, fTiltBaseY;
-	int iTiltOrientation;
-	//whether the x axes and y axes should invert directions (left becomes right, top becomes bottom.)
-	bool bInvertTiltX, bInvertTiltY;
-	//the sensitivity of the tilt in the x direction
+	// Analog stick tilting
+	// This is the held base angle, that we compute the tilt relative from.
+	float fTiltBaseAngleY;
+	// whether the x axes and y axes should invert directions (left becomes right, top becomes bottom.)
+	bool bInvertTiltX;
+	bool bInvertTiltY;
+	// The sensitivity of the tilt in the X and Y directions, separately.
 	int iTiltSensitivityX;
-	//the sensitivity of the tilt in the Y direction
 	int iTiltSensitivityY;
-	//the deadzone radius of the tilt
-	float fDeadzoneRadius;
-	// deadzone skip
-	float fTiltDeadzoneSkip;
+	// The deadzone radius of the tilt.
+	// Separate settings for analog vs digital since the usable ranges differ.
+	float fTiltAnalogDeadzoneRadius;
+	float fTiltDigitalDeadzoneRadius;
 	//type of tilt input currently selected: Defined in TiltEventProcessor.h
 	//0 - no tilt, 1 - analog stick, 2 - D-Pad, 3 - Action Buttons (Tri, Cross, Square, Circle)
 	int iTiltInputType;
@@ -468,6 +464,7 @@ public:
 	bool bEnableStereo;
 	bool bEnableMotions;
 	bool bForce72Hz;
+	bool bManualForceVR;
 	float fCameraDistance;
 	float fCameraHeight;
 	float fCameraSide;
@@ -475,6 +472,9 @@ public:
 	float fFieldOfViewPercentage;
 	float fHeadUpDisplayScale;
 	float fMotionLength;
+	float fHeadRotationScale;
+	bool bHeadRotationSmoothing;
+	int iHeadRotation;
 
 	// Debugger
 	int iDisasmWindowX;
@@ -523,7 +523,7 @@ public:
 	void Load(const char *iniFileName = nullptr, const char *controllerIniFilename = nullptr);
 	bool Save(const char *saveReason);
 	void Reload();
-	void RestoreDefaults();
+	void RestoreDefaults(RestoreSettingsBits whatToRestore);
 
 	//per game config managment, should maybe be in it's own class
 	void changeGameSpecific(const std::string &gameId = "", const std::string &title = "");

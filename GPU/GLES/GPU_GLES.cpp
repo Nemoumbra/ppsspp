@@ -128,11 +128,6 @@ GPU_GLES::GPU_GLES(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 }
 
 GPU_GLES::~GPU_GLES() {
-	if (draw_) {
-		GLRenderManager *render = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
-		render->Wipe();
-	}
-
 	// If we're here during app shutdown (exiting the Windows app in-game, for example)
 	// everything should already be cleared since DeviceLost has been run.
 
@@ -288,8 +283,9 @@ void GPU_GLES::BeginHostFrame() {
 	if (gstate_c.useFlagsChanged) {
 		// TODO: It'd be better to recompile them in the background, probably?
 		// This most likely means that saw equal depth changed.
-		WARN_LOG(G3D, "Shader use flags changed, clearing all shaders");
+		WARN_LOG(G3D, "Shader use flags changed, clearing all shaders and depth buffers");
 		shaderManagerGL_->ClearCache(true);
+		framebufferManager_->ClearAllDepthBuffers();
 		gstate_c.useFlagsChanged = false;
 	}
 }

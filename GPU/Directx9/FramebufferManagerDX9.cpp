@@ -50,10 +50,12 @@ FramebufferManagerDX9::FramebufferManagerDX9(Draw::DrawContext *draw)
 	preferredPixelsFormat_ = Draw::DataFormat::B8G8R8A8_UNORM;
 }
 
-FramebufferManagerDX9::~FramebufferManagerDX9() {
-}
+bool FramebufferManagerDX9::ReadbackDepthbuffer(Draw::Framebuffer *fbo, int x, int y, int w, int h, uint16_t *pixels, int pixelsStride, int destW, int destH, Draw::ReadbackMode mode) {
+	// Don't yet support stretched readbacks here.
+	if (destW != w || destH != h) {
+		return false;
+	}
 
-bool FramebufferManagerDX9::ReadbackDepthbufferSync(Draw::Framebuffer *fbo, int x, int y, int w, int h, uint16_t *pixels, int pixelsStride) {
 	// We always read the depth buffer in 24_8 format.
 	LPDIRECT3DTEXTURE9 tex = (LPDIRECT3DTEXTURE9)draw_->GetFramebufferAPITexture(fbo, Draw::FB_DEPTH_BIT, 0);
 	if (!tex)
@@ -72,13 +74,13 @@ bool FramebufferManagerDX9::ReadbackDepthbufferSync(Draw::Framebuffer *fbo, int 
 	const u32 *packed = (const u32 *)locked.pBits;
 	u16 *depth = (u16 *)pixels;
 
-	DepthScaleFactors depthScale = GetDepthScaleFactors();
+	DepthScaleFactors depthScale = GetDepthScaleFactors(gstate_c.UseFlags());
 	// TODO: Optimize.
 	for (int yp = 0; yp < h; ++yp) {
 		for (int xp = 0; xp < w; ++xp) {
 			const int offset = (yp + y) * pixelsStride + x + xp;
 
-			float scaled = depthScale.Apply((packed[offset] & 0x00FFFFFF) * (1.0f / 16777215.0f));
+			float scaled = depthScale.DecodeToU16((packed[offset] & 0x00FFFFFF) * (1.0f / 16777215.0f));
 			if (scaled <= 0.0f) {
 				depth[offset] = 0;
 			} else if (scaled >= 65535.0f) {

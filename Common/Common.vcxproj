@@ -436,6 +436,7 @@
     <ClInclude Include="GPU\OpenGL\DataFormatGL.h" />
     <ClInclude Include="GPU\OpenGL\gl3stub.h" />
     <ClInclude Include="GPU\OpenGL\GLFeatures.h" />
+    <ClInclude Include="GPU\OpenGL\GLFrameData.h" />
     <ClInclude Include="GPU\OpenGL\GLQueueRunner.h" />
     <ClInclude Include="GPU\OpenGL\GLRenderManager.h" />
     <ClInclude Include="GPU\OpenGL\GLSLProgram.h" />
@@ -871,6 +872,7 @@
     <ClCompile Include="GPU\OpenGL\DataFormatGL.cpp" />
     <ClCompile Include="GPU\OpenGL\gl3stub.c" />
     <ClCompile Include="GPU\OpenGL\GLFeatures.cpp" />
+    <ClCompile Include="GPU\OpenGL\GLFrameData.cpp" />
     <ClCompile Include="GPU\OpenGL\GLQueueRunner.cpp" />
     <ClCompile Include="GPU\OpenGL\GLRenderManager.cpp" />
     <ClCompile Include="GPU\OpenGL\GLSLProgram.cpp" />
@@ -1021,6 +1023,9 @@
     <Text Include="..\ext\libpng17\CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\ext\cpu_features.vcxproj">
+      <Project>{c249f016-7f82-45cf-bb6e-0642a988c4d3}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\ext\zlib\zlib.vcxproj">
       <Project>{f761046e-6c38-4428-a5f1-38391a37bb34}</Project>
     </ProjectReference>

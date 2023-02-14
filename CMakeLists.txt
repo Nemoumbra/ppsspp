@@ -119,16 +119,8 @@ add_definitions(-DASSETS_DIR="${CMAKE_INSTALL_FULL_DATADIR}/ppsspp/assets/")
 if(OPENXR)
 	add_definitions(-DOPENXR)
 	add_library(openxr SHARED IMPORTED)
-	if(OPENXR_PLATFORM_PICO)
-	  add_definitions(-DOPENXR_PLATFORM_PICO)
-	  set_property(TARGET openxr PROPERTY IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/ext/openxr/libs/pico/arm64-v8a/libopenxr_loader.so")
-	  message("OpenXR for Pico enabled")
-	endif()
-	if(OPENXR_PLATFORM_QUEST)
-	  add_definitions(-DOPENXR_PLATFORM_QUEST)
-	  set_property(TARGET openxr PROPERTY IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/ext/openxr/libs/quest/arm64-v8a/libopenxr_loader.so")
-	  message("OpenXR for Quest enabled")
-	endif()
+	set_property(TARGET openxr PROPERTY IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/ext/openxr/stub/arm64-v8a/libopenxr_loader.so")
+	message("OpenXR enabled")
 endif()
 
 if(GOLD)
@@ -256,6 +248,7 @@ include(FindThreads)
 
 if(APPLE)
 	find_library(COCOA_LIBRARY Cocoa)
+	find_library(IOKIT_LIBRARY IOKit)
 	find_library(QUARTZ_CORE_LIBRARY QuartzCore)
 endif()
 
@@ -380,7 +373,11 @@ if(NOT MSVC)
 	if(IOS)
 		set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
 	elseif(APPLE AND NOT CMAKE_CROSSCOMPILING)
-		set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
+		if(LIBRETRO AND ARM64)
+			set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
+		else()
+			set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
+		endif()
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ -U__STRICT_ANSI__")
 		set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 	elseif(NOT ANDROID)
@@ -627,6 +624,8 @@ add_library(Common STATIC
 	Common/GPU/OpenGL/gl3stub.h
 	Common/GPU/OpenGL/GLFeatures.cpp
 	Common/GPU/OpenGL/GLFeatures.h
+	Common/GPU/OpenGL/GLFrameData.cpp
+	Common/GPU/OpenGL/GLFrameData.h
 	Common/GPU/OpenGL/thin3d_gl.cpp
 	Common/GPU/OpenGL/GLRenderManager.cpp
 	Common/GPU/OpenGL/GLRenderManager.h
@@ -775,12 +774,13 @@ add_library(Common STATIC
 	Common/SysError.cpp
 	Common/TimeUtil.cpp
 	Common/TimeUtil.h
+	Common/Battery/Battery.h
 )
 
 include_directories(Common)
 setup_target_project(Common Common)
 
-target_link_libraries(Common Ext::Snappy)
+target_link_libraries(Common Ext::Snappy cpu_features)
 
 if(USING_GLES2 OR (USING_EGL AND NOT USING_FBDEV))
 	find_package(X11)
@@ -1124,7 +1124,7 @@ if(ANDROID)
 		set(nativeExtraLibs ${nativeExtraLibs} openxr)
 	endif()
 	# No target
-elseif(IOS)
+elseif(IOS AND NOT LIBRETRO)
 	set(nativeExtra ${nativeExtra}
 		ios/main.mm
 		ios/AppDelegate.mm
@@ -1143,13 +1143,12 @@ elseif(IOS)
 		ios/PPSSPPUIApplication.mm
 		ios/SmartKeyboardMap.cpp
 		ios/SmartKeyboardMap.hpp
-		ios/SubtleVolume.h
-		ios/SubtleVolume.mm
 		ios/iCade/iCadeReaderView.h
 		ios/iCade/iCadeReaderView.m
 		ios/iCade/iCadeState.h
-		UI/DarwinMemoryStickManager.mm
-		UI/DarwinMemoryStickManager.h
+		UI/DarwinFileSystemServices.mm
+		UI/DarwinFileSystemServices.h
+		Common/Battery/AppleBatteryClient.m
 	)
     
 	set(nativeExtraLibs ${nativeExtraLibs} "-framework Foundation -framework MediaPlayer -framework AudioToolbox -framework CoreGraphics -framework QuartzCore -framework UIKit -framework GLKit -framework OpenAL -framework AVFoundation -framework CoreLocation -framework CoreVideo -framework CoreMedia -framework CoreServices" )
@@ -1169,8 +1168,11 @@ elseif(IOS)
 	set_source_files_properties(ios/main.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/CameraHelper.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/LocationHelper.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
-	set_source_files_properties(UI/DarwinMemoryStickManager.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set(TargetBin PPSSPP)
+elseif(IOS AND LIBRETRO)
+    set(nativeExtraLibs ${nativeExtraLibs} "-framework GLKit")
 elseif(USING_QT_UI)
 	set(CMAKE_AUTOMOC ON)
 	find_package(Qt5 COMPONENTS OpenGL Gui Core Multimedia)
@@ -1227,9 +1229,10 @@ elseif(TARGET SDL2::SDL2)
 	endif()
 	set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
 	if(APPLE)
-		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm SDL/SDLCocoaMetalLayer.h SDL/SDLCocoaMetalLayer.mm UI/DarwinMemoryStickManager.mm)
-        set_source_files_properties(UI/DarwinMemoryStickManager.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
-		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY})
+		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm SDL/SDLCocoaMetalLayer.h SDL/SDLCocoaMetalLayer.mm UI/DarwinFileSystemServices.mm UI/DarwinFileSystemServices.h Common/Battery/AppleBatteryClient.m)
+        set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
 	elseif(USING_EGL)
 		set(nativeExtraLibs ${nativeExtraLibs} pthread)
 	endif()
@@ -1278,14 +1281,14 @@ list(APPEND NativeAppSource
 	UI/GPUDriverTestScreen.cpp
 	UI/TiltAnalogSettingsScreen.h
 	UI/TiltAnalogSettingsScreen.cpp
-	UI/TiltEventProcessor.h
-	UI/TiltEventProcessor.cpp
 	UI/TouchControlLayoutScreen.h
 	UI/TouchControlLayoutScreen.cpp
 	UI/TouchControlVisibilityScreen.h
 	UI/TouchControlVisibilityScreen.cpp
 	UI/GamepadEmu.h
 	UI/GamepadEmu.cpp
+	UI/JoystickHistoryView.h
+	UI/JoystickHistoryView.cpp
 	UI/OnScreenDisplay.h
 	UI/OnScreenDisplay.cpp
 	UI/ControlMappingScreen.h
@@ -1482,6 +1485,10 @@ list(APPEND CoreExtra
 	Core/MIPS/MIPS/MipsJit.h
 )
 
+list(APPEND CoreExtra
+	GPU/Common/VertexDecoderRiscV.cpp
+)
+
 if(NOT MOBILE_DEVICE)
 	set(CoreExtra ${CoreExtra}
 		Core/AVIDump.cpp
@@ -1492,7 +1499,7 @@ if(NOT MOBILE_DEVICE)
 endif()
 
 set(GPU_GLES
-	GPU/GLES/DepthBufferGLES.cpp
+	GPU/GLES/StencilBufferGLES.cpp
 	GPU/GLES/GPU_GLES.cpp
 	GPU/GLES/GPU_GLES.h
 	GPU/GLES/FragmentTestCacheGLES.cpp
@@ -1573,6 +1580,7 @@ set(GPU_SOURCES
 	${GPU_NEON}
 	GPU/Common/Draw2D.cpp
 	GPU/Common/Draw2D.h
+	GPU/Common/DepthBufferCommon.cpp
 	GPU/Common/TextureShaderCommon.cpp
 	GPU/Common/TextureShaderCommon.h
 	GPU/Common/DepalettizeShaderCommon.cpp
@@ -1699,6 +1707,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/KeyMapDefaults.cpp
 	Core/KeyMapDefaults.h
 	Core/ThreadEventQueue.h
+	Core/TiltEventProcessor.h
+	Core/TiltEventProcessor.cpp
 	Core/WebServer.cpp
 	Core/WebServer.h
 	Core/Debugger/Breakpoints.cpp
@@ -2378,7 +2388,7 @@ if(HEADLESS)
 		)
 	endif()
 	add_executable(PPSSPPHeadless ${HeadlessSource})
-	target_link_libraries(PPSSPPHeadless ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${LinkCommon})
+	target_link_libraries(PPSSPPHeadless ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY} ${LinkCommon})
 	setup_target_project(PPSSPPHeadless headless)
 endif()
 
@@ -2398,7 +2408,7 @@ if(UNITTEST)
 		Core/MIPS/ARM/ArmRegCache.cpp
 		Core/MIPS/ARM/ArmRegCacheFPU.cpp
 	)
-	target_link_libraries(PPSSPPUnitTest ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${LinkCommon} Common)
+	target_link_libraries(PPSSPPUnitTest ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY} ${LinkCommon} Common)
 	setup_target_project(PPSSPPUnitTest unittest)
 	add_test(arm64_emitter PPSSPPUnitTest Arm64Emitter)
 	add_test(arm_emitter PPSSPPUnitTest ArmEmitter)
@@ -2483,7 +2493,7 @@ if(NOT ANDROID)
 	file(INSTALL assets/flash0 DESTINATION assets)
 endif()
 # packaging and code signing
-if(IOS)
+if(IOS AND NOT LIBRETRO)
 	set(DEPLOYMENT_TARGET 11.0)
 	file(GLOB IOSAssets ios/assets/*.png)
 	list(REMOVE_ITEM IOSAssets ${CMAKE_CURRENT_SOURCE_DIR}/ios/assets/Default-568h@2x.png)

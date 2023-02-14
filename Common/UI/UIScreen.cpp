@@ -217,14 +217,13 @@ UI::EventReturn UIScreen::OnCancel(UI::EventParams &e) {
 }
 
 PopupScreen::PopupScreen(std::string title, std::string button1, std::string button2)
-	: box_(0), defaultButton_(nullptr), title_(title) {
+	: title_(title) {
 	auto di = GetI18NCategory("Dialog");
 	if (!button1.empty())
 		button1_ = di->T(button1.c_str());
 	if (!button2.empty())
 		button2_ = di->T(button2.c_str());
-
-	alpha_ = 0.0f;
+	alpha_ = 0.0f;  // inherited
 }
 
 void PopupScreen::touch(const TouchInput &touch) {
@@ -232,8 +231,10 @@ void PopupScreen::touch(const TouchInput &touch) {
 		UIDialogScreen::touch(touch);
 	}
 
-	if (!box_->GetBounds().Contains(touch.x, touch.y)) {
-		TriggerFinish(DR_BACK);
+	// Extra bounds to avoid closing the dialog while trying to aim for something
+	// near the edge.
+	if (!box_->GetBounds().Expand(100.0f, 60.0f).Contains(touch.x, touch.y)) {
+		TriggerFinish(DR_CANCEL);
 	}
 
 	UIDialogScreen::touch(touch);

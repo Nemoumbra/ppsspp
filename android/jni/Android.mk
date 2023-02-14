@@ -4,6 +4,10 @@ SRC := ../..
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
 
+LOCAL_C_INCLUDES += \
+  $(LOCAL_PATH)/../../ext/cpu_features/include
+LOCAL_CFLAGS += -DSTACK_LINE_READER_BUFFER_SIZE=1024 -DHAVE_DLFCN_H
+
 # http://software.intel.com/en-us/articles/getting-started-on-optimizing-ndk-project-for-multiple-cpu-architectures
 
 ifeq ($(TARGET_ARCH_ABI),x86)
@@ -38,6 +42,7 @@ NATIVE_FILES :=\
   $(SRC)/Common/GPU/OpenGL/GLDebugLog.cpp \
   $(SRC)/Common/GPU/OpenGL/GLSLProgram.cpp \
   $(SRC)/Common/GPU/OpenGL/GLFeatures.cpp \
+  $(SRC)/Common/GPU/OpenGL/GLFrameData.cpp \
   $(SRC)/Common/GPU/OpenGL/GLRenderManager.cpp \
   $(SRC)/Common/GPU/OpenGL/GLQueueRunner.cpp \
   $(SRC)/Common/GPU/OpenGL/DataFormatGL.cpp
@@ -119,7 +124,21 @@ EXT_FILES := \
   $(SRC)/ext/udis86/syn-intel.c \
   $(SRC)/ext/udis86/syn.c \
   $(SRC)/ext/udis86/udis86.c \
-  $(SRC)/ext/xbrz/xbrz.cpp
+  $(SRC)/ext/xbrz/xbrz.cpp \
+  $(SRC)/ext/cpu_features/src/filesystem.c \
+  $(SRC)/ext/cpu_features/src/hwcaps.c \
+  $(SRC)/ext/cpu_features/src/impl_aarch64_linux_or_android.c \
+  $(SRC)/ext/cpu_features/src/impl_arm_linux_or_android.c \
+  $(SRC)/ext/cpu_features/src/impl_mips_linux_or_android.c \
+  $(SRC)/ext/cpu_features/src/impl_ppc_linux.c \
+  $(SRC)/ext/cpu_features/src/impl_riscv_linux.c \
+  $(SRC)/ext/cpu_features/src/impl_s390x_linux.c \
+  $(SRC)/ext/cpu_features/src/impl_x86_freebsd.c \
+  $(SRC)/ext/cpu_features/src/impl_x86_linux_or_android.c \
+  $(SRC)/ext/cpu_features/src/impl_x86_macos.c \
+  $(SRC)/ext/cpu_features/src/impl_x86_windows.c \
+  $(SRC)/ext/cpu_features/src/stack_line_reader.c \
+  $(SRC)/ext/cpu_features/src/string_view.c
 
 EXEC_AND_LIB_FILES := \
   $(ARCH_FILES) \
@@ -354,6 +373,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Common/GPUStateUtils.cpp.arm \
   $(SRC)/GPU/Common/SoftwareTransformCommon.cpp.arm \
   $(SRC)/GPU/Common/ReinterpretFramebuffer.cpp \
+  $(SRC)/GPU/Common/DepthBufferCommon.cpp \
   $(SRC)/GPU/Common/VertexDecoderCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureCacheCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureScalerCommon.cpp.arm \
@@ -374,7 +394,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Debugger/Record.cpp \
   $(SRC)/GPU/Debugger/Stepping.cpp \
   $(SRC)/GPU/GLES/FramebufferManagerGLES.cpp \
-  $(SRC)/GPU/GLES/DepthBufferGLES.cpp \
+  $(SRC)/GPU/GLES/StencilBufferGLES.cpp \
   $(SRC)/GPU/GLES/GPU_GLES.cpp.arm \
   $(SRC)/GPU/GLES/TextureCacheGLES.cpp.arm \
   $(SRC)/GPU/GLES/DrawEngineGLES.cpp.arm \
@@ -435,6 +455,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Screenshot.cpp \
   $(SRC)/Core/System.cpp \
   $(SRC)/Core/TextureReplacer.cpp \
+  $(SRC)/Core/TiltEventProcessor.cpp \
   $(SRC)/Core/ThreadPools.cpp \
   $(SRC)/Core/WebServer.cpp \
   $(SRC)/Core/Debugger/Breakpoints.cpp \
@@ -702,13 +723,13 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/SavedataScreen.cpp \
   $(SRC)/UI/Store.cpp \
   $(SRC)/UI/GamepadEmu.cpp \
+  $(SRC)/UI/JoystickHistoryView.cpp \
   $(SRC)/UI/GameInfoCache.cpp \
   $(SRC)/UI/GameScreen.cpp \
   $(SRC)/UI/ControlMappingScreen.cpp \
   $(SRC)/UI/GameSettingsScreen.cpp \
   $(SRC)/UI/GPUDriverTestScreen.cpp \
   $(SRC)/UI/TiltAnalogSettingsScreen.cpp \
-  $(SRC)/UI/TiltEventProcessor.cpp \
   $(SRC)/UI/TouchControlLayoutScreen.cpp \
   $(SRC)/UI/TouchControlVisibilityScreen.cpp \
   $(SRC)/UI/CwCheatScreen.cpp \
@@ -743,14 +764,6 @@ endif
 
 ifeq ($(OPENXR),1)
   LOCAL_CFLAGS += -DOPENXR
-endif
-
-ifeq ($(OPENXR_PLATFORM_QUEST),1)
-  LOCAL_CFLAGS += -DOPENXR_PLATFORM_QUEST
-endif
-
-ifeq ($(OPENXR_PLATFORM_PICO),1)
-  LOCAL_CFLAGS += -DOPENXR_PLATFORM_PICO
 endif
 
 ifeq ($(UNITTEST),1)
