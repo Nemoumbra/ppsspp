@@ -48,22 +48,6 @@ namespace http {
 struct UrlEncoder;
 struct ConfigPrivate;
 
-struct ConfigTouchPos {
-	float x;
-	float y;
-	float scale;
-	// Note: Show is not used for all settings.
-	bool show;
-};
-
-struct ConfigCustomButton {
-	uint64_t key;
-	int image;
-	int shape;
-	bool toggle;
-	bool repeat;
-};
-
 struct Config {
 public:
 	Config();
@@ -168,12 +152,13 @@ public:
 	bool bSkipBufferEffects;
 
 	int iTexFiltering; // 1 = auto , 2 = nearest , 3 = linear , 4 = auto max quality
-	int iBufFilter; // 1 = linear, 2 = nearest
 
 	bool bDisplayStretch;  // Automatically matches the aspect ratio of the window.
+	int iDisplayFilter;    // 1 = linear, 2 = nearest
 	float fDisplayOffsetX;
 	float fDisplayOffsetY;
 	float fDisplayScale;   // Relative to the most constraining axis (x or y).
+	bool bDisplayIntegerScale;  // Snaps scaling to integer scale factors in raw pixels.
 	float fDisplayAspectRatio;  // Stored relative to the PSP's native ratio, so 1.0 is the normal pixel aspect ratio.
 
 	bool bImmersiveMode;  // Mode on Android Kitkat 4.4 and later that hides the back button etc.
@@ -213,7 +198,6 @@ public:
 	bool bReplaceTextures;
 	bool bSaveNewTextures;
 	bool bIgnoreTextureFilenames;
-	bool bReplaceTexturesAllowLate;
 	int iTexScalingLevel; // 0 = auto, 1 = off, 2 = 2x, ..., 5 = 5x
 	int iTexScalingType; // 0 = xBRZ, 1 = Hybrid
 	bool bTexDeposterize;
@@ -221,7 +205,6 @@ public:
 	int iFpsLimit1;
 	int iFpsLimit2;
 	int iAnalogFpsLimit;
-	int iAnalogFpsMode; // 0 = auto, 1 = single direction, 2 = mapped to opposite
 	int iMaxRecent;
 	int iCurrentStateSlot;
 	int iRewindSnapshotInterval;
@@ -278,9 +261,11 @@ public:
 
 	std::string sThemeName;
 
+	// These aren't saved, just for instant debugging.
 	bool bLogFrameDrops;
 	bool bShowDebugStats;
 	bool bShowAudioDebug;
+	bool bShowControlDebug;
 	bool bShowGpuProfile;
 
 	// Analog stick tilting
@@ -356,16 +341,16 @@ public:
 	ConfigTouchPos touchAnalogStick;
 	ConfigTouchPos touchRightAnalogStick;
 
-	ConfigTouchPos touchCombo0;
-	ConfigTouchPos touchCombo1;
-	ConfigTouchPos touchCombo2;
-	ConfigTouchPos touchCombo3;
-	ConfigTouchPos touchCombo4;
-	ConfigTouchPos touchCombo5;
-	ConfigTouchPos touchCombo6;
-	ConfigTouchPos touchCombo7;
-	ConfigTouchPos touchCombo8;
-	ConfigTouchPos touchCombo9;
+	ConfigTouchPos touchCustom0;
+	ConfigTouchPos touchCustom1;
+	ConfigTouchPos touchCustom2;
+	ConfigTouchPos touchCustom3;
+	ConfigTouchPos touchCustom4;
+	ConfigTouchPos touchCustom5;
+	ConfigTouchPos touchCustom6;
+	ConfigTouchPos touchCustom7;
+	ConfigTouchPos touchCustom8;
+	ConfigTouchPos touchCustom9;
 
 	float fLeftStickHeadScale;
 	float fRightStickHeadScale;
@@ -379,16 +364,16 @@ public:
 	bool bShowTouchTriangle;
 	bool bShowTouchSquare;
 
-	ConfigCustomButton CustomKey0;
-	ConfigCustomButton CustomKey1;
-	ConfigCustomButton CustomKey2;
-	ConfigCustomButton CustomKey3;
-	ConfigCustomButton CustomKey4;
-	ConfigCustomButton CustomKey5;
-	ConfigCustomButton CustomKey6;
-	ConfigCustomButton CustomKey7;
-	ConfigCustomButton CustomKey8;
-	ConfigCustomButton CustomKey9;	
+	ConfigCustomButton CustomButton0;
+	ConfigCustomButton CustomButton1;
+	ConfigCustomButton CustomButton2;
+	ConfigCustomButton CustomButton3;
+	ConfigCustomButton CustomButton4;
+	ConfigCustomButton CustomButton5;
+	ConfigCustomButton CustomButton6;
+	ConfigCustomButton CustomButton7;
+	ConfigCustomButton CustomButton8;
+	ConfigCustomButton CustomButton9;
 
 	// Ignored on iOS and other platforms that lack pause.
 	bool bShowTouchPause;
@@ -463,6 +448,7 @@ public:
 	bool bEnableMotions;
 	bool bForce72Hz;
 	bool bManualForceVR;
+	bool bRescaleHUD;
 	float fCameraDistance;
 	float fCameraHeight;
 	float fCameraSide;
@@ -471,8 +457,9 @@ public:
 	float fHeadUpDisplayScale;
 	float fMotionLength;
 	float fHeadRotationScale;
+	bool bHeadRotationEnabled;
 	bool bHeadRotationSmoothing;
-	int iHeadRotation;
+	int iCameraPitch;
 
 	// Debugger
 	int iDisasmWindowX;
@@ -567,7 +554,8 @@ public:
 	const std::map<std::string, std::pair<std::string, int>> &GetLangValuesMapping();
 	bool LoadAppendedConfig();
 	void SetAppendedConfigIni(const Path &path);
-
+	void UpdateAfterSettingAutoFrameSkip();
+	void NotifyUpdatedCpuCore();
 protected:
 	void LoadStandardControllerIni();
 	void LoadLangValuesMapping();

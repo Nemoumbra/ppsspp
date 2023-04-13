@@ -22,7 +22,7 @@
 #include "Common/Math/math_util.h"
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/System/System.h"
+#include "Common/System/Request.h"
 #include "Common/Serialize/Serializer.h"
 
 #include "Core/Dialog/PSPOskDialog.h"
@@ -892,15 +892,26 @@ int PSPOskDialog::NativeKeyboard() {
 			defaultText.assign(u"VALUE");
 
 		// There's already ConvertUCS2ToUTF8 in this file. Should we use that instead of the global ones?
-		System_InputBoxGetString(::ConvertUCS2ToUTF8(titleText), ::ConvertUCS2ToUTF8(defaultText), [&](bool result, const std::string &value) {
-			std::lock_guard<std::mutex> guard(nativeMutex_);
-			if (nativeStatus_ != PSPOskNativeStatus::WAITING) {
-				return;
+		System_InputBoxGetString(::ConvertUCS2ToUTF8(titleText), ::ConvertUCS2ToUTF8(defaultText),
+			[&](const std::string &value, int) {
+				// Success callback
+				std::lock_guard<std::mutex> guard(nativeMutex_);
+				if (nativeStatus_ != PSPOskNativeStatus::WAITING) {
+					return;
+				}
+				nativeValue_ = value;
+				nativeStatus_ = PSPOskNativeStatus::SUCCESS;
+			},
+			[&]() {
+				// Failure callback
+				std::lock_guard<std::mutex> guard(nativeMutex_);
+				if (nativeStatus_ != PSPOskNativeStatus::WAITING) {
+					return;
+				}
+				nativeValue_ = "";
+				nativeStatus_ = PSPOskNativeStatus::FAILURE;
 			}
-
-			nativeValue_ = value;
-			nativeStatus_ = result ? PSPOskNativeStatus::SUCCESS : PSPOskNativeStatus::FAILURE;
-		});
+		);
 	} else if (nativeStatus_ == PSPOskNativeStatus::SUCCESS) {
 		inputChars = ConvertUTF8ToUCS2(nativeValue_);
 		nativeValue_.clear();
@@ -974,7 +985,7 @@ int PSPOskDialog::Update(int animSpeed) {
 	PPGeDrawRect(0, 0, 480, 272, CalcFadedColor(0x63636363));
 	RenderKeyboard();
 
-	auto di = GetI18NCategory("Dialog");
+	auto di = GetI18NCategory(I18NCat::DIALOG);
 
 	PPGeStyle actionStyle = FadedStyle(PPGeAlign::BOX_LEFT, 0.5f);
 	PPGeStyle guideStyle = FadedStyle(PPGeAlign::BOX_LEFT, 0.6f);

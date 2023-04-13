@@ -15,6 +15,7 @@
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/System/System.h"
 #include "Common/System/NativeApp.h"
+#include "Common/System/Request.h"
 #include "Common/File/FileUtil.h"
 #include "Common/Log.h"
 #include "Common/LogManager.h"
@@ -55,8 +56,6 @@ extern bool g_TakeScreenshot;
 namespace MainWindow {
 	extern HINSTANCE hInst;
 	extern bool noFocusPause;
-	static W32Util::AsyncBrowseDialog *browseDialog;
-	static W32Util::AsyncBrowseDialog *browseImageDialog;
 	static bool browsePauseAfter;
 
 	static std::unordered_map<int, std::string> initialMenuKeys;
@@ -134,7 +133,7 @@ namespace MainWindow {
 	}
 
 	void CreateHelpMenu(HMENU menu) {
-		auto des = GetI18NCategory("DesktopUI");
+		auto des = GetI18NCategory(I18NCat::DESKTOPUI);
 
 		const std::wstring visitMainWebsite = ConvertUTF8ToWString(des->T("www.ppsspp.org"));
 		const std::wstring visitForum = ConvertUTF8ToWString(des->T("PPSSPP Forums"));
@@ -157,7 +156,7 @@ namespace MainWindow {
 	}
 
 	static void TranslateMenuItem(const HMENU hMenu, const int menuID, const std::wstring& accelerator = L"", const char *key = nullptr) {
-		auto des = GetI18NCategory("DesktopUI");
+		auto des = GetI18NCategory(I18NCat::DESKTOPUI);
 
 		std::wstring translated;
 		if (key == nullptr || !strcmp(key, "")) {
@@ -171,8 +170,8 @@ namespace MainWindow {
 	}
 
 	void DoTranslateMenus(HWND hWnd, HMENU menu) {
-		auto useDefHotkey = [](int virtkey) {
-			return KeyMap::g_controllerMap[virtkey].empty();
+		auto useDefHotkey = [](int virtKey) {
+			return !KeyMap::PspButtonHasMappings(virtKey);
 		};
 
 		TranslateMenuItem(menu, ID_FILE_MENU);
@@ -292,7 +291,7 @@ namespace MainWindow {
 	void TranslateMenus(HWND hWnd, HMENU menu) {
 		bool changed = false;
 
-		const std::string curLanguageID = i18nrepo.LanguageID();
+		const std::string curLanguageID = g_i18nrepo.LanguageID();
 		if (curLanguageID != menuLanguageID || KeyMap::HasChanged(menuKeymapGeneration)) {
 			DoTranslateMenus(hWnd, menu);
 			menuLanguageID = curLanguageID;
@@ -303,6 +302,8 @@ namespace MainWindow {
 			DrawMenuBar(hWnd);
 		}
 	}
+
+	void BrowseAndBootDone(std::string filename);
 
 	void BrowseAndBoot(std::string defaultPath, bool browseDirectory) {
 		static std::wstring filter = L"All supported file types (*.iso *.cso *.pbp *.elf *.prx *.zip *.ppdmp)|*.pbp;*.elf;*.iso;*.cso;*.prx;*.zip;*.ppdmp|PSP ROMs (*.iso *.cso *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.prx|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||";
@@ -317,66 +318,28 @@ namespace MainWindow {
 			if (!browsePauseAfter)
 				Core_EnableStepping(true, "ui.boot", 0);
 		}
+		auto mm = GetI18NCategory(I18NCat::MAINMENU);
 
 		W32Util::MakeTopMost(GetHWND(), false);
+
 		if (browseDirectory) {
-			browseDialog = new W32Util::AsyncBrowseDialog(GetHWND(), WM_USER_BROWSE_BOOT_DONE, L"Choose directory");
+			System_BrowseForFolder(mm->T("Load"), [](const std::string &value, int) {
+				BrowseAndBootDone(value);
+			});
 		} else {
-			browseDialog = new W32Util::AsyncBrowseDialog(W32Util::AsyncBrowseDialog::OPEN, GetHWND(), WM_USER_BROWSE_BOOT_DONE, L"LoadFile", ConvertUTF8ToWString(defaultPath), filter, L"*.pbp;*.elf;*.iso;*.cso;");
+			System_BrowseForFile(mm->T("Load"), BrowseFileType::BOOTABLE, [](const std::string &value, int) {
+				BrowseAndBootDone(value);
+			});
 		}
 	}
 
-	void BrowseAndBootDone() {
-		std::string filename;
-		if (!browseDialog->GetResult(filename)) {
-			if (!browsePauseAfter) {
-				Core_EnableStepping(false);
-			}
-		} else {
-			if (GetUIState() == UISTATE_INGAME || GetUIState() == UISTATE_EXCEPTION || GetUIState() == UISTATE_PAUSEMENU) {
-				Core_EnableStepping(false);
-			}
-
-			filename = ReplaceAll(filename, "\\", "/");
-			NativeMessageReceived("boot", filename.c_str());
+	void BrowseAndBootDone(std::string filename) {
+		if (GetUIState() == UISTATE_INGAME || GetUIState() == UISTATE_EXCEPTION || GetUIState() == UISTATE_PAUSEMENU) {
+			Core_EnableStepping(false);
 		}
-
+		filename = ReplaceAll(filename, "\\", "/");
+		NativeMessageReceived("boot", filename.c_str());
 		W32Util::MakeTopMost(GetHWND(), g_Config.bTopMost);
-
-		delete browseDialog;
-		browseDialog = 0;
-	}
-
-	void BrowseBackground() {
-		static std::wstring filter = L"All supported images (*.jpg *.jpeg *.png)|*.jpg;*.jpeg;*.png|All files (*.*)|*.*||";
-		for (size_t i = 0; i < filter.length(); i++) {
-			if (filter[i] == '|')
-				filter[i] = '\0';
-		}
-
-		W32Util::MakeTopMost(GetHWND(), false);
-		browseImageDialog = new W32Util::AsyncBrowseDialog(W32Util::AsyncBrowseDialog::OPEN, GetHWND(), WM_USER_BROWSE_BG_DONE, L"LoadFile", L"", filter, L"*.jpg;*.jpeg;*.png;");
-	}
-
-	void BrowseBackgroundDone() {
-		std::string filename;
-		if (browseImageDialog->GetResult(filename)) {
-			std::wstring src = ConvertUTF8ToWString(filename);
-			std::wstring dest;
-			if (filename.size() >= 5 && (filename.substr(filename.size() - 4) == ".jpg" || filename.substr(filename.size() - 5) == ".jpeg")) {
-				dest = (GetSysDirectory(DIRECTORY_SYSTEM) / "background.jpg").ToWString();
-			} else {
-				dest = (GetSysDirectory(DIRECTORY_SYSTEM) / "background.png").ToWString();
-			}
-
-			CopyFileW(src.c_str(), dest.c_str(), FALSE);
-			NativeMessageReceived("bgImage_updated", "");
-		}
-
-		W32Util::MakeTopMost(GetHWND(), g_Config.bTopMost);
-
-		delete browseImageDialog;
-		browseImageDialog = nullptr;
 	}
 
 	static void UmdSwitchAction() {
@@ -393,10 +356,6 @@ namespace MainWindow {
 		}
 	}
 
-	static void setScreenRotation(int rotation) {
-		g_Config.iInternalScreenRotation = rotation;
-	}
-
 	static void SaveStateActionFinished(SaveState::Status status, const std::string &message, void *userdata) {
 		if (!message.empty() && (!g_Config.bDumpFrames || !g_Config.bDumpVideoOutput)) {
 			osm.Show(message, status == SaveState::Status::SUCCESS ? 2.0 : 5.0);
@@ -408,14 +367,6 @@ namespace MainWindow {
 	void setTexScalingMultiplier(int level) {
 		g_Config.iTexScalingLevel = level;
 		NativeMessageReceived("gpu_configChanged", "");
-	}
-
-	static void setTexFiltering(int type) {
-		g_Config.iTexFiltering = type;
-	}
-
-	static void setBufFilter(int type) {
-		g_Config.iBufFilter = type;
 	}
 
 	static void setTexScalingType(int type) {
@@ -436,7 +387,7 @@ namespace MainWindow {
 				g_Config.iFrameSkip = FRAMESKIP_OFF;
 		}
 
-		auto gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 
 		std::ostringstream messageStream;
 		messageStream << gr->T("Frame Skipping") << ":" << " ";
@@ -456,7 +407,7 @@ namespace MainWindow {
 			g_Config.iFrameSkipType = 0;
 		}
 
-		auto gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 
 		std::ostringstream messageStream;
 		messageStream << gr->T("Frame Skipping Type") << ":" << " ";
@@ -481,13 +432,13 @@ namespace MainWindow {
 	void MainWindowMenu_Process(HWND hWnd, WPARAM wParam) {
 		std::string fn;
 
-		auto gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 
 		int wmId = LOWORD(wParam);
 		// Parse the menu selections:
 		switch (wmId) {
 		case ID_FILE_LOAD:
-			BrowseAndBoot("");
+			BrowseAndBoot("", false);
 			break;
 
 		case ID_FILE_LOAD_DIR:
@@ -549,10 +500,10 @@ namespace MainWindow {
 			UmdSwitchAction();
 			break;
 
-		case ID_EMULATION_ROTATION_H:                 setScreenRotation(ROTATION_LOCKED_HORIZONTAL); break;
-		case ID_EMULATION_ROTATION_V:                 setScreenRotation(ROTATION_LOCKED_VERTICAL); break;
-		case ID_EMULATION_ROTATION_H_R:               setScreenRotation(ROTATION_LOCKED_HORIZONTAL180); break;
-		case ID_EMULATION_ROTATION_V_R:               setScreenRotation(ROTATION_LOCKED_VERTICAL180); break;
+		case ID_EMULATION_ROTATION_H:   g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL; break;
+		case ID_EMULATION_ROTATION_V:   g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL; break;
+		case ID_EMULATION_ROTATION_H_R: g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180; break;
+		case ID_EMULATION_ROTATION_V_R: g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180; break;
 
 		case ID_EMULATION_CHEATS:
 			g_Config.bEnableCheats = !g_Config.bEnableCheats;
@@ -585,8 +536,7 @@ namespace MainWindow {
 
 		case ID_FILE_SAVESTATE_NEXT_SLOT_HC:
 		{
-			if (KeyMap::g_controllerMap[VIRTKEY_NEXT_SLOT].empty())
-			{
+			if (!KeyMap::PspButtonHasMappings(VIRTKEY_NEXT_SLOT)) {
 				SaveState::NextSlot();
 				NativeMessageReceived("savestate_displayslot", "");
 			}
@@ -608,7 +558,7 @@ namespace MainWindow {
 
 		case ID_FILE_QUICKLOADSTATE_HC:
 		{
-			if (KeyMap::g_controllerMap[VIRTKEY_LOAD_STATE].empty())
+			if (!KeyMap::PspButtonHasMappings(VIRTKEY_LOAD_STATE))
 			{
 				SetCursor(LoadCursor(0, IDC_WAIT));
 				SaveState::LoadSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
@@ -624,7 +574,7 @@ namespace MainWindow {
 
 		case ID_FILE_QUICKSAVESTATE_HC:
 		{
-			if (KeyMap::g_controllerMap[VIRTKEY_SAVE_STATE].empty())
+			if (!KeyMap::PspButtonHasMappings(VIRTKEY_SAVE_STATE))
 			{
 				SetCursor(LoadCursor(0, IDC_WAIT));
 				SaveState::SaveSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
@@ -826,7 +776,7 @@ namespace MainWindow {
 
 		case ID_DEBUG_MEMORYBASE:
 		{
-			W32Util::CopyTextToClipboard(hWnd, ConvertUTF8ToWString(StringFromFormat("%016llx", (uintptr_t)Memory::base)));
+			W32Util::CopyTextToClipboard(hWnd, ConvertUTF8ToWString(StringFromFormat("%016llx", (uint64_t)(uintptr_t)Memory::base)));
 			break;
 		}
 
@@ -890,13 +840,13 @@ namespace MainWindow {
 		case ID_OPTIONS_VERTEXCACHE:
 			g_Config.bVertexCache = !g_Config.bVertexCache;
 			break;
-		case ID_OPTIONS_TEXTUREFILTERING_AUTO:   setTexFiltering(TEX_FILTER_AUTO); break;
-		case ID_OPTIONS_NEARESTFILTERING:        setTexFiltering(TEX_FILTER_FORCE_NEAREST); break;
-		case ID_OPTIONS_LINEARFILTERING:         setTexFiltering(TEX_FILTER_FORCE_LINEAR); break;
-		case ID_OPTIONS_AUTOMAXQUALITYFILTERING: setTexFiltering(TEX_FILTER_AUTO_MAX_QUALITY); break;
+		case ID_OPTIONS_TEXTUREFILTERING_AUTO:   g_Config.iTexFiltering = TEX_FILTER_AUTO; break;
+		case ID_OPTIONS_NEARESTFILTERING:        g_Config.iTexFiltering = TEX_FILTER_FORCE_NEAREST; break;
+		case ID_OPTIONS_LINEARFILTERING:         g_Config.iTexFiltering = TEX_FILTER_FORCE_LINEAR; break;
+		case ID_OPTIONS_AUTOMAXQUALITYFILTERING: g_Config.iTexFiltering = TEX_FILTER_AUTO_MAX_QUALITY; break;
 
-		case ID_OPTIONS_BUFLINEARFILTER:       setBufFilter(SCALE_LINEAR); break;
-		case ID_OPTIONS_BUFNEARESTFILTER:      setBufFilter(SCALE_NEAREST); break;
+		case ID_OPTIONS_BUFLINEARFILTER:  g_Config.iDisplayFilter = SCALE_LINEAR; break;
+		case ID_OPTIONS_BUFNEARESTFILTER: g_Config.iDisplayFilter = SCALE_NEAREST; break;
 
 		case ID_OPTIONS_TOPMOST:
 			g_Config.bTopMost = !g_Config.bTopMost;
@@ -917,10 +867,6 @@ namespace MainWindow {
 
 		case ID_EMULATION_SOUND:
 			g_Config.bEnableSound = !g_Config.bEnableSound;
-			if (g_Config.bEnableSound) {
-				if (PSP_IsInited() && !IsAudioInitialised())
-					Audio_Init();
-			}
 			break;
 
 		case ID_HELP_OPENWEBSITE:
@@ -1136,14 +1082,14 @@ namespace MainWindow {
 			ID_OPTIONS_BUFLINEARFILTER,
 			ID_OPTIONS_BUFNEARESTFILTER,
 		};
-		if (g_Config.iBufFilter < SCALE_LINEAR)
-			g_Config.iBufFilter = SCALE_LINEAR;
+		if (g_Config.iDisplayFilter < SCALE_LINEAR)
+			g_Config.iDisplayFilter = SCALE_LINEAR;
 
-		else if (g_Config.iBufFilter > SCALE_NEAREST)
-			g_Config.iBufFilter = SCALE_NEAREST;
+		else if (g_Config.iDisplayFilter > SCALE_NEAREST)
+			g_Config.iDisplayFilter = SCALE_NEAREST;
 
 		for (int i = 0; i < ARRAY_SIZE(bufferfilteritems); i++) {
-			CheckMenuItem(menu, bufferfilteritems[i], MF_BYCOMMAND | ((i + 1) == g_Config.iBufFilter ? MF_CHECKED : MF_UNCHECKED));
+			CheckMenuItem(menu, bufferfilteritems[i], MF_BYCOMMAND | ((i + 1) == g_Config.iDisplayFilter ? MF_CHECKED : MF_UNCHECKED));
 		}
 
 		static const int frameskipping[] = {

@@ -34,10 +34,10 @@
 #include "Common/Log.h"
 #include "Core/Core.h"
 #include "Core/Config.h"
-#include "Core/Host.h"
 #include "Core/MemMap.h"
 #include "Core/SaveState.h"
 #include "Core/System.h"
+#include "Core/MemFault.h"
 #include "Core/Debugger/Breakpoints.h"
 #include "Core/HW/Display.h"
 #include "Core/MIPS/MIPS.h"
@@ -156,8 +156,8 @@ bool Core_GetPowerSaving() {
 
 static bool IsWindowSmall(int pixelWidth, int pixelHeight) {
 	// Can't take this from config as it will not be set if windows is maximized.
-	int w = (int)(pixelWidth * g_dpi_scale_x);
-	int h = (int)(pixelHeight * g_dpi_scale_y);
+	int w = (int)(pixelWidth * g_display.dpi_scale_x);
+	int h = (int)(pixelHeight * g_display.dpi_scale_y);
 	return g_Config.IsPortrait() ? (h < 480 + 80) : (w < 480 + 80);
 }
 
@@ -165,42 +165,42 @@ static bool IsWindowSmall(int pixelWidth, int pixelHeight) {
 bool UpdateScreenScale(int width, int height) {
 	bool smallWindow;
 #if defined(USING_QT_UI)
-	g_dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
+	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
 	float g_logical_dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_LOGICAL_DPI);
-	g_dpi_scale_x = g_logical_dpi / g_dpi;
-	g_dpi_scale_y = g_logical_dpi / g_dpi;
+	g_display.dpi_scale_x = g_logical_dpi / g_display.dpi;
+	g_display.dpi_scale_y = g_logical_dpi / g_display.dpi;
 #elif PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
-	g_dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
-	g_dpi_scale_x = 96.0f / g_dpi;
-	g_dpi_scale_y = 96.0f / g_dpi;
+	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
+	g_display.dpi_scale_x = 96.0f / g_display.dpi;
+	g_display.dpi_scale_y = 96.0f / g_display.dpi;
 #else
-	g_dpi = 96.0f;
-	g_dpi_scale_x = 1.0f;
-	g_dpi_scale_y = 1.0f;
+	g_display.dpi = 96.0f;
+	g_display.dpi_scale_x = 1.0f;
+	g_display.dpi_scale_y = 1.0f;
 #endif
-	g_dpi_scale_real_x = g_dpi_scale_x;
-	g_dpi_scale_real_y = g_dpi_scale_y;
+	g_display.dpi_scale_real_x = g_display.dpi_scale_x;
+	g_display.dpi_scale_real_y = g_display.dpi_scale_y;
 
 	smallWindow = IsWindowSmall(width, height);
 	if (smallWindow) {
-		g_dpi /= 2.0f;
-		g_dpi_scale_x *= 2.0f;
-		g_dpi_scale_y *= 2.0f;
+		g_display.dpi /= 2.0f;
+		g_display.dpi_scale_x *= 2.0f;
+		g_display.dpi_scale_y *= 2.0f;
 	}
-	pixel_in_dps_x = 1.0f / g_dpi_scale_x;
-	pixel_in_dps_y = 1.0f / g_dpi_scale_y;
+	g_display.pixel_in_dps_x = 1.0f / g_display.dpi_scale_x;
+	g_display.pixel_in_dps_y = 1.0f / g_display.dpi_scale_y;
 
-	int new_dp_xres = (int)(width * g_dpi_scale_x);
-	int new_dp_yres = (int)(height * g_dpi_scale_y);
+	int new_dp_xres = (int)(width * g_display.dpi_scale_x);
+	int new_dp_yres = (int)(height * g_display.dpi_scale_y);
 
-	bool dp_changed = new_dp_xres != dp_xres || new_dp_yres != dp_yres;
-	bool px_changed = pixel_xres != width || pixel_yres != height;
+	bool dp_changed = new_dp_xres != g_display.dp_xres || new_dp_yres != g_display.dp_yres;
+	bool px_changed = g_display.pixel_xres != width || g_display.pixel_yres != height;
 
 	if (dp_changed || px_changed) {
-		dp_xres = new_dp_xres;
-		dp_yres = new_dp_yres;
-		pixel_xres = width;
-		pixel_yres = height;
+		g_display.dp_xres = new_dp_xres;
+		g_display.dp_yres = new_dp_yres;
+		g_display.pixel_xres = width;
+		g_display.pixel_yres = height;
 		NativeResized();
 		return true;
 	}
@@ -310,8 +310,8 @@ void Core_ProcessStepping() {
 	static int lastSteppingCounter = -1;
 	if (lastSteppingCounter != steppingCounter) {
 		CBreakPoints::ClearTemporaryBreakPoints();
-		host->UpdateDisassembly();
-		host->UpdateMemView();
+		System_Notify(SystemNotification::DISASSEMBLY);
+		System_Notify(SystemNotification::MEM_VIEW);
 		lastSteppingCounter = steppingCounter;
 	}
 
@@ -322,15 +322,15 @@ void Core_ProcessStepping() {
 	if (doStep && coreState == CORE_STEPPING) {
 		Core_SingleStep();
 		// Update disasm dialog.
-		host->UpdateDisassembly();
-		host->UpdateMemView();
+		System_Notify(SystemNotification::DISASSEMBLY);
+		System_Notify(SystemNotification::MEM_VIEW);
 	}
 }
 
 // Many platforms, like Android, do not call this function but handle things on their own.
 // Instead they simply call NativeRender and NativeUpdate directly.
 bool Core_Run(GraphicsContext *ctx) {
-	host->UpdateDisassembly();
+	System_Notify(SystemNotification::DISASSEMBLY);
 	while (true) {
 		if (GetUIState() != UISTATE_INGAME) {
 			Core_StateProcessed();
@@ -369,11 +369,10 @@ bool Core_Run(GraphicsContext *ctx) {
 }
 
 void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
-	host->SetDebugMode(step);
 	if (step) {
 		// stop logger
 		mipsLogger.stopLogger();
-
+        
 		Core_UpdateState(CORE_STEPPING);
 		steppingCounter++;
 		_assert_msg_(reason != nullptr, "No reason specified for break");
@@ -386,6 +385,7 @@ void Core_EnableStepping(bool step, const char *reason, u32 relatedAddress) {
 		coreStatePending = false;
 		m_StepCond.notify_all();
 	}
+	System_Notify(SystemNotification::DEBUG_MODE_CHANGE);
 }
 
 bool Core_NextFrame() {
@@ -449,6 +449,11 @@ void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionTy
 	}
 
 	if (!g_Config.bIgnoreBadMemAccess) {
+		// Try to fetch a call stack, to start with.
+		std::vector<MIPSStackWalk::StackFrame> stackFrames = WalkCurrentStack(-1);
+		std::string stackTrace = FormatStackTrace(stackFrames);
+		WARN_LOG(MEMMAP, "\n%s", stackTrace.c_str());
+
 		ExceptionInfo &e = g_exceptionInfo;
 		e = {};
 		e.type = ExceptionType::MEMORY;
@@ -456,6 +461,7 @@ void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionTy
 		e.memory_type = type;
 		e.address = address;
 		e.accessSize = accessSize;
+		e.stackTrace = stackTrace;
 		e.pc = pc;
 		Core_EnableStepping(true, "memory.exception", address);
 	}
@@ -471,12 +477,18 @@ void Core_MemoryExceptionInfo(u32 address, u32 pc, u32 accessSize, MemoryExcepti
 	}
 
 	if (!g_Config.bIgnoreBadMemAccess || forceReport) {
+		// Try to fetch a call stack, to start with.
+		std::vector<MIPSStackWalk::StackFrame> stackFrames = WalkCurrentStack(-1);
+		std::string stackTrace = FormatStackTrace(stackFrames);
+		WARN_LOG(MEMMAP, "\n%s", stackTrace.c_str());
+
 		ExceptionInfo &e = g_exceptionInfo;
 		e = {};
 		e.type = ExceptionType::MEMORY;
 		e.info = additionalInfo;
 		e.memory_type = type;
 		e.address = address;
+		e.stackTrace = stackTrace;
 		e.pc = pc;
 		Core_EnableStepping(true, "memory.exception", address);
 	}

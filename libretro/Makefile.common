@@ -244,6 +244,9 @@ SOURCES_CXX += \
 SOURCES_CXX += $(EXTDIR)/cityhash/city.cpp
 
 SOURCES_CXX += \
+	$(EXTDIR)/basis_universal/basisu_transcoder.cpp
+
+SOURCES_CXX += \
 	$(EXTDIR)/armips/Core/Types.cpp
 
 SOURCES_CXX += \
@@ -261,6 +264,7 @@ SOURCES_CXX += \
 	$(COMMONDIR)/Data/Format/IniFile.cpp \
 	$(COMMONDIR)/Data/Format/JSONReader.cpp \
 	$(COMMONDIR)/Data/Format/JSONWriter.cpp \
+	$(COMMONDIR)/Data/Format/DDSLoad.cpp \
 	$(COMMONDIR)/Data/Format/PNGLoad.cpp \
 	$(COMMONDIR)/Data/Format/ZIMLoad.cpp \
 	$(COMMONDIR)/Data/Format/ZIMSave.cpp \
@@ -269,7 +273,8 @@ SOURCES_CXX += \
 	$(COMMONDIR)/Data/Text/Parsers.cpp \
 	$(COMMONDIR)/Data/Text/WrapText.cpp \
 	$(COMMONDIR)/File/VFS/VFS.cpp \
-	$(COMMONDIR)/File/VFS/AssetReader.cpp \
+	$(COMMONDIR)/File/VFS/DirectoryReader.cpp \
+	$(COMMONDIR)/File/VFS/ZipFileReader.cpp \
 	$(COMMONDIR)/File/AndroidStorage.cpp \
 	$(COMMONDIR)/File/DiskFree.cpp \
 	$(COMMONDIR)/File/Path.cpp \
@@ -336,6 +341,7 @@ SOURCES_CXX += \
 	$(COMMONDIR)/UI/ScrollView.cpp \
 	$(COMMONDIR)/UI/PopupScreens.cpp \
 	$(COMMONDIR)/System/Display.cpp \
+	$(COMMONDIR)/System/Request.cpp \
 	$(COMMONDIR)/ArmCPUDetect.cpp \
 	$(COMMONDIR)/CPUDetect.cpp \
 	$(COMMONDIR)/Buffer.cpp \
@@ -385,6 +391,8 @@ SOURCES_CXX += \
 	$(GPUCOMMONDIR)/IndexGenerator.cpp \
 	$(GPUCOMMONDIR)/TextureDecoder.cpp \
 	$(GPUCOMMONDIR)/PostShader.cpp \
+	$(GPUCOMMONDIR)/TextureReplacer.cpp \
+	$(GPUCOMMONDIR)/ReplacedTexture.cpp \
 	$(COMMONDIR)/Data/Convert/ColorConv.cpp \
 	$(GPUDIR)/Debugger/Breakpoints.cpp \
 	$(GPUDIR)/Debugger/Debugger.cpp \
@@ -406,6 +414,7 @@ SOURCES_CXX += \
 	$(GPUDIR)/GeConstants.cpp \
 	$(GPUDIR)/GeDisasm.cpp \
 	$(GPUDIR)/GPUCommon.cpp \
+	$(GPUDIR)/GPUCommonHW.cpp \
 	$(GPUDIR)/GPU.cpp \
 	$(GPUDIR)/GPUState.cpp \
 	$(GPUDIR)/Math3D.cpp \
@@ -492,8 +501,8 @@ SOURCES_CXX += \
 	       $(EXTDIR)/jpge/jpge.cpp \
 	       $(COREDIR)/AVIDump.cpp \
 	       $(COREDIR)/Config.cpp \
+	       $(COREDIR)/ConfigSettings.cpp \
 	       $(COREDIR)/ControlMapper.cpp \
-	       $(COREDIR)/TextureReplacer.cpp \
 	       $(COREDIR)/Core.cpp \
 	       $(COREDIR)/WaveFile.cpp \
 	       $(COREDIR)/KeyMap.cpp \
@@ -515,7 +524,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/Dialog/PSPGamedataInstallDialog.cpp \
 	       $(COREDIR)/Dialog/PSPMsgDialog.cpp \
 	       $(COREDIR)/Dialog/PSPNetconfDialog.cpp \
-		   $(COREDIR)/Dialog/PSPNpSigninDialog.cpp \
+	       $(COREDIR)/Dialog/PSPNpSigninDialog.cpp \
 	       $(COREDIR)/Dialog/PSPOskDialog.cpp \
 	       $(COREDIR)/Dialog/PSPSaveDialog.cpp \
 	       $(COREDIR)/Dialog/PSPScreenshotDialog.cpp \
@@ -603,7 +612,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/HLE/sceVaudio.cpp \
 	       $(COREDIR)/HLE/scePspNpDrm_user.cpp \
 	       $(COREDIR)/HLE/sceNp.cpp \
-		   $(COREDIR)/HLE/sceNp2.cpp \
+	       $(COREDIR)/HLE/sceNp2.cpp \
 	       $(COREDIR)/HLE/scePauth.cpp \
 	       $(COREDIR)/HLE/sceUsbGps.cpp \
 	       $(COREDIR)/HW/BufferQueue.cpp \
@@ -618,7 +627,6 @@ SOURCES_CXX += \
 	       $(COREDIR)/HW/SasReverb.cpp \
 	       $(COREDIR)/HW/StereoResampler.cpp \
 	       $(COREDIR)/Compatibility.cpp \
-	       $(COREDIR)/Host.cpp \
 	       $(COREDIR)/Loaders.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitCommon.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitState.cpp \
@@ -643,7 +651,9 @@ SOURCES_CXX += \
 	       $(COREDIR)/MIPS/MIPSInt.cpp \
 	       $(COREDIR)/MIPS/MIPSIntVFPU.cpp \
 	       $(COREDIR)/MIPS/MIPSTables.cpp \
+	       $(COREDIR)/MIPS/MIPSStackWalk.cpp \
 	       $(COREDIR)/MIPS/MIPSVFPUUtils.cpp \
+	       $(COREDIR)/MIPS/MIPSVFPUFallbacks.cpp \
 	       $(COREDIR)/MemFault.cpp \
 	       $(COREDIR)/MemMap.cpp \
 	       $(COREDIR)/MemMapFunctions.cpp \
@@ -658,7 +668,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/Util/PPGeDraw.cpp \
 	       $(COREDIR)/Util/AudioFormat.cpp \
 	       $(COREDIR)/Util/PortManager.cpp \
-           $(CORE_DIR)/UI/GameInfoCache.cpp
+	       $(CORE_DIR)/UI/GameInfoCache.cpp
 
 SOURCES_CXX += $(COREDIR)/HLE/__sceAudio.cpp
 
@@ -817,7 +827,7 @@ SOURCES_CXX += \
 	$(COMMONDIR)/GPU/D3D9/thin3d_d3d9.cpp \
 	$(COMMONDIR)/GPU/D3D11/D3D11Loader.cpp \
 	$(COMMONDIR)/GPU/D3D11/thin3d_d3d11.cpp
-	
+
 INCFLAGS += -I$(CORE_DIR)/dx9sdk/Include -I$(CORE_DIR)/dx9sdk/Include/DX11
 
 endif
@@ -899,7 +909,7 @@ SOURCES_C += $(LIBRETROCOMMONDIR)/compat/compat_posix_string.c \
 endif
 
 GIT_VERSION_SRC = $(CORE_DIR)/git-version.cpp
-GIT_VERSION := $(shell git describe --always || echo v1.7.0-git)
+GIT_VERSION := $(shell git describe --always || echo v-1.unknown)
 GIT_VERSION_NO_UPDATE = $(findstring 1,$(shell grep -s PPSSPP_GIT_VERSION_NO_UPDATE $(GIT_VERSION_SRC)))
 ifneq (,$(findstring $(GIT_VERSION),$(shell grep -s char $(GIT_VERSION_SRC))))
    GIT_VERSION_NO_UPDATE = 1

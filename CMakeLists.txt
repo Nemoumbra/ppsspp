@@ -368,6 +368,10 @@ if(NOT MSVC)
 	if(X86 OR X86_64)
 		# enable sse2 code generation
 		add_definitions(-msse2)
+		if(NOT X86_64 AND NOT CLANG)
+			add_definitions(-mfpmath=sse)
+			# add_definitions(-mstackrealign)
+		 endif()
 	endif()
 
 	if(IOS)
@@ -571,6 +575,8 @@ add_library(Common STATIC
 	Common/Data/Format/JSONReader.cpp
 	Common/Data/Format/JSONWriter.h
 	Common/Data/Format/JSONWriter.cpp
+	Common/Data/Format/DDSLoad.cpp
+	Common/Data/Format/DDSLoad.h
 	Common/Data/Format/PNGLoad.cpp
 	Common/Data/Format/PNGLoad.h
 	Common/Data/Format/ZIMLoad.cpp
@@ -588,8 +594,10 @@ add_library(Common STATIC
 	Common/Data/Random/Rng.h
 	Common/File/VFS/VFS.h
 	Common/File/VFS/VFS.cpp
-	Common/File/VFS/AssetReader.cpp
-	Common/File/VFS/AssetReader.h
+	Common/File/VFS/ZipFileReader.cpp
+	Common/File/VFS/ZipFileReader.h
+	Common/File/VFS/DirectoryReader.cpp
+	Common/File/VFS/DirectoryReader.h
 	Common/File/AndroidStorage.h
 	Common/File/AndroidStorage.cpp
 	Common/File/DiskFree.h
@@ -708,6 +716,10 @@ add_library(Common STATIC
 	Common/Render/Text/draw_text_uwp.h
 	Common/System/Display.cpp
 	Common/System/Display.h
+	Common/System/System.h
+	Common/System/NativeApp.h
+	Common/System/Request.cpp
+	Common/System/Request.h
 	Common/Thread/Channel.h
 	Common/Thread/ParallelLoop.cpp
 	Common/Thread/ParallelLoop.h
@@ -1095,6 +1107,28 @@ else()
 	include_directories(ext/libpng17)
 endif()
 
+add_library(basis_universal STATIC
+	ext/basis_universal/basisu.h
+	ext/basis_universal/basisu_containers.h
+	ext/basis_universal/basisu_containers_impl.h
+	ext/basis_universal/basisu_file_headers.h
+	ext/basis_universal/basisu_transcoder.cpp
+	ext/basis_universal/basisu_transcoder.h
+	ext/basis_universal/basisu_transcoder_internal.h
+	ext/basis_universal/basisu_transcoder_tables_astc.inc
+	ext/basis_universal/basisu_transcoder_tables_astc_0_255.inc
+	ext/basis_universal/basisu_transcoder_tables_atc_55.inc
+	ext/basis_universal/basisu_transcoder_tables_atc_56.inc
+	ext/basis_universal/basisu_transcoder_tables_bc7_m5_alpha.inc
+	ext/basis_universal/basisu_transcoder_tables_bc7_m5_color.inc
+	ext/basis_universal/basisu_transcoder_tables_dxt1_5.inc
+	ext/basis_universal/basisu_transcoder_tables_dxt1_6.inc
+	ext/basis_universal/basisu_transcoder_tables_pvrtc2_45.inc
+	ext/basis_universal/basisu_transcoder_tables_pvrtc2_alpha_33.inc
+	ext/basis_universal/basisu_transcoder_uastc.h
+)
+set(BASISU_LIBRARIES basis_universal)
+
 set(nativeExtra)
 set(nativeExtraLibs)
 
@@ -1150,7 +1184,7 @@ elseif(IOS AND NOT LIBRETRO)
 		UI/DarwinFileSystemServices.h
 		Common/Battery/AppleBatteryClient.m
 	)
-    
+
 	set(nativeExtraLibs ${nativeExtraLibs} "-framework Foundation -framework MediaPlayer -framework AudioToolbox -framework CoreGraphics -framework QuartzCore -framework UIKit -framework GLKit -framework OpenAL -framework AVFoundation -framework CoreLocation -framework CoreVideo -framework CoreMedia -framework CoreServices" )
 	if(EXISTS "${CMAKE_IOS_SDK_ROOT}/System/Library/Frameworks/GameController.framework")
 		set(nativeExtraLibs ${nativeExtraLibs} "-weak_framework GameController")
@@ -1179,8 +1213,6 @@ elseif(USING_QT_UI)
 	list(APPEND NativeAppSource
 		Qt/QtMain.cpp
 		Qt/QtMain.h
-		Qt/QtHost.cpp
-		Qt/QtHost.h
 		Qt/mainwindow.cpp
 		Qt/mainwindow.h
 	)
@@ -1188,7 +1220,15 @@ elseif(USING_QT_UI)
 	if(USING_GLES2)
 		add_definitions(-DQT_OPENGL_ES -DQT_OPENGL_ES_2)
 	endif()
-
+	if(APPLE)
+		list(APPEND NativeAppSource
+			UI/DarwinFileSystemServices.mm
+			UI/DarwinFileSystemServices.h
+			Common/Battery/AppleBatteryClient.m)
+		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
+	endif()
 	include_directories(Qt)
 	include_directories(${CMAKE_CURRENT_BINARY_DIR})
 	set(nativeExtraLibs ${nativeExtraLibs} Qt5::OpenGL Qt5::Gui Qt5::Core Qt5::Multimedia)
@@ -1229,8 +1269,9 @@ elseif(TARGET SDL2::SDL2)
 	endif()
 	set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
 	if(APPLE)
-		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm SDL/SDLCocoaMetalLayer.h SDL/SDLCocoaMetalLayer.mm UI/DarwinFileSystemServices.mm UI/DarwinFileSystemServices.h Common/Battery/AppleBatteryClient.m)
+		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm SDL/SDLCocoaMetalLayer.h SDL/SDLCocoaMetalLayer.mm SDL/CocoaBarItems.mm SDL/CocoaBarItems.h UI/DarwinFileSystemServices.mm UI/DarwinFileSystemServices.h Common/Battery/AppleBatteryClient.m)
         set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(SDL/CocoaBarItems.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
 	elseif(USING_EGL)
@@ -1249,6 +1290,13 @@ if(WIN32)
 		target_link_libraries(Common dxguid)
 	endif()
 	target_link_libraries(Common winmm d3d9 dsound)
+endif()
+
+if(NOT LIBRETRO)
+	list(APPEND NativeAppSource
+		UI/AudioCommon.h
+		UI/AudioCommon.cpp
+	)
 endif()
 
 list(APPEND NativeAppSource
@@ -1309,8 +1357,8 @@ list(APPEND NativeAppSource
 	UI/MemStickScreen.cpp
 	UI/ProfilerDraw.h
 	UI/ProfilerDraw.cpp
-	UI/ComboKeyMappingScreen.h
-	UI/ComboKeyMappingScreen.cpp
+	UI/CustomButtonMappingScreen.h
+	UI/CustomButtonMappingScreen.cpp
 	UI/Theme.h
 	UI/Theme.cpp
 )
@@ -1346,11 +1394,11 @@ if(LINUX AND NOT ANDROID)
 endif()
 
 set(ATOMIC_LIB)
-if(ANDROID OR (LINUX AND ARM_DEVICE))
+if(ANDROID OR (LINUX AND ARM_DEVICE) OR (LINUX AND RISCV64))
 	set(ATOMIC_LIB atomic)
 endif()
 
-target_link_libraries(native ${LIBZIP_LIBRARY} ${PNG_LIBRARIES} ${ZLIB_LIBRARY} vma gason udis86 ${RT_LIB} ${nativeExtraLibs} ${ATOMIC_LIB} Common)
+target_link_libraries(native ${LIBZIP_LIBRARY} ${PNG_LIBRARIES} ${BASISU_LIBRARIES} ${ZLIB_LIBRARY} vma gason udis86 ${RT_LIB} ${nativeExtraLibs} ${ATOMIC_LIB} Common)
 if(TARGET Ext::GLEW)
 	target_link_libraries(native Ext::GLEW)
 endif()
@@ -1629,6 +1677,10 @@ set(GPU_SOURCES
 	GPU/Common/TextureScalerCommon.h
 	GPU/Common/PostShader.cpp
 	GPU/Common/PostShader.h
+	GPU/Common/TextureReplacer.cpp
+	GPU/Common/TextureReplacer.h
+	GPU/Common/ReplacedTexture.cpp
+	GPU/Common/ReplacedTexture.h
 	GPU/Debugger/Breakpoints.cpp
 	GPU/Debugger/Breakpoints.h
 	GPU/Debugger/Debugger.cpp
@@ -1651,6 +1703,8 @@ set(GPU_SOURCES
 	GPU/GPU.h
 	GPU/GPUCommon.cpp
 	GPU/GPUCommon.h
+	GPU/GPUCommonHW.cpp
+	GPU/GPUCommonHW.h
 	GPU/GPUState.cpp
 	GPU/GPUState.h
 	GPU/Math3D.cpp
@@ -1686,6 +1740,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	${CommonJIT}
 	Core/Config.cpp
 	Core/Config.h
+	Core/ConfigSettings.cpp
+	Core/ConfigSettings.h
 	Core/ConfigValues.h
 	Core/ControlMapper.cpp
 	Core/ControlMapper.h
@@ -1977,8 +2033,6 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HW/SasReverb.h
 	Core/HW/StereoResampler.cpp
 	Core/HW/StereoResampler.h
-	Core/Host.cpp
-	Core/Host.h
 	Core/Loaders.cpp
 	Core/Loaders.h
 	Core/FileLoaders/CachingFileLoader.cpp
@@ -2015,6 +2069,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/MIPS/MIPSTables.h
 	Core/MIPS/MIPSVFPUUtils.cpp
 	Core/MIPS/MIPSVFPUUtils.h
+	Core/MIPS/MIPSVFPUFallbacks.cpp
+	Core/MIPS/MIPSVFPUFallbacks.h
 	Core/MIPS/MIPSAsm.cpp
 	Core/MIPS/MIPSAsm.h
 	Core/MemFault.cpp
@@ -2035,8 +2091,6 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/Screenshot.h
 	Core/System.cpp
 	Core/System.h
-	Core/TextureReplacer.cpp
-	Core/TextureReplacer.h
 	Core/ThreadPools.cpp
 	Core/ThreadPools.h
 	Core/Util/AudioFormat.cpp
@@ -2253,7 +2307,8 @@ set(WindowsFiles
 	Windows/Debugger/Debugger_SymbolMap.h
 	Windows/Debugger/Debugger_VFPUDlg.cpp
 	Windows/Debugger/Debugger_VFPUDlg.h
-	Windows/Debugger/SimpleELF.h
+	Windows/Debugger/WatchItemWindow.cpp
+	Windows/Debugger/WatchItemWindow.h
 	Windows/GEDebugger/CtrlDisplayListView.cpp
 	Windows/GEDebugger/SimpleGLWindow.cpp
 	Windows/GEDebugger/TabState.cpp
@@ -2339,6 +2394,7 @@ set(NativeAssets
 	assets/lang
 	assets/shaders
 	assets/themes
+	assets/vfpu
 	assets/Roboto-Condensed.ttf
 	assets/7z.png
 	assets/compat.ini
@@ -2362,8 +2418,8 @@ set(NativeAssets
 if(HEADLESS)
 	set(HeadlessSource
 		headless/Headless.cpp
-		headless/StubHost.cpp
-		headless/StubHost.h
+		headless/HeadlessHost.cpp
+		headless/HeadlessHost.h
 		headless/Compare.cpp
 		headless/Compare.h
 		headless/SDLHeadlessHost.cpp
@@ -2449,6 +2505,7 @@ if(TargetBin)
 		file(GLOB_RECURSE SHADER_FILES assets/shaders/*)
 		file(GLOB_RECURSE THEME_FILE assets/themes/*)
 		file(GLOB_RECURSE DEBUGGER_FILES assets/debugger/*)
+                file(GLOB_RECURSE VFPU_FILES assets/vfpu/*)
 
 		if(NOT IOS)
 			set_source_files_properties(${BigFontAssets} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets")
@@ -2458,6 +2515,7 @@ if(TargetBin)
 			set_source_files_properties(${SHADER_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/shaders")
 			set_source_files_properties(${THEME_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/themes")
 			set_source_files_properties(${DEBUGGER_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/debugger")
+                        set_source_files_properties(${VFPU_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/vfpu")
 		endif()
 
 		if(IOS)

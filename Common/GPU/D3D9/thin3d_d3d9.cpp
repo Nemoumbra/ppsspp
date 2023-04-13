@@ -113,7 +113,7 @@ static const D3DSTENCILOP stencilOpToD3D9[] = {
 	D3DSTENCILOP_DECR,
 };
 
-D3DFORMAT FormatToD3DFMT(DataFormat fmt) {
+static D3DFORMAT FormatToD3DFMT(DataFormat fmt) {
 	switch (fmt) {
 	case DataFormat::R16_UNORM: return D3DFMT_L16;  // closest match, should be a fine substitution if we ignore channels except R.
 	case DataFormat::R8G8B8A8_UNORM: return D3DFMT_A8R8G8B8;
@@ -125,6 +125,9 @@ D3DFORMAT FormatToD3DFMT(DataFormat fmt) {
 	case DataFormat::A1R5G5B5_UNORM_PACK16: return D3DFMT_A1R5G5B5;
 	case DataFormat::D24_S8: return D3DFMT_D24S8;
 	case DataFormat::D16: return D3DFMT_D16;
+	case DataFormat::BC1_RGBA_UNORM_BLOCK: return D3DFMT_DXT1;
+	case DataFormat::BC2_UNORM_BLOCK: return D3DFMT_DXT3;  // DXT3 is indeed BC2.
+	case DataFormat::BC3_UNORM_BLOCK: return D3DFMT_DXT5;  // DXT5 is indeed BC3
 	default: return D3DFMT_UNKNOWN;
 	}
 }
@@ -573,7 +576,7 @@ public:
 
 	// Raster state
 	void SetScissorRect(int left, int top, int width, int height) override;
-	void SetViewports(int count, Viewport *viewports) override;
+	void SetViewport(const Viewport &viewport) override;
 	void SetBlendFactor(float color[4]) override;
 	void SetStencilParams(uint8_t refValue, uint8_t writeMask, uint8_t compareMask) override;
 
@@ -1173,12 +1176,12 @@ void D3D9Context::SetScissorRect(int left, int top, int width, int height) {
 	dxstate.scissorTest.set(true);
 }
 
-void D3D9Context::SetViewports(int count, Viewport *viewports) {
-	int x = (int)viewports[0].TopLeftX;
-	int y = (int)viewports[0].TopLeftY;
-	int w = (int)viewports[0].Width;
-	int h = (int)viewports[0].Height;
-	dxstate.viewport.set(x, y, w, h, viewports[0].MinDepth, viewports[0].MaxDepth);
+void D3D9Context::SetViewport(const Viewport &viewport) {
+	int x = (int)viewport.TopLeftX;
+	int y = (int)viewport.TopLeftY;
+	int w = (int)viewport.Width;
+	int h = (int)viewport.Height;
+	dxstate.viewport.set(x, y, w, h, viewport.MinDepth, viewport.MaxDepth);
 }
 
 void D3D9Context::SetBlendFactor(float color[4]) {
@@ -1589,6 +1592,7 @@ uint32_t D3D9Context::GetDataFormatSupport(DataFormat fmt) const {
 	case DataFormat::BC1_RGBA_UNORM_BLOCK:
 	case DataFormat::BC2_UNORM_BLOCK:
 	case DataFormat::BC3_UNORM_BLOCK:
+		// DXT1, DXT3, DXT5.
 		return FMT_TEXTURE;
 	default:
 		return 0;

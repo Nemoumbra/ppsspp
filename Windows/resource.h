@@ -59,6 +59,7 @@
 #define IDD_GEDBG_TAB_VERTICES          254
 #define IDD_GEDBG_TAB_MATRICES          255
 #define IDD_GEDBG_STEPCOUNT             256
+#define IDD_CPUWATCH                    257
 
 #define IDC_STOPGO                      1001
 #define IDC_ADDRESS                     1002
@@ -250,6 +251,7 @@
 #define ID_OPTIONS_LANGUAGE              40141
 #define ID_MEMVIEW_COPYVALUE_16          40142
 #define ID_MEMVIEW_COPYVALUE_32          40143
+#define ID_MEMVIEW_COPYFLOAT_32          40229
 #define ID_EMULATION_SWITCH_UMD          40144
 #define ID_DEBUG_EXTRACTFILE             40145
 #define ID_OPTIONS_IGNOREWINKEY          40146
@@ -334,6 +336,13 @@
 #define ID_GEDBG_COPY_IMAGE_ALPHA        40225
 #define ID_GEDBG_TRACK_PIXEL             40226
 #define ID_GEDBG_TRACK_PIXEL_STOP        40227
+#define ID_DISASM_NOPINSTRUCTION         40228
+#define IDC_WATCHLIST                    40230
+#define ID_DISASM_DELETEBREAKPOINT       40231
+#define IDC_DISASM_FMT_HEX               40232
+#define IDC_DISASM_FMT_INT               40233
+#define IDC_DISASM_FMT_FLOAT             40234
+#define IDC_DISASM_FMT_STR               40235
 
 
 // Dummy option to let the buffered rendering hotkey cycle through all the options.
@@ -346,8 +355,8 @@
 // Next default values for new objects
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        256
-#define _APS_NEXT_COMMAND_VALUE         40228
+#define _APS_NEXT_RESOURCE_VALUE        258
+#define _APS_NEXT_COMMAND_VALUE         40236
 #define _APS_NEXT_CONTROL_VALUE         1202
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

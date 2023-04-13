@@ -32,8 +32,8 @@ static uint32_t FlagsFromConfig() {
 	return flags;
 }
 
-bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int mode, std::string *error_message) {
-	window = SDL_CreateWindow("Initializing Vulkan...", x, y, pixel_xres, pixel_yres, mode);
+bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, int mode, std::string *error_message) {
+	window = SDL_CreateWindow("Initializing Vulkan...", x, y, w, h, mode);
 	if (!window) {
 		fprintf(stderr, "Error creating SDL window: %s\n", SDL_GetError());
 		exit(1);
@@ -112,7 +112,7 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int mode,
 #endif
 #endif
 #if defined(VK_USE_PLATFORM_DISPLAY_KHR)
-	case WINDOWSYSTEM_DISPLAY:
+	case SDL_SYSWM_KMSDRM:
 		/*
 		There is no problem passing null for the next two arguments, and reinit will be called later
 		huangzihan china

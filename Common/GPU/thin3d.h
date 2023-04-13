@@ -252,6 +252,7 @@ enum class NativeObject {
 	NULL_IMAGEVIEW,
 	NULL_IMAGEVIEW_ARRAY,
 	THIN3D_PIPELINE_LAYOUT,
+	PUSH_POOL,
 };
 
 enum FBChannel {
@@ -598,6 +599,11 @@ struct DeviceCaps {
 // Important: only write to the provided pointer, don't read from it.
 typedef std::function<bool(uint8_t *data, const uint8_t *initData, uint32_t w, uint32_t h, uint32_t d, uint32_t byteStride, uint32_t sliceByteStride)> TextureCallback;
 
+enum class TextureSwizzle {
+	DEFAULT,
+	R8_AS_ALPHA,
+};
+
 struct TextureDesc {
 	TextureType type;
 	DataFormat format;
@@ -607,6 +613,7 @@ struct TextureDesc {
 	int depth;
 	int mipLevels;
 	bool generateMips;
+	TextureSwizzle swizzle;
 	// Optional, for tracking memory usage and graphcis debuggers.
 	const char *tag;
 	// Does not take ownership over pointed-to data.
@@ -733,7 +740,7 @@ public:
 
 	// Dynamic state
 	virtual void SetScissorRect(int left, int top, int width, int height) = 0;
-	virtual void SetViewports(int count, Viewport *viewports) = 0;
+	virtual void SetViewport(const Viewport &viewport) = 0;
 	virtual void SetBlendFactor(float color[4]) = 0;
 	virtual void SetStencilParams(uint8_t refValue, uint8_t writeMask, uint8_t compareMask) = 0;
 

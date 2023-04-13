@@ -28,6 +28,7 @@
 #include "Common/Math/lin/matrix4x4.h"
 #include "Common/Math/math_util.h"
 #include "Common/System/Display.h"
+#include "Common/System/System.h"
 #include "Common/VR/PPSSPPVR.h"
 #include "Common/CommonTypes.h"
 #include "Common/StringUtils.h"
@@ -36,7 +37,6 @@
 #include "Core/Core.h"
 #include "Core/CoreParameter.h"
 #include "Core/Debugger/MemBlockInfo.h"
-#include "Core/Host.h"
 #include "Core/MIPS/MIPS.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
@@ -546,6 +546,8 @@ VirtualFramebuffer *FramebufferManagerCommon::DoSetRenderFrameBuffer(Framebuffer
 			// TODO: Is it worth trying to upload the depth buffer (only if it wasn't copied above..?)
 		}
 
+		DiscardFramebufferCopy();
+
 		// We already have it!
 	} else if (vfb != currentRenderVfb_) {
 		// Use it as a render target.
@@ -562,6 +564,8 @@ VirtualFramebuffer *FramebufferManagerCommon::DoSetRenderFrameBuffer(Framebuffer
 		NotifyRenderFramebufferSwitched(prev, vfb, params.isClearingDepth);
 		CopyToColorFromOverlappingFramebuffers(vfb);
 		gstate_c.usingDepth = false;  // reset depth buffer tracking
+
+		DiscardFramebufferCopy();
 	} else {
 		// Something changed, but we still got the same framebuffer we were already rendering to.
 		// Might not be a lot to do here, we check in NotifyRenderFramebufferUpdated
@@ -928,6 +932,7 @@ void FramebufferManagerCommon::DestroyFramebuf(VirtualFramebuffer *v) {
 	}
 
 	// Wipe some pointers
+	DiscardFramebufferCopy();
 	if (currentRenderVfb_ == v)
 		currentRenderVfb_ = nullptr;
 	if (displayFramebuf_ == v)
@@ -1183,11 +1188,11 @@ void FramebufferManagerCommon::DrawPixels(VirtualFramebuffer *vfb, int dstX, int
 		// Should more of this be handled by the presentation engine?
 		if (needBackBufferYSwap_)
 			std::swap(v0, v1);
-		flags = g_Config.iBufFilter == SCALE_LINEAR ? DRAWTEX_LINEAR : DRAWTEX_NEAREST;
+		flags = g_Config.iDisplayFilter == SCALE_LINEAR ? DRAWTEX_LINEAR : DRAWTEX_NEAREST;
 		flags = flags | DRAWTEX_TO_BACKBUFFER;
 		FRect frame = GetScreenFrame(pixelWidth_, pixelHeight_);
 		FRect rc;
-		CenterDisplayOutputRect(&rc, 480.0f, 272.0f, frame, ROTATION_LOCKED_HORIZONTAL);
+		CalculateDisplayOutputRect(&rc, 480.0f, 272.0f, frame, ROTATION_LOCKED_HORIZONTAL);
 		SetViewport2D(rc.x, rc.y, rc.w, rc.h);
 		draw_->SetScissorRect(0, 0, pixelWidth_, pixelHeight_);
 	}
@@ -1205,8 +1210,8 @@ void FramebufferManagerCommon::DrawPixels(VirtualFramebuffer *vfb, int dstX, int
 
 		// TODO: Replace with draw2D_.Blit() directly.
 		DrawActiveTexture(dstX, dstY, width, height,
-			vfb ? vfb->bufferWidth : pixel_xres,
-			vfb ? vfb->bufferHeight : pixel_yres,
+			vfb ? vfb->bufferWidth : g_display.pixel_xres,
+			vfb ? vfb->bufferHeight : g_display.pixel_yres,
 			u0, v0, u1, v1, ROTATION_LOCKED_HORIZONTAL, flags);
 
 		gpuStats.numUploads++;
@@ -1233,13 +1238,27 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		// Self-texturing, need a copy currently (some backends can potentially support it though).
 		WARN_LOG_ONCE(selfTextureCopy, G3D, "Attempting to texture from current render target (src=%08x / target=%08x / flags=%d), making a copy", framebuffer->fb_address, currentRenderVfb_->fb_address, flags);
 		// TODO: Maybe merge with bvfbs_?  Not sure if those could be packing, and they're created at a different size.
+		if (currentFramebufferCopy_) {
+			// We have a copy already that hasn't been invalidated, let's keep using it.
+			draw_->BindFramebufferAsTexture(currentFramebufferCopy_, stage, Draw::FB_COLOR_BIT, layer);
+			return true;
+		}
+
 		Draw::Framebuffer *renderCopy = GetTempFBO(TempFBO::COPY, framebuffer->renderWidth, framebuffer->renderHeight);
 		if (renderCopy) {
 			VirtualFramebuffer copyInfo = *framebuffer;
 			copyInfo.fbo = renderCopy;
-			CopyFramebufferForColorTexture(&copyInfo, framebuffer, flags, layer);
+
+			bool partial = false;
+			CopyFramebufferForColorTexture(&copyInfo, framebuffer, flags, layer, &partial);
 			RebindFramebuffer("After BindFramebufferAsColorTexture");
 			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::FB_COLOR_BIT, layer);
+
+			// Only cache the copy if it wasn't a partial copy.
+			// TODO: Improve on this.
+			if (!partial) {
+				currentFramebufferCopy_ = renderCopy;
+			}
 			gpuStats.numCopiesForSelfTex++;
 		} else {
 			// Failed to get temp FBO? Weird.
@@ -1262,14 +1281,17 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 	}
 }
 
-void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer *dst, VirtualFramebuffer *src, int flags, int layer) {
+void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer *dst, VirtualFramebuffer *src, int flags, int layer, bool *partial) {
 	int x = 0;
 	int y = 0;
 	int w = src->drawnWidth;
 	int h = src->drawnHeight;
 
+	*partial = false;
+
 	// If max is not > min, we probably could not detect it.  Skip.
 	// See the vertex decoder, where this is updated.
+	// TODO: We're currently not hitting this path in Dante. See #17032
 	if ((flags & BINDFBCOLOR_MAY_COPY_WITH_UV) == BINDFBCOLOR_MAY_COPY_WITH_UV && gstate_c.vertBounds.maxU > gstate_c.vertBounds.minU) {
 		x = std::max(gstate_c.vertBounds.minU, (u16)0);
 		y = std::max(gstate_c.vertBounds.minV, (u16)0);
@@ -1287,6 +1309,9 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 	}
 
 	if (x < src->drawnWidth && y < src->drawnHeight && w > 0 && h > 0) {
+		if (x != 0 || y != 0 || w < src->drawnWidth || h < src->drawnHeight) {
+			*partial = true;
+		}
 		BlitFramebuffer(dst, x, y, src, x, y, w, h, 0, RASTER_COLOR, "CopyFBForColorTexture");
 	}
 }
@@ -1384,6 +1409,7 @@ Draw::Texture *FramebufferManagerCommon::MakePixelTexture(const u8 *srcPixels, G
 		1,
 		1,
 		false,
+		Draw::TextureSwizzle::DEFAULT,
 		"DrawPixels",
 		{ (uint8_t *)srcPixels },
 		generateTexture,
@@ -1408,7 +1434,7 @@ void FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int 
 		return;
 
 	int uvRotation = useBufferedRendering_ ? g_Config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
-	OutputFlags flags = g_Config.iBufFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
+	OutputFlags flags = g_Config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
 	if (needBackBufferYSwap_) {
 		flags |= OutputFlags::BACKBUFFER_FLIPPED;
 	}
@@ -1425,12 +1451,13 @@ void FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int 
 	// PresentationCommon sets all kinds of state, we can't rely on anything.
 	gstate_c.Dirty(DIRTY_ALL);
 
+	DiscardFramebufferCopy();
 	currentRenderVfb_ = nullptr;
 }
 
 void FramebufferManagerCommon::SetViewport2D(int x, int y, int w, int h) {
-	Draw::Viewport vp{ (float)x, (float)y, (float)w, (float)h, 0.0f, 1.0f };
-	draw_->SetViewports(1, &vp);
+	Draw::Viewport viewport{ (float)x, (float)y, (float)w, (float)h, 0.0f, 1.0f };
+	draw_->SetViewport(viewport);
 }
 
 void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
@@ -1561,7 +1588,7 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 		textureCache_->ForgetLastTexture();
 
 		int uvRotation = useBufferedRendering_ ? g_Config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
-		OutputFlags flags = g_Config.iBufFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
+		OutputFlags flags = g_Config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
 		if (needBackBufferYSwap_) {
 			flags |= OutputFlags::BACKBUFFER_FLIPPED;
 		}
@@ -1582,10 +1609,12 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 	// This may get called mid-draw if the game uses an immediate flip.
 	// PresentationCommon sets all kinds of state, we can't rely on anything.
 	gstate_c.Dirty(DIRTY_ALL);
+	DiscardFramebufferCopy();
 	currentRenderVfb_ = nullptr;
 }
 
 void FramebufferManagerCommon::DecimateFBOs() {
+	DiscardFramebufferCopy();
 	currentRenderVfb_ = nullptr;
 
 	for (auto iter : fbosToDelete_) {
@@ -1742,6 +1771,7 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 	} else {
 		draw_->BindFramebufferAsRenderTarget(vfb->fbo, { Draw::RPAction::CLEAR, Draw::RPAction::CLEAR, Draw::RPAction::CLEAR }, "ResizeFramebufFBO");
 	}
+	DiscardFramebufferCopy();
 	currentRenderVfb_ = vfb;
 
 	if (!vfb->fbo) {
@@ -1769,8 +1799,8 @@ bool FramebufferManagerCommon::NotifyFramebufferCopy(u32 src, u32 dst, int size,
 
 	VirtualFramebuffer *dstBuffer = nullptr;
 	VirtualFramebuffer *srcBuffer = nullptr;
-	bool ignoreDstBuffer = flags & GPUCopyFlag::FORCE_DST_MEM;
-	bool ignoreSrcBuffer = flags & (GPUCopyFlag::FORCE_SRC_MEM | GPUCopyFlag::MEMSET);
+	bool ignoreDstBuffer = flags & GPUCopyFlag::FORCE_DST_MATCH_MEM;
+	bool ignoreSrcBuffer = flags & (GPUCopyFlag::FORCE_SRC_MATCH_MEM | GPUCopyFlag::MEMSET);
 	RasterChannel channel = flags & GPUCopyFlag::DEPTH_REQUESTED ? RASTER_DEPTH : RASTER_COLOR;
 
 	u32 dstY = (u32)-1;
@@ -1862,7 +1892,7 @@ bool FramebufferManagerCommon::NotifyFramebufferCopy(u32 src, u32 dst, int size,
 	if (!dstBuffer && srcBuffer && channel != RASTER_DEPTH) {
 		// Note - if we're here, we're in a memcpy, not a block transfer. Not allowing IntraVRAMBlockTransferAllowCreateFB.
 		// Technically, that makes BlockTransferAllowCreateFB a bit of a misnomer.
-		if (PSP_CoreParameter().compat.flags().BlockTransferAllowCreateFB) {
+		if (PSP_CoreParameter().compat.flags().BlockTransferAllowCreateFB && !(flags & GPUCopyFlag::DISALLOW_CREATE_VFB)) {
 			dstBuffer = CreateRAMFramebuffer(dst, srcBuffer->width, srcBuffer->height, srcBuffer->fb_stride, srcBuffer->fb_format);
 			dstY = 0;
 		}
@@ -2373,7 +2403,7 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 				dstBasePtr, dstRect.x_bytes / bpp, dstRect.y, dstStride);
 			FlushBeforeCopy();
 			// Some backends can handle blitting within a framebuffer. Others will just have to deal with it or ignore it, apparently.
-			BlitFramebuffer(dstRect.vfb, dstX, dstY, srcRect.vfb, srcX, srcY, dstRect.w_bytes / bpp, dstRect.h / bpp, bpp, dstRect.channel, "Blit_IntraBufferBlockTransfer");
+			BlitFramebuffer(dstRect.vfb, dstX, dstY, srcRect.vfb, srcX, srcY, dstRect.w_bytes / bpp, dstRect.h, bpp, dstRect.channel, "Blit_IntraBufferBlockTransfer");
 			RebindFramebuffer("rebind after intra block transfer");
 			SetColorUpdated(dstRect.vfb, skipDrawReason);
 			return true;  // Skip the memory copy.
@@ -2543,6 +2573,7 @@ void FramebufferManagerCommon::NotifyConfigChanged() {
 }
 
 void FramebufferManagerCommon::DestroyAllFBOs() {
+	DiscardFramebufferCopy();
 	currentRenderVfb_ = nullptr;
 	displayFramebuf_ = nullptr;
 	prevDisplayFramebuf_ = nullptr;
@@ -2620,7 +2651,7 @@ void FramebufferManagerCommon::UpdateFramebufUsage(VirtualFramebuffer *vfb) {
 }
 
 void FramebufferManagerCommon::ShowScreenResolution() {
-	auto gr = GetI18NCategory("Graphics");
+	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 
 	std::ostringstream messageStream;
 	messageStream << gr->T("Internal Resolution") << ": ";
@@ -2633,7 +2664,7 @@ void FramebufferManagerCommon::ShowScreenResolution() {
 	messageStream << gr->T("Window Size") << ": ";
 	messageStream << PSP_CoreParameter().pixelWidth << "x" << PSP_CoreParameter().pixelHeight;
 
-	host->NotifyUserMessage(messageStream.str(), 2.0f, 0xFFFFFF, "resize");
+	System_NotifyUserMessage(messageStream.str(), 2.0f, 0xFFFFFF, "resize");
 	INFO_LOG(SYSTEM, "%s", messageStream.str().c_str());
 }
 
@@ -3081,11 +3112,11 @@ void FramebufferManagerCommon::DrawActiveTexture(float x, float y, float w, floa
 		coord[i].y = coord[i].y * invDestH - 1.0f;
 	}
 
-	if ((flags & DRAWTEX_TO_BACKBUFFER) && g_display_rotation != DisplayRotation::ROTATE_0) {
+	if ((flags & DRAWTEX_TO_BACKBUFFER) && g_display.rotation != DisplayRotation::ROTATE_0) {
 		for (int i = 0; i < 4; i++) {
 			// backwards notation, should fix that...
 			Lin::Vec3 pos = Lin::Vec3(coord[i].x, coord[i].y, 0.0);
-			pos = pos * g_display_rot_matrix;
+			pos = pos * g_display.rot_matrix;
 			coord[i].x = pos.x;
 			coord[i].y = pos.y;
 		}
@@ -3235,8 +3266,8 @@ void FramebufferManagerCommon::BlitUsingRaster(
 		draw_->InvalidateFramebuffer(Draw::FB_INVALIDATION_LOAD, pipeline->info.writeChannel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT);
 	}
 
-	Draw::Viewport vp{ 0.0f, 0.0f, (float)dest->Width(), (float)dest->Height(), 0.0f, 1.0f };
-	draw_->SetViewports(1, &vp);
+	Draw::Viewport viewport{ 0.0f, 0.0f, (float)dest->Width(), (float)dest->Height(), 0.0f, 1.0f };
+	draw_->SetViewport(viewport);
 	draw_->SetScissorRect(0, 0, (int)dest->Width(), (int)dest->Height());
 
 	draw2D_.Blit(pipeline, srcX1, srcY1, srcX2, srcY2, destX1, destY1, destX2, destY2, (float)srcW, (float)srcH, (float)destW, (float)destH, linearFilter, scaleFactor);

@@ -58,8 +58,11 @@
 #include "Common/CPUDetect.h"
 #include "Common/Log.h"
 #include "Core/Config.h"
+#include "Common/File/VFS/VFS.h"
+#include "Common/File/VFS/DirectoryReader.h"
 #include "Core/FileSystems/ISOFileSystem.h"
 #include "Core/MemMap.h"
+#include "Core/KeyMap.h"
 #include "Core/MIPS/MIPSVFPUUtils.h"
 #include "GPU/Common/TextureDecoder.h"
 #include "GPU/Common/GPUStateUtils.h"
@@ -87,6 +90,12 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return false;
 	}
 }
+void System_Notify(SystemNotification notification) {}
+void System_PostUIMessage(const std::string &message, const std::string &param) {}
+void System_NotifyUserMessage(const std::string &message, float duration, u32 color, const char *id) {}
+void System_AudioGetDebugStats(char *buf, size_t bufSize) { if (buf) buf[0] = '\0'; }
+void System_AudioClear() {}
+void System_AudioPushSamples(const s32 *audio, int numSamples) {}
 
 #if PPSSPP_PLATFORM(ANDROID)
 JNIEnv *getEnv() {
@@ -97,8 +106,8 @@ jclass findClass(const char *name) {
 	return nullptr;
 }
 
-bool audioRecording_Available() { return false; }
-bool audioRecording_State() { return false; }
+bool System_AudioRecordingIsAvailable() { return false; }
+bool System_AudioRecordingState() { return false; }
 #endif
 
 #ifndef M_PI_2
@@ -352,7 +361,10 @@ bool TestTinySet() {
 
 bool TestVFPUSinCos() {
 	float sine, cosine;
-	InitVFPUSinCos();
+	// Needed for VFPU tables.
+	// There might be a better place to invoke it, but whatever.
+	g_VFS.Register("", new DirectoryReader(Path("assets")));
+	InitVFPU();
 	vfpu_sincos(0.0f, sine, cosine);
 	EXPECT_EQ_FLOAT(sine, 0.0f);
 	EXPECT_EQ_FLOAT(cosine, 1.0f);
@@ -694,7 +706,7 @@ static bool TestAndroidContentURI() {
 	EXPECT_TRUE(fileTreeURI.CanNavigateUp());
 	fileTreeURI.NavigateUp();
 	EXPECT_FALSE(fileTreeURI.CanNavigateUp());
-	
+
 	EXPECT_EQ_STR(fileTreeURI.FilePath(), fileTreeURI.RootPath());
 
 	EXPECT_EQ_STR(fileTreeURI.ToString(), std::string(directoryURIString));
@@ -838,6 +850,47 @@ static bool TestDepthMath() {
 	return true;
 }
 
+bool TestInputMapping() {
+	InputMapping mapping;
+	mapping.deviceId = 10;
+	mapping.keyCode = 20;
+	InputMapping mapping2;
+	mapping2.deviceId = 18;
+	mapping2.keyCode = 38;
+	std::string cfg = mapping.ToConfigString();
+
+	InputMapping parsedMapping = InputMapping::FromConfigString(cfg);
+	EXPECT_EQ_INT(parsedMapping.deviceId, mapping.deviceId);
+	EXPECT_EQ_INT(parsedMapping.keyCode, mapping.keyCode);
+
+	using KeyMap::MultiInputMapping;
+	MultiInputMapping multi(mapping);
+
+	EXPECT_EQ_STR(multi.ToConfigString(), mapping.ToConfigString());
+
+	multi.mappings.push_back(mapping2);
+	EXPECT_FALSE(multi.EqualsSingleMapping(mapping));
+	EXPECT_TRUE(multi.mappings.contains(mapping2));
+	EXPECT_TRUE(multi.mappings.contains(mapping));
+
+	std::string cfgMulti = multi.ToConfigString();
+
+	EXPECT_EQ_STR(cfgMulti, std::string("10-20:18-38"));
+
+	MultiInputMapping parsedMulti = MultiInputMapping::FromConfigString(cfgMulti);
+
+	EXPECT_EQ_INT((int)parsedMulti.mappings.size(), 2);
+
+	// OK, both single and multiple mappings parse. Let's now see if the old parsing can handle a multimapping.
+	// This is a requirement for the new format.
+
+	InputMapping parsedMultiSingle = InputMapping::FromConfigString(cfgMulti);  // yes this is an intentional mismatch
+	// We should get the first mapping.
+	EXPECT_TRUE(parsedMultiSingle == mapping);
+	return true;
+}
+
+
 typedef bool (*TestFunc)();
 struct TestItem {
 	const char *name;
@@ -890,6 +943,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(TinySet),
 	TEST_ITEM(SmallDataConvert),
 	TEST_ITEM(DepthMath),
+	TEST_ITEM(InputMapping),
 };
 
 int main(int argc, const char *argv[]) {

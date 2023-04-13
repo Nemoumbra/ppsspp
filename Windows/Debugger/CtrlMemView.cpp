@@ -4,6 +4,7 @@
 #include <tchar.h>
 #include <math.h>
 #include <iomanip>
+#include <sstream>
 #include "ext/xxhash.h"
 #include "Core/Config.h"
 #include "Core/MemMap.h"
@@ -34,7 +35,7 @@ CtrlMemView::CtrlMemView(HWND _wnd) {
 	SetWindowLong(wnd, GWL_STYLE, GetWindowLong(wnd,GWL_STYLE) | WS_VSCROLL);
 	SetScrollRange(wnd, SB_VERT, -1,1,TRUE);
 
-	const float fontScale = 1.0f / g_dpi_scale_real_y;
+	const float fontScale = 1.0f / g_display.dpi_scale_real_y;
 	charWidth_ = g_Config.iFontWidth * fontScale;
 	rowHeight_ = g_Config.iFontHeight * fontScale;
 	offsetPositionY_ = offsetLine * rowHeight_;
@@ -217,6 +218,8 @@ void CtrlMemView::onPaint(WPARAM wParam, LPARAM lParam) {
 		}
 	};
 
+	_assert_msg_(((windowStart_ | rowSize_) & 3) == 0, "readMemory() can't handle unaligned reads");
+
 	// draw one extra row that may be partially visible
 	for (int i = 0; i < visibleRows_ + 1; i++) {
 		int rowY = rowHeight_ * i;
@@ -235,8 +238,8 @@ void CtrlMemView::onPaint(WPARAM wParam, LPARAM lParam) {
 			uint32_t words[4];
 			uint8_t bytes[16];
 		} memory;
-		bool valid = debugger_ != nullptr && debugger_->isAlive() && Memory::IsValidAddress(address);
-		for (int i = 0; valid && i < 4; ++i) {
+		int valid = debugger_ != nullptr && debugger_->isAlive() ? Memory::ValidSize(address, 16) / 4 : 0;
+		for (int i = 0; i < valid; ++i) {
 			memory.words[i] = debugger_->readMemory(address + i * 4);
 		}
 
@@ -496,6 +499,7 @@ void CtrlMemView::onMouseUp(WPARAM wParam, LPARAM lParam, int button) {
 		HMENU menu = GetContextMenu(ContextMenuID::MEMVIEW);
 		EnableMenuItem(menu, ID_MEMVIEW_COPYVALUE_16, enable16 ? MF_ENABLED : MF_GRAYED);
 		EnableMenuItem(menu, ID_MEMVIEW_COPYVALUE_32, enable32 ? MF_ENABLED : MF_GRAYED);
+		EnableMenuItem(menu, ID_MEMVIEW_COPYFLOAT_32, enable32 ? MF_ENABLED : MF_GRAYED);
 
 		switch (TriggerContextMenu(ContextMenuID::MEMVIEW, wnd, ContextPoint::FromEvent(lParam))) {
 		case ID_MEMVIEW_DUMP:
@@ -576,6 +580,16 @@ void CtrlMemView::onMouseUp(WPARAM wParam, LPARAM lParam, int button) {
 				delete[] temp;
 			}
 			break;
+
+		case ID_MEMVIEW_COPYFLOAT_32:
+		{
+			auto memLock = Memory::Lock();
+			std::ostringstream stream;
+			stream << (Memory::IsValidAddress(curAddress_) ? Memory::Read_Float(curAddress_) : NAN);
+			auto temp_string = stream.str();
+			W32Util::CopyTextToClipboard(wnd, temp_string.c_str());
+		}
+		break;
 
 		case ID_MEMVIEW_EXTENTBEGIN:
 		{
@@ -901,7 +915,7 @@ void CtrlMemView::search(bool continueSearch) {
 		segmentEnd = memoryAreas[i].second;
 
 		// better safe than sorry, I guess
-		if (Memory::IsValidAddress(segmentStart))
+		if (!Memory::IsValidAddress(segmentStart))
 			continue;
 		const u8 *dataPointer = Memory::GetPointerUnchecked(segmentStart);
 

@@ -29,6 +29,7 @@
 #include "Common/Math/math_util.h"
 #include "Common/GPU/D3D9/D3D9ShaderCompiler.h"
 #include "Common/GPU/thin3d.h"
+#include "Common/System/System.h"
 #include "Common/System/Display.h"
 
 #include "Common/CommonTypes.h"
@@ -37,7 +38,6 @@
 #include "Common/StringUtils.h"
 
 #include "Core/Config.h"
-#include "Core/Host.h"
 #include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
@@ -466,7 +466,7 @@ void ShaderManagerDX9::VSUpdateUniforms(u64 dirtyUniforms) {
 		float minz = -((gstate_c.vpZOffset * halfActualZRange) - vpZCenter) - halfActualZRange;
 		float viewZScale = halfActualZRange * 2.0f;
 		float viewZCenter = minz;
-		float reverseScale = 2.0f * (1.0f / gstate_c.vpDepthScale);
+		float reverseScale = gstate_c.vpDepthScale != 0.0f ? 2.0f * (1.0f / gstate_c.vpDepthScale) : 0.0f;
 		float reverseTranslate = gstate_c.vpZOffset * 0.5f + 0.5f;
 
 		float data[4] = { viewZScale, viewZCenter, reverseTranslate, reverseScale };
@@ -540,10 +540,9 @@ void ShaderManagerDX9::Clear() {
 	DirtyShader();
 }
 
-void ShaderManagerDX9::ClearCache(bool deleteThem) {
+void ShaderManagerDX9::ClearShaders() {
 	Clear();
 }
-
 
 void ShaderManagerDX9::DirtyShader() {
 	// Forget the last shader ID
@@ -554,7 +553,7 @@ void ShaderManagerDX9::DirtyShader() {
 	gstate_c.Dirty(DIRTY_ALL_UNIFORMS | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE);
 }
 
-void ShaderManagerDX9::DirtyLastShader() { // disables vertex arrays
+void ShaderManagerDX9::DirtyLastShader() {
 	lastVShader_ = nullptr;
 	lastPShader_ = nullptr;
 }
@@ -601,7 +600,7 @@ VSShader *ShaderManagerDX9::ApplyShader(bool useHWTransform, bool useHWTessellat
 			vs = new VSShader(device_, VSID, codeBuffer_, useHWTransform);
 		}
 		if (!vs || vs->Failed()) {
-			auto gr = GetI18NCategory("Graphics");
+			auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 			if (!vs) {
 				// TODO: Report this?
 				ERROR_LOG(G3D, "Shader generation failed, falling back to software transform");
@@ -609,7 +608,7 @@ VSShader *ShaderManagerDX9::ApplyShader(bool useHWTransform, bool useHWTessellat
 				ERROR_LOG(G3D, "Shader compilation failed, falling back to software transform");
 			}
 			if (!g_Config.bHideSlowWarnings) {
-				host->NotifyUserMessage(gr->T("hardware transform error - falling back to software"), 2.5f, 0xFF3030FF);
+				System_NotifyUserMessage(gr->T("hardware transform error - falling back to software"), 2.5f, 0xFF3030FF);
 			}
 			delete vs;
 

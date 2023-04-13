@@ -103,6 +103,7 @@ EXT_FILES := \
   $(SRC)/ext/libpng17/pngwrite.c \
   $(SRC)/ext/libpng17/pngwtran.c \
   $(SRC)/ext/libpng17/pngwutil.c \
+  $(SRC)/ext/basis_universal/basisu_transcoder.cpp \
   $(SRC)/ext/jpge/jpgd.cpp \
   $(SRC)/ext/jpge/jpge.cpp \
   $(SRC)/ext/sha1/sha1.cpp \
@@ -163,6 +164,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Data/Format/IniFile.cpp \
   $(SRC)/Common/Data/Format/JSONReader.cpp \
   $(SRC)/Common/Data/Format/JSONWriter.cpp \
+  $(SRC)/Common/Data/Format/DDSLoad.cpp \
+  $(SRC)/Common/Data/Format/DDSLoad.h \
   $(SRC)/Common/Data/Format/PNGLoad.cpp \
   $(SRC)/Common/Data/Format/PNGLoad.h \
   $(SRC)/Common/Data/Format/ZIMLoad.cpp \
@@ -175,7 +178,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Data/Text/WrapText.cpp \
   $(SRC)/Common/File/AndroidStorage.cpp \
   $(SRC)/Common/File/VFS/VFS.cpp \
-  $(SRC)/Common/File/VFS/AssetReader.cpp \
+  $(SRC)/Common/File/VFS/ZipFileReader.cpp \
+  $(SRC)/Common/File/VFS/DirectoryReader.cpp \
   $(SRC)/Common/File/DiskFree.cpp \
   $(SRC)/Common/File/Path.cpp \
   $(SRC)/Common/File/PathBrowser.cpp \
@@ -210,6 +214,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Net/WebsocketServer.cpp \
   $(SRC)/Common/Profiler/Profiler.cpp \
   $(SRC)/Common/System/Display.cpp \
+  $(SRC)/Common/System/Request.cpp \
   $(SRC)/Common/Thread/ThreadUtil.cpp \
   $(SRC)/Common/Thread/ThreadManager.cpp \
   $(SRC)/Common/Thread/ParallelLoop.cpp \
@@ -342,6 +347,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/MIPSStackWalk.cpp \
   $(SRC)/Core/MIPS/MIPSTables.cpp \
   $(SRC)/Core/MIPS/MIPSVFPUUtils.cpp.arm \
+  $(SRC)/Core/MIPS/MIPSVFPUFallbacks.cpp.arm \
   $(SRC)/Core/MIPS/MIPSCodeUtils.cpp.arm \
   $(SRC)/Core/MIPS/MIPSDebugInterface.cpp \
   $(SRC)/Core/MIPS/IR/IRFrontend.cpp \
@@ -358,6 +364,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Math3D.cpp \
   $(SRC)/GPU/GPU.cpp \
   $(SRC)/GPU/GPUCommon.cpp \
+  $(SRC)/GPU/GPUCommonHW.cpp \
   $(SRC)/GPU/GPUState.cpp \
   $(SRC)/GPU/GeConstants.cpp \
   $(SRC)/GPU/GeDisasm.cpp \
@@ -387,6 +394,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Common/ShaderUniforms.cpp \
   $(SRC)/GPU/Common/VertexShaderGenerator.cpp \
   $(SRC)/GPU/Common/GeometryShaderGenerator.cpp \
+  $(SRC)/GPU/Common/TextureReplacer.cpp \
+  $(SRC)/GPU/Common/ReplacedTexture.cpp \
   $(SRC)/GPU/Debugger/Breakpoints.cpp \
   $(SRC)/GPU/Debugger/Debugger.cpp \
   $(SRC)/GPU/Debugger/GECommandTable.cpp \
@@ -431,13 +440,13 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Core.cpp \
   $(SRC)/Core/Compatibility.cpp \
   $(SRC)/Core/Config.cpp \
+  $(SRC)/Core/ConfigSettings.cpp \
   $(SRC)/Core/CoreTiming.cpp \
   $(SRC)/Core/CwCheat.cpp \
   $(SRC)/Core/HDRemaster.cpp \
   $(SRC)/Core/Instance.cpp \
   $(SRC)/Core/KeyMap.cpp \
   $(SRC)/Core/KeyMapDefaults.cpp \
-  $(SRC)/Core/Host.cpp \
   $(SRC)/Core/Loaders.cpp \
   $(SRC)/Core/PSPLoaders.cpp \
   $(SRC)/Core/FileLoaders/CachingFileLoader.cpp \
@@ -454,7 +463,6 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/SaveState.cpp \
   $(SRC)/Core/Screenshot.cpp \
   $(SRC)/Core/System.cpp \
-  $(SRC)/Core/TextureReplacer.cpp \
   $(SRC)/Core/TiltEventProcessor.cpp \
   $(SRC)/Core/ThreadPools.cpp \
   $(SRC)/Core/WebServer.cpp \
@@ -708,6 +716,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/android/jni/AndroidVulkanContext.cpp \
   $(SRC)/android/jni/AndroidAudio.cpp \
   $(SRC)/android/jni/OpenSLContext.cpp \
+  $(SRC)/UI/AudioCommon.cpp \
   $(SRC)/UI/BackgroundAudio.cpp \
   $(SRC)/UI/DiscordIntegration.cpp \
   $(SRC)/UI/ChatScreen.cpp \
@@ -738,7 +747,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/ProfilerDraw.cpp \
   $(SRC)/UI/NativeApp.cpp \
   $(SRC)/UI/Theme.cpp \
-  $(SRC)/UI/ComboKeyMappingScreen.cpp
+  $(SRC)/UI/CustomButtonMappingScreen.cpp
 
 ifneq ($(SKIPAPP),1)
   include $(BUILD_SHARED_LIBRARY)
@@ -756,7 +765,7 @@ ifeq ($(HEADLESS),1)
   LOCAL_MODULE := ppsspp_headless
   LOCAL_SRC_FILES := \
     $(SRC)/headless/Headless.cpp \
-    $(SRC)/headless/StubHost.cpp \
+    $(SRC)/headless/HeadlessHost.cpp \
     $(SRC)/headless/Compare.cpp
 
   include $(BUILD_EXECUTABLE)

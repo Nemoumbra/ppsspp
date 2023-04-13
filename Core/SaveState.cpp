@@ -23,6 +23,7 @@
 #include "Common/Data/Text/I18n.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/Data/Text/Parsers.h"
+#include "Common/System/System.h"
 
 #include "Common/File/FileUtil.h"
 #include "Common/Serialize/Serializer.h"
@@ -34,7 +35,6 @@
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
-#include "Core/Host.h"
 #include "Core/Screenshot.h"
 #include "Core/System.h"
 #include "Core/FileSystems/MetaFileSystem.h"
@@ -479,7 +479,7 @@ namespace SaveState
 			return StringFromFormat("%s (%c)", title.c_str(), slotChar);
 		}
 		if (detectSlot(UNDO_STATE_EXTENSION)) {
-			auto sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			// Allow the number to be positioned where it makes sense.
 			std::string undo = sy->T("undo %c");
 			return title + " (" + StringFromFormat(undo.c_str(), slotChar) + ")";
@@ -500,7 +500,7 @@ namespace SaveState
 		}
 
 		// The file can't be loaded - let's note that.
-		auto sy = GetI18NCategory("System");
+		auto sy = GetI18NCategory(I18NCat::SYSTEM);
 		return filename.GetFilename() + " " + sy->T("(broken)");
 	}
 
@@ -582,7 +582,7 @@ namespace SaveState
 				Load(fn, slot, callback, cbUserData);
 			}
 		} else {
-			auto sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to load state. Error in the file system."), cbUserData);
 		}
@@ -591,7 +591,7 @@ namespace SaveState
 	bool UndoLoad(const Path &gameFilename, Callback callback, void *cbUserData)
 	{
 		if (g_Config.sStateLoadUndoGame != GenerateFullDiscId(gameFilename)) {
-			auto sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			if (callback)
 				callback(Status::FAILURE, sy->T("Error: load undo state is from a different game"), cbUserData);
 			return false;
@@ -602,7 +602,7 @@ namespace SaveState
 			Load(fn, LOAD_UNDO_SLOT, callback, cbUserData);
 			return true;
 		} else {
-			auto sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to load state for load undo. Error in the file system."), cbUserData);
 			return false;
@@ -641,7 +641,7 @@ namespace SaveState
 			SaveScreenshot(shot, Callback(), 0);
 			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback, cbUserData);
 		} else {
-			auto sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to save state. Error in the file system."), cbUserData);
 		}
@@ -857,7 +857,7 @@ namespace SaveState
 	}
 
 	static Status TriggerLoadWarnings(std::string &callbackMessage) {
-		auto sc = GetI18NCategory("Screen");
+		auto sc = GetI18NCategory(I18NCat::SCREEN);
 
 		if (g_Config.bHideStateWarnings)
 			return Status::SUCCESS;
@@ -913,7 +913,7 @@ namespace SaveState
 			std::string callbackMessage;
 			std::string title;
 
-			auto sc = GetI18NCategory("Screen");
+			auto sc = GetI18NCategory(I18NCat::SCREEN);
 			const char *i18nLoadFailure = sc->T("Load savestate failed", "");
 			const char *i18nSaveFailure = sc->T("Save State Failed", "");
 			if (strlen(i18nLoadFailure) == 0)
@@ -1078,8 +1078,8 @@ namespace SaveState
 				Core_Stop();
 				return;
 			}
-			host->BootDone();
-			host->UpdateDisassembly();
+			System_Notify(SystemNotification::BOOT_DONE);
+			System_Notify(SystemNotification::DISASSEMBLY);
 			needsRestart = false;
 		}
 	}

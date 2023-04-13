@@ -535,7 +535,7 @@ int VulkanContext::GetBestPhysicalDevice() {
 
 void VulkanContext::ChooseDevice(int physical_device) {
 	physical_device_ = physical_device;
-	INFO_LOG(G3D, "Chose physical device %d: %p", physical_device, physical_devices_[physical_device]);
+	INFO_LOG(G3D, "Chose physical device %d: %s", physical_device, physicalDeviceProperties_[physical_device].properties.deviceName);
 
 	GetDeviceLayerProperties();
 	if (!CheckLayers(device_layer_properties_, device_layer_names_)) {
@@ -672,11 +672,6 @@ VkResult VulkanContext::CreateDevice() {
 		extensionsLookup_.KHR_get_memory_requirements2 = true;
 		extensionsLookup_.KHR_dedicated_allocation = EnableDeviceExtension(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME);
 	}
-	if (EnableDeviceExtension(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME)) {
-		if (EnableDeviceExtension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME)) {
-			extensionsLookup_.EXT_external_memory_host = EnableDeviceExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-		}
-	}
 	if (EnableDeviceExtension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)) {
 		extensionsLookup_.KHR_create_renderpass2 = true;
 		extensionsLookup_.KHR_depth_stencil_resolve = EnableDeviceExtension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
@@ -711,7 +706,9 @@ VkResult VulkanContext::CreateDevice() {
 	} else {
 		VulkanLoadDeviceFunctions(device_, extensionsLookup_);
 	}
-	INFO_LOG(G3D, "Vulkan Device created");
+	INFO_LOG(G3D, "Vulkan Device created: %s", physicalDeviceProperties_[physical_device_].properties.deviceName);
+
+	// Since we successfully created a device (however we got here, might be interesting in debug), we force the choice to be visible in the menu.
 	VulkanSetAvailable(true);
 
 	VmaAllocatorCreateInfo allocatorInfo = {};
@@ -973,8 +970,8 @@ VkResult VulkanContext::ReinitSurface() {
 		{
 			const VkDisplayModePropertiesKHR* mode = &mode_props[i];
 
-			if (mode->parameters.visibleRegion.width == pixel_xres &&
-			    mode->parameters.visibleRegion.height == pixel_yres)
+			if (mode->parameters.visibleRegion.width == g_display.pixel_xres &&
+			    mode->parameters.visibleRegion.height == g_display.pixel_yres)
 			{
 				display_mode = mode->displayMode;
 				mode_found = true;
@@ -1053,8 +1050,8 @@ VkResult VulkanContext::ReinitSurface() {
 		}
 	
 		// Finally, create the vulkan surface.
-		image_size.width = pixel_xres;
-		image_size.height = pixel_yres;
+		image_size.width = g_display.pixel_xres;
+		image_size.height = g_display.pixel_yres;
 
 		display.displayMode = display_mode;
 		display.imageExtent = image_size;
@@ -1288,8 +1285,8 @@ bool VulkanContext::InitSwapchain() {
 	VkSurfaceTransformFlagBitsKHR preTransform;
 	std::string supportedTransforms = surface_transforms_to_string(surfCapabilities_.supportedTransforms);
 	std::string currentTransform = surface_transforms_to_string(surfCapabilities_.currentTransform);
-	g_display_rotation = DisplayRotation::ROTATE_0;
-	g_display_rot_matrix.setIdentity();
+	g_display.rotation = DisplayRotation::ROTATE_0;
+	g_display.rot_matrix.setIdentity();
 
 	uint32_t allowedRotations = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
 	// Hack: Don't allow 270 degrees pretransform (inverse landscape), it creates bizarre issues on some devices (see #15773).
@@ -1300,20 +1297,20 @@ bool VulkanContext::InitSwapchain() {
 	} else if (surfCapabilities_.currentTransform & allowedRotations) {
 		// Normal, sensible rotations. Let's handle it.
 		preTransform = surfCapabilities_.currentTransform;
-		g_display_rot_matrix.setIdentity();
+		g_display.rot_matrix.setIdentity();
 		switch (surfCapabilities_.currentTransform) {
 		case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR:
-			g_display_rotation = DisplayRotation::ROTATE_90;
-			g_display_rot_matrix.setRotationZ90();
+			g_display.rotation = DisplayRotation::ROTATE_90;
+			g_display.rot_matrix.setRotationZ90();
 			std::swap(swapChainExtent_.width, swapChainExtent_.height);
 			break;
 		case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR:
-			g_display_rotation = DisplayRotation::ROTATE_180;
-			g_display_rot_matrix.setRotationZ180();
+			g_display.rotation = DisplayRotation::ROTATE_180;
+			g_display.rot_matrix.setRotationZ180();
 			break;
 		case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR:
-			g_display_rotation = DisplayRotation::ROTATE_270;
-			g_display_rot_matrix.setRotationZ270();
+			g_display.rotation = DisplayRotation::ROTATE_270;
+			g_display.rot_matrix.setRotationZ270();
 			std::swap(swapChainExtent_.width, swapChainExtent_.height);
 			break;
 		default:
