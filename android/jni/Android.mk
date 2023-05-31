@@ -461,6 +461,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MemFault.cpp \
   $(SRC)/Core/MemMap.cpp \
   $(SRC)/Core/MemMapFunctions.cpp \
+  $(SRC)/Core/MIPSLogger.cpp \
   $(SRC)/Core/Reporting.cpp \
   $(SRC)/Core/Replay.cpp \
   $(SRC)/Core/SaveState.cpp \

@@ -100,6 +100,7 @@
     <ClCompile Include="..\..\Core\MemFault.cpp" />
     <ClCompile Include="..\..\Core\MemMap.cpp" />
     <ClCompile Include="..\..\Core\MemMapFunctions.cpp" />
+    <ClCompile Include="..\..\Core\MIPSLogger.cpp" />
     <ClCompile Include="..\..\Core\PSPLoaders.cpp" />
     <ClCompile Include="..\..\Core\Reporting.cpp" />
     <ClCompile Include="..\..\Core\Replay.cpp" />
@@ -1143,6 +1144,7 @@
     <ClInclude Include="..\..\Core\MemFault.h" />
     <ClInclude Include="..\..\Core\MemMap.h" />
     <ClInclude Include="..\..\Core\MemMapHelpers.h" />
+    <ClInclude Include="..\..\Core\MIPSLogger.h" />
     <ClInclude Include="..\..\Core\Opcode.h" />
     <ClInclude Include="..\..\Core\PSPLoaders.h" />
     <ClInclude Include="..\..\Core\Reporting.h" />
