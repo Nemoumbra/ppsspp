@@ -102,8 +102,7 @@ public:
 	int u_uvscaleoffset;
 	int u_texclamp;
 	int u_texclampoff;
-	int u_texNoAlpha;
-	int u_texMul;
+	int u_texNoAlphaMul;
 
 	// Lighting
 	int u_lightControl;
@@ -209,7 +208,7 @@ private:
 	GLRenderManager *render_;
 	LinkedShaderCache linkedShaderCache_;
 
-	bool lastVShaderSame_;
+	bool lastVShaderSame_ = false;
 
 	FShaderID lastFSID_;
 	VShaderID lastVSID_;

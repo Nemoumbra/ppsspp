@@ -349,7 +349,7 @@ bool Clickable::Key(const KeyInput &key) {
 				down_ = false;
 				ret = true;
 			}
-		} else if (IsEscapeKey(key)) {
+		} else if (down_ && IsEscapeKey(key)) {
 			down_ = false;
 		}
 	}
@@ -1190,6 +1190,8 @@ bool TextEdit::Key(const KeyInput &input) {
 		case NKCODE_BACK:
 		case NKCODE_ESCAPE:
 			return false;
+		default:
+			break;
 		}
 
 		if (ctrlDown_) {
@@ -1227,6 +1229,8 @@ bool TextEdit::Key(const KeyInput &input) {
 			case NKCODE_Z:
 				text_ = undo_;
 				break;
+			default:
+				break;
 			}
 		}
 
@@ -1243,6 +1247,8 @@ bool TextEdit::Key(const KeyInput &input) {
 		case NKCODE_CTRL_LEFT:
 		case NKCODE_CTRL_RIGHT:
 			ctrlDown_ = false;
+			break;
+		default:
 			break;
 		}
 	}
@@ -1284,7 +1290,7 @@ void ProgressBar::GetContentDimensions(const UIContext &dc, float &w, float &h) 
 
 void ProgressBar::Draw(UIContext &dc) {
 	char temp[32];
-	sprintf(temp, "%i%%", (int)(progress_ * 100.0f));
+	snprintf(temp, sizeof(temp), "%d%%", (int)(progress_ * 100.0f));
 	dc.Draw()->DrawImageCenterTexel(dc.theme->whiteImage, bounds_.x, bounds_.y, bounds_.x + bounds_.w * progress_, bounds_.y2(), 0xc0c0c0c0);
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.DrawTextRect(temp, bounds_, 0xFFFFFFFF, ALIGN_CENTER);
@@ -1369,7 +1375,7 @@ bool Slider::Key(const KeyInput &input) {
 	}
 }
 
-bool Slider::ApplyKey(int keyCode) {
+bool Slider::ApplyKey(InputKeyCode keyCode) {
 	switch (keyCode) {
 	case NKCODE_DPAD_LEFT:
 	case NKCODE_MINUS:
@@ -1443,17 +1449,17 @@ void Slider::Draw(UIContext &dc) {
 	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobStyle.fgColor, ALIGN_CENTER);
 	char temp[64];
 	if (showPercent_)
-		sprintf(temp, "%i%%", *value_);
+		snprintf(temp, sizeof(temp), "%d%%", *value_);
 	else
-		sprintf(temp, "%i", *value_);
+		snprintf(temp, sizeof(temp), "%d", *value_);
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
 }
 
 std::string Slider::DescribeText() const {
 	if (showPercent_)
-		return StringFromFormat("%i%% / %i%%", *value_, maxValue_);
-	return StringFromFormat("%i / %i", *value_, maxValue_);
+		return StringFromFormat("%d%% / %d%%", *value_, maxValue_);
+	return StringFromFormat("%d / %d", *value_, maxValue_);
 }
 
 void Slider::Update() {
@@ -1497,7 +1503,7 @@ bool SliderFloat::Key(const KeyInput &input) {
 	}
 }
 
-bool SliderFloat::ApplyKey(int keyCode) {
+bool SliderFloat::ApplyKey(InputKeyCode keyCode) {
 	switch (keyCode) {
 	case NKCODE_DPAD_LEFT:
 	case NKCODE_MINUS:
@@ -1567,7 +1573,7 @@ void SliderFloat::Draw(UIContext &dc) {
 	dc.FillRect(Drawable(0xFF808080), Bounds(knobX, bounds_.centerY() - 2, (bounds_.x + bounds_.w - paddingRight_ - knobX), 4));
 	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobStyle.fgColor, ALIGN_CENTER);
 	char temp[64];
-	sprintf(temp, "%0.2f", *value_);
+	snprintf(temp, sizeof(temp), "%0.2f", *value_);
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER);
 }

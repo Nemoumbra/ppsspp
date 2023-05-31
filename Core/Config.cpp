@@ -300,6 +300,34 @@ static int DefaultFastForwardMode() {
 #endif
 }
 
+static int DefaultAndroidHwScale() {
+#ifdef __ANDROID__
+	if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 19 || System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV) {
+		// Arbitrary cutoff at Kitkat - modern devices are usually powerful enough that hw scaling
+		// doesn't really help very much and mostly causes problems. See #11151
+		return 0;
+	}
+
+	// Get the real resolution as passed in during startup, not dp_xres and stuff
+	int xres = System_GetPropertyInt(SYSPROP_DISPLAY_XRES);
+	int yres = System_GetPropertyInt(SYSPROP_DISPLAY_YRES);
+
+	if (xres <= 960) {
+		// Smaller than the PSP*2, let's go native.
+		return 0;
+	} else if (xres <= 480 * 3) {  // 720p xres
+		// Small-ish screen, we should default to 2x
+		return 2 + 1;
+	} else {
+		// Large or very large screen. Default to 3x psp resolution.
+		return 3 + 1;
+	}
+	return 0;
+#else
+	return 1;
+#endif
+}
+
 // See issue 14439. Should possibly even block these devices from selecting VK.
 const char * const vulkanDefaultBlacklist[] = {
 	"Sony:BRAVIA VH1",
@@ -331,8 +359,15 @@ static int DefaultGPUBackend() {
 		return (int)GPUBackend::VULKAN;
 	}
 #endif
-
+#elif PPSSPP_PLATFORM(MAC)
+#if PPSSPP_ARCH(ARM64)
+	return (int)GPUBackend::VULKAN;
+#else
+	// On Intel (generally older Macs) default to OpenGL.
+	return (int)GPUBackend::OPENGL;
 #endif
+#endif
+
 	// TODO: On some additional Linux platforms, we should also default to Vulkan.
 	return (int)GPUBackend::OPENGL;
 }
@@ -491,6 +526,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("SoftwareSkinning", &g_Config.bSoftwareSkinning, true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TextureFiltering", &g_Config.iTexFiltering, 1, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("InternalResolution", &g_Config.iInternalResolution, &DefaultInternalResolution, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	ConfigSetting("AndroidHwScale", &g_Config.iAndroidHwScale, &DefaultAndroidHwScale, CfgFlag::DEFAULT),
 	ConfigSetting("HighQualityDepth", &g_Config.bHighQualityDepth, true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("FrameSkip", &g_Config.iFrameSkip, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("FrameSkipType", &g_Config.iFrameSkipType, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
@@ -645,6 +681,8 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("TiltSensitivityX", &g_Config.iTiltSensitivityX, 60, CfgFlag::PER_GAME),
 	ConfigSetting("TiltSensitivityY", &g_Config.iTiltSensitivityY, 60, CfgFlag::PER_GAME),
 	ConfigSetting("TiltAnalogDeadzoneRadius", &g_Config.fTiltAnalogDeadzoneRadius, 0.0f, CfgFlag::PER_GAME),
+	ConfigSetting("TiltInverseDeadzone", &g_Config.fTiltInverseDeadzone, 0.0f, CfgFlag::PER_GAME),
+	ConfigSetting("TiltCircularInverseDeadzone", &g_Config.bTiltCircularInverseDeadzone, true, CfgFlag::PER_GAME),
 	ConfigSetting("TiltInputType", &g_Config.iTiltInputType, 0, CfgFlag::PER_GAME),
 #endif
 
@@ -680,7 +718,7 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("AnalogIsCircular", &g_Config.bAnalogIsCircular, false, CfgFlag::PER_GAME),
 	ConfigSetting("AnalogAutoRotSpeed", &g_Config.fAnalogAutoRotSpeed, 8.0f, CfgFlag::PER_GAME),
 
-	ConfigSetting("AnalogLimiterDeadzone", &g_Config.fAnalogLimiterDeadzone, 0.6f, CfgFlag::PER_GAME),
+	ConfigSetting("AnalogLimiterDeadzone", &g_Config.fAnalogLimiterDeadzone, 0.6f, CfgFlag::DEFAULT),
 
 	ConfigSetting("LeftStickHeadScale", &g_Config.fLeftStickHeadScale, 1.0f, CfgFlag::PER_GAME),
 	ConfigSetting("RightStickHeadScale", &g_Config.fRightStickHeadScale, 1.0f, CfgFlag::PER_GAME),
@@ -774,6 +812,7 @@ static const ConfigSetting debuggerSettings[] = {
 	ConfigSetting("ShowGpuProfile", &g_Config.bShowGpuProfile, false, CfgFlag::DONT_SAVE),
 	ConfigSetting("SkipDeadbeefFilling", &g_Config.bSkipDeadbeefFilling, false, CfgFlag::DEFAULT),
 	ConfigSetting("FuncHashMap", &g_Config.bFuncHashMap, false, CfgFlag::DEFAULT),
+	ConfigSetting("SkipFuncHashMap", &g_Config.sSkipFuncHashMap, "", CfgFlag::DEFAULT),
 	ConfigSetting("MemInfoDetailed", &g_Config.bDebugMemInfoDetailed, false, CfgFlag::DEFAULT),
 	ConfigSetting("DrawFrameGraph", &g_Config.bDrawFrameGraph, false, CfgFlag::DEFAULT),
 };
@@ -794,24 +833,24 @@ static const ConfigSetting themeSettings[] = {
 
 
 static const ConfigSetting vrSettings[] = {
-	ConfigSetting("VREnable", &g_Config.bEnableVR, true, CfgFlag::DEFAULT),
-	ConfigSetting("VREnable6DoF", &g_Config.bEnable6DoF, true, CfgFlag::DEFAULT),
-	ConfigSetting("VREnableStereo", &g_Config.bEnableStereo, false, CfgFlag::DEFAULT),
-	ConfigSetting("VREnableMotions", &g_Config.bEnableMotions, true, CfgFlag::DEFAULT),
-	ConfigSetting("VRForce72Hz", &g_Config.bForce72Hz, true, CfgFlag::DEFAULT),
-	ConfigSetting("VRManualForceVR", &g_Config.bManualForceVR, false, CfgFlag::DEFAULT),
-	ConfigSetting("VRRescaleHUD", &g_Config.bRescaleHUD, true, CfgFlag::DEFAULT),
-	ConfigSetting("VRCameraDistance", &g_Config.fCameraDistance, 0.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRCameraHeight", &g_Config.fCameraHeight, 0.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRCameraSide", &g_Config.fCameraSide, 0.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRCameraPitch", &g_Config.iCameraPitch, 0, CfgFlag::DEFAULT),
+	ConfigSetting("VREnable", &g_Config.bEnableVR, true, CfgFlag::PER_GAME),
+	ConfigSetting("VREnable6DoF", &g_Config.bEnable6DoF, true, CfgFlag::PER_GAME),
+	ConfigSetting("VREnableStereo", &g_Config.bEnableStereo, false, CfgFlag::PER_GAME),
+	ConfigSetting("VREnableMotions", &g_Config.bEnableMotions, true, CfgFlag::PER_GAME),
+	ConfigSetting("VRForce72Hz", &g_Config.bForce72Hz, true, CfgFlag::PER_GAME),
+	ConfigSetting("VRManualForceVR", &g_Config.bManualForceVR, false, CfgFlag::PER_GAME),
+	ConfigSetting("VRRescaleHUD", &g_Config.bRescaleHUD, true, CfgFlag::PER_GAME),
+	ConfigSetting("VRCameraDistance", &g_Config.fCameraDistance, 0.0f, CfgFlag::PER_GAME),
+	ConfigSetting("VRCameraHeight", &g_Config.fCameraHeight, 0.0f, CfgFlag::PER_GAME),
+	ConfigSetting("VRCameraSide", &g_Config.fCameraSide, 0.0f, CfgFlag::PER_GAME),
+	ConfigSetting("VRCameraPitch", &g_Config.iCameraPitch, 0, CfgFlag::PER_GAME),
 	ConfigSetting("VRCanvasDistance", &g_Config.fCanvasDistance, 12.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRFieldOfView", &g_Config.fFieldOfViewPercentage, 100.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRHeadUpDisplayScale", &g_Config.fHeadUpDisplayScale, 0.3f, CfgFlag::DEFAULT),
+	ConfigSetting("VRFieldOfView", &g_Config.fFieldOfViewPercentage, 100.0f, CfgFlag::PER_GAME),
+	ConfigSetting("VRHeadUpDisplayScale", &g_Config.fHeadUpDisplayScale, 0.3f, CfgFlag::PER_GAME),
 	ConfigSetting("VRMotionLength", &g_Config.fMotionLength, 0.5f, CfgFlag::DEFAULT),
-	ConfigSetting("VRHeadRotationScale", &g_Config.fHeadRotationScale, 5.0f, CfgFlag::DEFAULT),
-	ConfigSetting("VRHeadRotationEnabled", &g_Config.bHeadRotationEnabled, false, CfgFlag::DEFAULT),
-	ConfigSetting("VRHeadRotationSmoothing", &g_Config.bHeadRotationSmoothing, false, CfgFlag::DEFAULT),
+	ConfigSetting("VRHeadRotationScale", &g_Config.fHeadRotationScale, 5.0f, CfgFlag::PER_GAME),
+	ConfigSetting("VRHeadRotationEnabled", &g_Config.bHeadRotationEnabled, false, CfgFlag::PER_GAME),
+	ConfigSetting("VRHeadRotationSmoothing", &g_Config.bHeadRotationSmoothing, false, CfgFlag::PER_GAME),
 };
 
 static const ConfigSectionSettings sections[] = {

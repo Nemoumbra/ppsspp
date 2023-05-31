@@ -223,7 +223,7 @@ const char *GetFuncName(const char *moduleName, u32 nib)
 		return func->name;
 
 	static char temp[256];
-	sprintf(temp,"[UNK: 0x%08x]", nib);
+	snprintf(temp, sizeof(temp), "[UNK: 0x%08x]", nib);
 	return temp;
 }
 
@@ -794,10 +794,11 @@ size_t hleFormatLogArgs(char *message, size_t sz, const char *argmask) {
 		case 's':
 			if (Memory::IsValidAddress(regval)) {
 				const char *s = Memory::GetCharPointer(regval);
-				if (strnlen(s, 64) >= 64) {
-					APPEND_FMT("%.64s...", Memory::GetCharPointer(regval));
+				const int safeLen = Memory::ValidSize(regval, 128);
+				if (strnlen(s, safeLen) >= safeLen) {
+					APPEND_FMT("%.*s...", safeLen, Memory::GetCharPointer(regval));
 				} else {
-					APPEND_FMT("%s", Memory::GetCharPointer(regval));
+					APPEND_FMT("%.*s", safeLen, Memory::GetCharPointer(regval));
 				}
 			} else {
 				APPEND_FMT("(invalid)");

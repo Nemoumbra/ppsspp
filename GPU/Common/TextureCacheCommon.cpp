@@ -125,8 +125,6 @@ TextureCacheCommon::TextureCacheCommon(Draw::DrawContext *draw, Draw2D *draw2D)
 	tmpTexBuf32_.resize(512 * 512);  // 1MB
 	tmpTexBufRearrange_.resize(512 * 512);   // 1MB
 
-	replacer_.Init();
-
 	textureShaderCache_ = new TextureShaderCache(draw, draw2D_);
 }
 
@@ -256,6 +254,7 @@ SamplerCacheKey TextureCacheCommon::GetSamplingParams(int maxLevel, const TexCac
 	if (entry && replacer_.Enabled() && entry->replacedTexture && entry->replacedTexture->State() == ReplacementState::ACTIVE) {
 		// If replacement textures have multiple mip levels, enforce mip filtering.
 		if (entry->replacedTexture->NumLevels() > 1) {
+			key.mipEnable = true;
 			key.mipFilt = 1;
 			key.maxLevel = 9 * 256;
 		}
@@ -407,6 +406,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 		Unbind();
 		gstate_c.SetTextureIs3D(false);
 		gstate_c.SetTextureIsArray(false);
+		gstate_c.SetTextureIsFramebuffer(false);
 		return nullptr;
 	}
 
@@ -574,6 +574,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 			gstate_c.SetTextureIs3D((entry->status & TexCacheEntry::STATUS_3D) != 0);
 			gstate_c.SetTextureIsArray(false);
 			gstate_c.SetTextureIsBGRA((entry->status & TexCacheEntry::STATUS_BGRA) != 0);
+			gstate_c.SetTextureIsFramebuffer(false);
 
 			if (rehash) {
 				// Update in case any of these changed.
@@ -682,6 +683,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 	gstate_c.curTextureHeight = h;
 	gstate_c.SetTextureIs3D((entry->status & TexCacheEntry::STATUS_3D) != 0);
 	gstate_c.SetTextureIsArray(false);  // Ordinary 2D textures still aren't used by array view in VK. We probably might as well, though, at this point..
+	gstate_c.SetTextureIsFramebuffer(false);
 
 	failedTexture_ = false;
 	nextTexture_ = entry;
@@ -1027,18 +1029,28 @@ bool TextureCacheCommon::MatchFramebuffer(
 		}
 
 		// Check works for D16 too.
+		// These are combinations that we have special-cased handling for. There are more
+		// ones possible, but rare - we'll add them as we find them used.
 		const bool matchingClutFormat =
 			(fb_format == GE_FORMAT_DEPTH16 && entry.format == GE_TFMT_CLUT16) ||
 			(fb_format == GE_FORMAT_DEPTH16 && entry.format == GE_TFMT_5650) ||
 			(fb_format == GE_FORMAT_8888 && entry.format == GE_TFMT_CLUT32) ||
 			(fb_format != GE_FORMAT_8888 && entry.format == GE_TFMT_CLUT16) ||
-			(fb_format == GE_FORMAT_8888 && entry.format == GE_TFMT_CLUT8);
+			(fb_format == GE_FORMAT_8888 && entry.format == GE_TFMT_CLUT8) ||
+			(fb_format == GE_FORMAT_5551 && entry.format == GE_TFMT_CLUT8 && PSP_CoreParameter().compat.flags().SOCOMClut8Replacement);
 
-		const int texBitsPerPixel = std::max(1U, (u32)textureBitsPerPixel[entry.format]);
+		const int texBitsPerPixel = TextureFormatBitsPerPixel(entry.format);
 		const int byteOffset = texaddr - addr;
 		if (byteOffset > 0) {
+			int texbpp = texBitsPerPixel;
+			if (fb_format == GE_FORMAT_5551 && entry.format == GE_TFMT_CLUT8) {
+				// In this case we treat CLUT8 as if it were CLUT16, see issue #16210. So we need
+				// to compute the x offset appropriately.
+				texbpp = 16;
+			}
+
 			matchInfo->yOffset = byteOffset / fb_stride_in_bytes;
-			matchInfo->xOffset = 8 * (byteOffset % fb_stride_in_bytes) / texBitsPerPixel;
+			matchInfo->xOffset = 8 * (byteOffset % fb_stride_in_bytes) / texbpp;
 		} else if (byteOffset < 0) {
 			int texelOffset = 8 * byteOffset / texBitsPerPixel;
 			// We don't support negative Y offsets, and negative X offsets are only for the Killzone workaround.
@@ -1065,7 +1077,7 @@ bool TextureCacheCommon::MatchFramebuffer(
 		// Trying to play it safe.  Below 0x04110000 is almost always framebuffers.
 		// TODO: Maybe we can reduce this check and find a better way above 0x04110000?
 		if (matchInfo->yOffset > MAX_SUBAREA_Y_OFFSET_SAFE && addr > 0x04110000 && !PSP_CoreParameter().compat.flags().AllowLargeFBTextureOffsets) {
-			WARN_LOG_REPORT_ONCE(subareaIgnored, G3D, "Ignoring possible texturing from framebuffer at %08x +%dx%d / %dx%d", fb_address, matchInfo->xOffset, matchInfo->yOffset, framebuffer->width, framebuffer->height);
+			WARN_LOG_ONCE(subareaIgnored, G3D, "Ignoring possible texturing from framebuffer at %08x +%dx%d / %dx%d", fb_address, matchInfo->xOffset, matchInfo->yOffset, framebuffer->width, framebuffer->height);
 			return false;
 		}
 
@@ -1132,6 +1144,11 @@ void TextureCacheCommon::SetTextureFramebuffer(const AttachCandidate &candidate)
 		gstate_c.curTextureWidth = framebuffer->bufferWidth;
 		gstate_c.curTextureHeight = framebuffer->bufferHeight;
 
+		if (candidate.channel == RASTER_COLOR && gstate.getTextureFormat() == GE_TFMT_CLUT8 && framebuffer->fb_format == GE_FORMAT_5551 && PSP_CoreParameter().compat.flags().SOCOMClut8Replacement) {
+			// See #16210. UV must be adjusted as if the texture was twice the width.
+			gstate_c.curTextureWidth *= 2.0f;
+		}
+
 		if (needsDepthXSwizzle) {
 			gstate_c.curTextureWidth = RoundUpToPowerOf2(gstate_c.curTextureWidth);
 		}
@@ -1140,6 +1157,7 @@ void TextureCacheCommon::SetTextureFramebuffer(const AttachCandidate &candidate)
 			gstate_c.Dirty(DIRTY_FRAGMENTSHADER_STATE);
 		}
 		gstate_c.SetTextureIsBGRA(false);
+		gstate_c.SetTextureIsFramebuffer(true);
 		gstate_c.curTextureXOffset = fbInfo.xOffset;
 		gstate_c.curTextureYOffset = fbInfo.yOffset;
 		u32 texW = (u32)gstate.getTextureWidth(0);
@@ -2144,6 +2162,7 @@ void TextureCacheCommon::ApplyTexture() {
 	}
 }
 
+// Can we depalettize at all? This refers to both in-fragment-shader depal and "traditional" depal through a separate pass.
 static bool CanDepalettize(GETextureFormat texFormat, GEBufferFormat bufferFormat) {
 	if (IsClutFormat(texFormat)) {
 		switch (bufferFormat) {
@@ -2152,6 +2171,10 @@ static bool CanDepalettize(GETextureFormat texFormat, GEBufferFormat bufferForma
 		case GE_FORMAT_5551:
 		case GE_FORMAT_DEPTH16:
 			if (texFormat == GE_TFMT_CLUT16) {
+				return true;
+			}
+			if (texFormat == GE_TFMT_CLUT8 && bufferFormat == GE_FORMAT_5551 && PSP_CoreParameter().compat.flags().SOCOMClut8Replacement) {
+				// Wacky case from issue #16210 (SOCOM etc).
 				return true;
 			}
 			break;
@@ -2213,7 +2236,8 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 	bool useShaderDepal = framebufferManager_->GetCurrentRenderVFB() != framebuffer &&
 		!depth && clutRenderAddress_ == 0xFFFFFFFF &&
 		!gstate_c.curTextureIs3D &&
-		draw_->GetShaderLanguageDesc().bitwiseOps;
+		draw_->GetShaderLanguageDesc().bitwiseOps &&
+		!(texFormat == GE_TFMT_CLUT8 && framebuffer->fb_format == GE_FORMAT_5551);  // socom
 
 	switch (draw_->GetShaderLanguageDesc().shaderLanguage) {
 	case ShaderLanguage::HLSL_D3D9:
@@ -2293,9 +2317,9 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 		bool needsDepthXSwizzle = depthUpperBits == 2;
 
 		int depalWidth = framebuffer->renderWidth;
-		int texWidth = framebuffer->width;
+		int texWidth = framebuffer->bufferWidth;
 		if (needsDepthXSwizzle) {
-			texWidth = RoundUpToPowerOf2(framebuffer->width);
+			texWidth = RoundUpToPowerOf2(framebuffer->bufferWidth);
 			depalWidth = texWidth * framebuffer->renderScaleFactor;
 			gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
 		}

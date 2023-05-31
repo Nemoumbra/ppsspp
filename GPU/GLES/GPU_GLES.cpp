@@ -197,6 +197,10 @@ u32 GPU_GLES::CheckGPUFeatures() const {
 		}
 	}
 
+	if (gl_extensions.GLES3) {
+		features |= GPU_USE_FRAGMENT_UBERSHADER;
+	}
+
 	return features;
 }
 
@@ -304,4 +308,9 @@ void GPU_GLES::GetStats(char *buffer, size_t bufsize) {
 		shaderManagerGL_->GetNumFragmentShaders(),
 		shaderManagerGL_->GetNumPrograms()
 	);
+}
+
+std::string GPU_GLES::GetGpuProfileString() {
+	GLRenderManager *rm = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
+	return rm->GetGpuProfileString();
 }

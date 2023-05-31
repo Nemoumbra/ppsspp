@@ -454,7 +454,7 @@ namespace MainWindow {
 			break;
 
 		case ID_FILE_MEMSTICK:
-			ShellExecute(NULL, L"open", g_Config.memStickDirectory.ToWString().c_str(), 0, 0, SW_SHOW);
+			ShellExecute(NULL, L"open", g_Config.memStickDirectory.ToWString().c_str(), 0, 0, SW_SHOWNORMAL);
 			break;
 
 		case ID_TOGGLE_BREAK:
@@ -509,6 +509,7 @@ namespace MainWindow {
 			g_Config.bEnableCheats = !g_Config.bEnableCheats;
 			osm.ShowOnOff(gr->T("Cheats"), g_Config.bEnableCheats);
 			break;
+
 		case ID_EMULATION_CHAT:
 			if (GetUIState() == UISTATE_INGAME) {
 				NativeMessageReceived("chat screen", "");
@@ -675,7 +676,7 @@ namespace MainWindow {
 
 		case ID_OPTIONS_SKIP_BUFFER_EFFECTS:
 			g_Config.bSkipBufferEffects = !g_Config.bSkipBufferEffects;
-			NativeMessageReceived("gpu_configChanged", "");
+			NativeMessageReceived("gpu_renderResized", "");
 			osm.ShowOnOff(gr->T("Skip Buffer Effects"), g_Config.bSkipBufferEffects);
 			break;
 

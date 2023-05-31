@@ -86,24 +86,21 @@ public:
 
 	// So that this can be inlined
 	void Flush() {
-		if (!numDrawCalls)
+		if (!numDrawCalls_)
 			return;
 		DoFlush();
 	}
 
 	void FinishDeferred() {
-		if (!numDrawCalls)
+		if (!numDrawCalls_)
 			return;
 		DoFlush();
 	}
 
-	void DispatchFlush() override { Flush(); }
-
-	GLPushBuffer *GetPushVertexBuffer() {
-		return frameData_[render_->GetCurFrame()].pushVertex;
-	}
-	GLPushBuffer *GetPushIndexBuffer() {
-		return frameData_[render_->GetCurFrame()].pushIndex;
+	void DispatchFlush() override {
+		if (!numDrawCalls_)
+			return;
+		Flush();
 	}
 
 	void ClearInputLayoutMap();
@@ -124,8 +121,6 @@ private:
 	void ApplyDrawStateLate(bool setStencil, int stencilValue);
 
 	GLRInputLayout *SetupDecFmtForDraw(LinkedShader *program, const DecVtxFormat &decFmt);
-
-	void *DecodeVertsToPushBuffer(GLPushBuffer *push, uint32_t *bindOffset, GLRBuffer **buf);
 
 	struct FrameData {
 		GLPushBuffer *pushVertex;
@@ -149,7 +144,6 @@ private:
 	ViewportAndScissor vpAndScissor;
 
 	int bufferDecimationCounter_ = 0;
-
 	int lastRenderStepId_ = -1;
 
 	// Hardware tessellation

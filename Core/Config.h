@@ -279,6 +279,8 @@ public:
 	int iTiltSensitivityY;
 	// The deadzone radius of the tilt. Only used in the analog mapping.
 	float fTiltAnalogDeadzoneRadius;
+	float fTiltInverseDeadzone;  // An inverse deadzone for the output, counteracting excessive deadzones applied by games. See #17483.
+	bool bTiltCircularInverseDeadzone;
 	// Type of tilt input currently selected: Defined in TiltEventProcessor.h
 	// 0 - no tilt, 1 - analog stick, 2 - D-Pad, 3 - Action Buttons (Tri, Cross, Square, Circle)
 	int iTiltInputType;
@@ -314,8 +316,6 @@ public:
 	int iTouchButtonStyle;
 	int iTouchButtonOpacity;
 	int iTouchButtonHideSeconds;
-	// Auto rotation speed
-	float fAnalogAutoRotSpeed;
 
 	// Snap touch control position
 	bool bTouchSnapToGrid;
@@ -386,8 +386,10 @@ public:
 	float fAnalogSensitivity;
 	// convert analog stick circle to square
 	bool bAnalogIsCircular;
+	// Auto rotation speed
+	float fAnalogAutoRotSpeed;
 
-
+	// Sets up how much the analog limiter button restricts digital->analog input.
 	float fAnalogLimiterDeadzone;
 
 	bool bMouseControl;
@@ -397,6 +399,9 @@ public:
 	float fMouseSmoothing;
 
 	bool bSystemControls;
+
+	// Use the hardware scaler to scale up the image to save fillrate. Similar to Windows' window size, really.
+	int iAndroidHwScale;  // 0 = device resolution. 1 = 480x272 (extended to correct aspect), 2 = 960x544 etc.
 
 	// Risky JIT optimizations
 	bool bDiscardRegsOnJRRA;
@@ -484,6 +489,7 @@ public:
 	// Double edged sword: much easier debugging, but not accurate.
 	bool bSkipDeadbeefFilling;
 	bool bFuncHashMap;
+	std::string sSkipFuncHashMap;
 	bool bDebugMemInfoDetailed;
 	bool bDrawFrameGraph;
 

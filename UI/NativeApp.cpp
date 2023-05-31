@@ -211,6 +211,22 @@ std::string NativeQueryConfig(std::string query) {
 		return std::string(temp);
 	} else if (query == "immersiveMode") {
 		return std::string(g_Config.bImmersiveMode ? "1" : "0");
+	} else if (query == "hwScale") {
+		int scale = g_Config.iAndroidHwScale;
+		// Override hw scale for TV type devices.
+		if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV)
+			scale = 0;
+
+		if (scale == 1) {
+			// If g_Config.iInternalResolution is also set to Auto (1), we fall back to "Device resolution" (0). It works out.
+			scale = g_Config.iInternalResolution;
+		} else if (scale >= 2) {
+			scale -= 1;
+		}
+
+		int max_res = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES)) / 480 + 1;
+		snprintf(temp, sizeof(temp), "%d", std::min(scale, max_res));
+		return std::string(temp);
 	} else if (query == "sustainedPerformanceMode") {
 		return std::string(g_Config.bSustainedPerformanceMode ? "1" : "0");
 	} else if (query == "androidJavaGL") {
@@ -1131,9 +1147,9 @@ void NativeRender(GraphicsContext *graphicsContext) {
 }
 
 void HandleGlobalMessage(const std::string &msg, const std::string &value) {
-	int nextInputDeviceID = -1;
+	InputDeviceID nextInputDeviceID = DEVICE_ID_ANY;
 	if (msg == "inputDeviceConnectedID") {
-		nextInputDeviceID = parseLong(value);
+		nextInputDeviceID = (InputDeviceID)parseLong(value);
 	}
 	else if (msg == "inputDeviceConnected") {
 		KeyMap::NotifyPadConnected(nextInputDeviceID, value);
@@ -1257,7 +1273,7 @@ bool NativeKey(const KeyInput &key) {
 	// INFO_LOG(SYSTEM, "Key code: %i flags: %i", key.keyCode, key.flags);
 #if !defined(MOBILE_DEVICE)
 	if (g_Config.bPauseExitsEmulator) {
-		static std::vector<int> pspKeys;
+		std::vector<int> pspKeys;
 		pspKeys.clear();
 		if (KeyMap::InputMappingToPspButton(InputMapping(key.deviceId, key.keyCode), &pspKeys)) {
 			if (std::find(pspKeys.begin(), pspKeys.end(), VIRTKEY_PAUSE) != pspKeys.end()) {
@@ -1267,10 +1283,10 @@ bool NativeKey(const KeyInput &key) {
 		}
 	}
 #endif
+
 	bool retval = false;
-	if (g_screenManager)
-	{
-		HLEPlugins::PluginDataKeys[key.keyCode] = (key.flags & KEY_DOWN) ? 1 : 0;
+	if (g_screenManager) {
+		HLEPlugins::SetKey(key.keyCode, (key.flags & KEY_DOWN) ? 1 : 0);
 		retval = g_screenManager->key(key);
 	}
 

@@ -32,8 +32,8 @@ class VertexDecoder;
 
 enum {
 	VERTEX_BUFFER_MAX = 65536,
-	DECODED_VERTEX_BUFFER_SIZE = VERTEX_BUFFER_MAX * 64,
-	DECODED_INDEX_BUFFER_SIZE = VERTEX_BUFFER_MAX * 16,
+	DECODED_VERTEX_BUFFER_SIZE = VERTEX_BUFFER_MAX * 2 * 36,  // 36 == sizeof(SimpleVertex)
+	DECODED_INDEX_BUFFER_SIZE = VERTEX_BUFFER_MAX * 6 * 6 * 2,   // * 6 for spline tessellation, then * 6 again for converting into points/lines, and * 2 for 2 bytes per index
 };
 
 enum {
@@ -122,7 +122,7 @@ public:
 		return false;
 	}
 	int GetNumDrawCalls() const {
-		return numDrawCalls;
+		return numDrawCalls_;
 	}
 
 	VertexDecoder *GetVertexDecoder(u32 vtype);
@@ -185,8 +185,8 @@ protected:
 	bool everUsedExactEqualDepth_ = false;
 
 	// Vertex collector buffers
-	u8 *decoded = nullptr;
-	u16 *decIndex = nullptr;
+	u8 *decoded_ = nullptr;
+	u16 *decIndex_ = nullptr;
 
 	// Cached vertex decoders
 	u32 lastVType_ = -1;  // corresponds to dec_.  Could really just pick it out of dec_...
@@ -195,8 +195,8 @@ protected:
 	VertexDecoderJitCache *decJitCache_ = nullptr;
 	VertexDecoderOptions decOptions_{};
 
-	TransformedVertex *transformed = nullptr;
-	TransformedVertex *transformedExpanded = nullptr;
+	TransformedVertex *transformed_ = nullptr;
+	TransformedVertex *transformedExpanded_ = nullptr;
 
 	// Defer all vertex decoding to a "Flush" (except when software skinning)
 	struct DeferredDrawCall {
@@ -212,8 +212,8 @@ protected:
 	};
 
 	enum { MAX_DEFERRED_DRAW_CALLS = 128 };
-	DeferredDrawCall drawCalls[MAX_DEFERRED_DRAW_CALLS];
-	int numDrawCalls = 0;
+	DeferredDrawCall drawCalls_[MAX_DEFERRED_DRAW_CALLS];
+	int numDrawCalls_ = 0;
 	int vertexCountInDrawCalls_ = 0;
 
 	int decimationCounter_ = 0;

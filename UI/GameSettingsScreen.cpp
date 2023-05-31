@@ -55,6 +55,7 @@
 #include "UI/Theme.h"
 
 #include "Common/File/FileUtil.h"
+#include "Common/File/AndroidContentURI.h"
 #include "Common/OSVersion.h"
 #include "Common/TimeUtil.h"
 #include "Common/StringUtils.h"
@@ -88,7 +89,6 @@
 #if PPSSPP_PLATFORM(ANDROID)
 
 #include "android/jni/AndroidAudio.h"
-#include "android/jni/AndroidContentURI.h"
 
 extern AndroidAudioState *g_audioState;
 
@@ -274,7 +274,7 @@ void GameSettingsScreen::CreateViews() {
 
 #if !defined(MOBILE_DEVICE) || PPSSPP_PLATFORM(ANDROID)
 	// Hide search if screen is too small.
-	if (g_display.dp_xres < g_display.dp_yres || g_display.dp_yres >= 500) {
+	if ((g_display.dp_xres < g_display.dp_yres || g_display.dp_yres >= 500) && (deviceType != DEVICE_TYPE_VR)) {
 		auto se = GetI18NCategory(I18NCat::SEARCH);
 		// Search
 		LinearLayout *searchSettings = AddTab("GameSettingsSearch", ms->T("Search"), true);
@@ -367,6 +367,18 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 			}
 		}
 	}
+
+#if PPSSPP_PLATFORM(ANDROID)
+	if ((deviceType != DEVICE_TYPE_TV) && (deviceType != DEVICE_TYPE_VR)) {
+		static const char *deviceResolutions[] = { "Native device resolution", "Auto (same as Rendering)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP" };
+		int max_res_temp = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES)) / 480 + 2;
+		if (max_res_temp == 3)
+			max_res_temp = 4;  // At least allow 2x
+		int max_res = std::min(max_res_temp, (int)ARRAY_SIZE(deviceResolutions));
+		UI::PopupMultiChoice *hwscale = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iAndroidHwScale, gr->T("Display Resolution (HW scaler)"), deviceResolutions, 0, max_res, I18NCat::GRAPHICS, screenManager()));
+		hwscale->OnChoice.Handle(this, &GameSettingsScreen::OnHwScaleChange);  // To refresh the display mode
+	}
+#endif
 
 	if (deviceType != DEVICE_TYPE_VR) {
 #if !defined(MOBILE_DEVICE)
@@ -721,7 +733,7 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 		PopupSliderChoice *opacity = controlsSettings->Add(new PopupSliderChoice(&g_Config.iTouchButtonOpacity, 0, 100, 65, co->T("Button Opacity"), screenManager(), "%"));
 		opacity->SetEnabledPtr(&g_Config.bShowTouchControls);
 		opacity->SetFormat("%i%%");
-		PopupSliderChoice *autoHide = controlsSettings->Add(new PopupSliderChoice(&g_Config.iTouchButtonHideSeconds, 0, 300, 20, co->T("Auto-hide buttons after seconds"), screenManager(), co->T("seconds, 0 : off")));
+		PopupSliderChoice *autoHide = controlsSettings->Add(new PopupSliderChoice(&g_Config.iTouchButtonHideSeconds, 0, 300, 20, co->T("Auto-hide buttons after delay"), screenManager(), di->T("seconds, 0:off")));
 		autoHide->SetEnabledPtr(&g_Config.bShowTouchControls);
 		autoHide->SetFormat(di->T("%d seconds"));
 		autoHide->SetZeroLabel(co->T("Off"));
@@ -937,6 +949,9 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 
 	systemSettings->Add(new CheckBox(&g_Config.bTransparentBackground, sy->T("Transparent UI background")));
 
+	static const char *backgroundAnimations[] = { "No animation", "Floating symbols", "Recent games", "Waves", "Moving background" };
+	systemSettings->Add(new PopupMultiChoice(&g_Config.iBackgroundAnimation, sy->T("UI background animation"), backgroundAnimations, 0, ARRAY_SIZE(backgroundAnimations), I18NCat::SYSTEM, screenManager()));
+
 	PopupMultiChoiceDynamic *theme = systemSettings->Add(new PopupMultiChoiceDynamic(&g_Config.sThemeName, sy->T("Theme"), GetThemeInfoNames(), I18NCat::THEMES, screenManager()));
 	theme->OnChoice.Add([=](EventParams &e) {
 		UpdateTheme(screenManager()->getUIContext());
@@ -957,9 +972,6 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 		systemSettings->Add(saturation);
 	}
 
-	static const char *backgroundAnimations[] = { "No animation", "Floating symbols", "Recent games", "Waves", "Moving background" };
-	systemSettings->Add(new PopupMultiChoice(&g_Config.iBackgroundAnimation, sy->T("UI background animation"), backgroundAnimations, 0, ARRAY_SIZE(backgroundAnimations), I18NCat::SYSTEM, screenManager()));
-
 	systemSettings->Add(new ItemHeader(sy->T("PSP Memory Stick")));
 
 	if (System_GetPropertyBool(SYSPROP_HAS_OPEN_DIRECTORY)) {
@@ -974,19 +986,21 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 #endif
 
 #if PPSSPP_PLATFORM(ANDROID)
-	memstickDisplay_ = g_Config.memStickDirectory.ToVisualString();
-	auto memstickPath = systemSettings->Add(new ChoiceWithValueDisplay(&memstickDisplay_, sy->T("Memory Stick folder", "Memory Stick folder"), I18NCat::NONE));
-	memstickPath->SetEnabled(!PSP_IsInited());
-	memstickPath->OnClick.Handle(this, &GameSettingsScreen::OnChangeMemStickDir);
+	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) != DEVICE_TYPE_VR) {
+		memstickDisplay_ = g_Config.memStickDirectory.ToVisualString();
+		auto memstickPath = systemSettings->Add(new ChoiceWithValueDisplay(&memstickDisplay_, sy->T("Memory Stick folder", "Memory Stick folder"), I18NCat::NONE));
+		memstickPath->SetEnabled(!PSP_IsInited());
+		memstickPath->OnClick.Handle(this, &GameSettingsScreen::OnChangeMemStickDir);
 
-	// Display USB path for convenience.
-	std::string usbPath;
-	if (PathToVisualUsbPath(g_Config.memStickDirectory, usbPath)) {
-		if (usbPath.empty()) {
-			// Probably it's just the root. So let's add PSP to make it clear.
-			usbPath = "/PSP";
+		// Display USB path for convenience.
+		std::string usbPath;
+		if (PathToVisualUsbPath(g_Config.memStickDirectory, usbPath)) {
+			if (usbPath.empty()) {
+				// Probably it's just the root. So let's add PSP to make it clear.
+				usbPath = "/PSP";
+			}
+			systemSettings->Add(new InfoItem(sy->T("USB"), usbPath))->SetChoiceStyle(true);
 		}
-		systemSettings->Add(new InfoItem(sy->T("USB"), usbPath))->SetChoiceStyle(true);
 	}
 #elif defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 	SavePathInMyDocumentChoice = systemSettings->Add(new CheckBox(&installed_, sy->T("Save path in My Documents", "Save path in My Documents")));
@@ -1058,7 +1072,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 		return UI::EVENT_CONTINUE;
 	});
 	lockedMhz->SetZeroLabel(sy->T("Auto"));
-	PopupSliderChoice *rewindInterval = systemSettings->Add(new PopupSliderChoice(&g_Config.iRewindSnapshotInterval, 0, 60, 0, sy->T("Rewind Snapshot Interval"), screenManager(), sy->T("seconds, 0:off")));
+	PopupSliderChoice *rewindInterval = systemSettings->Add(new PopupSliderChoice(&g_Config.iRewindSnapshotInterval, 0, 60, 0, sy->T("Rewind Snapshot Interval"), screenManager(), di->T("seconds, 0:off")));
 	rewindInterval->SetFormat(di->T("%d seconds"));
 	rewindInterval->SetZeroLabel(sy->T("Off"));
 
@@ -1157,7 +1171,7 @@ void GameSettingsScreen::CreateVRSettings(UI::ViewGroup *vrSettings) {
 	PopupSliderChoiceFloat *vrMotions = vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fMotionLength, 0.3f, 1.0f, 0.5f, vr->T("Motion needed to generate action"), 0.1f, screenManager(), vr->T("m")));
 	vrMotions->SetEnabledPtr(&g_Config.bEnableMotions);
 	static const char *cameraPitchModes[] = { "Disabled", "Top view -> First person", "First person -> Top view" };
-	vrSettings->Add(new PopupMultiChoice(&g_Config.iCameraPitch, vr->T("Modify camera type"), cameraPitchModes, 0, 3, I18NCat::NONE, screenManager()));
+	vrSettings->Add(new PopupMultiChoice(&g_Config.iCameraPitch, vr->T("Camera type"), cameraPitchModes, 0, 3, I18NCat::NONE, screenManager()));
 }
 
 UI::LinearLayout *GameSettingsScreen::AddTab(const char *tag, const std::string &title, bool isSearch) {
@@ -1204,6 +1218,9 @@ UI::EventReturn GameSettingsScreen::OnAdhocGuides(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnImmersiveModeChange(UI::EventParams &e) {
 	System_Notify(SystemNotification::IMMERSIVE_MODE_CHANGE);
+	if (g_Config.iAndroidHwScale != 0) {
+		System_RecreateActivity();
+	}
 	return UI::EVENT_DONE;
 }
 
@@ -1325,8 +1342,16 @@ UI::EventReturn GameSettingsScreen::OnFullscreenMultiChange(UI::EventParams &e) 
 }
 
 UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
+	if (g_Config.iAndroidHwScale == 1) {
+		System_RecreateActivity();
+	}
 	Reporting::UpdateConfig();
 	NativeMessageReceived("gpu_renderResized", "");
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn GameSettingsScreen::OnHwScaleChange(UI::EventParams &e) {
+	System_RecreateActivity();
 	return UI::EVENT_DONE;
 }
 
@@ -1418,7 +1443,7 @@ void GameSettingsScreen::dialogFinished(const Screen *dialog, DialogResult resul
 }
 
 void GameSettingsScreen::RecreateViews() {
-	oldSettingInfo_ = settingInfo_->GetText();
+	oldSettingInfo_ = settingInfo_ ? settingInfo_->GetText() : "N/A";
 	UIScreen::RecreateViews();
 }
 
@@ -2038,7 +2063,7 @@ void HostnameSelectScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	progressView_->SetVisibility(UI::V_GONE);
 }
 
-void HostnameSelectScreen::SendEditKey(int keyCode, int flags) {
+void HostnameSelectScreen::SendEditKey(InputKeyCode keyCode, int flags) {
 	auto oldView = UI::GetFocusedView();
 	UI::SetFocusedView(addrView_);
 	KeyInput fakeKey{ DEVICE_ID_KEYBOARD, keyCode, KEY_DOWN | flags };
@@ -2049,13 +2074,13 @@ void HostnameSelectScreen::SendEditKey(int keyCode, int flags) {
 UI::EventReturn HostnameSelectScreen::OnNumberClick(UI::EventParams &e) {
 	std::string text = e.v ? e.v->Tag() : "";
 	if (text.length() == 1 && text[0] >= '0' && text[0] <= '9') {
-		SendEditKey(text[0], KEY_CHAR);
+		SendEditKey((InputKeyCode)text[0], KEY_CHAR);  // ASCII for digits match keycodes.
 	}
 	return UI::EVENT_DONE;
 }
 
 UI::EventReturn HostnameSelectScreen::OnPointClick(UI::EventParams &e) {
-	SendEditKey('.', KEY_CHAR);
+	SendEditKey(NKCODE_PERIOD, KEY_CHAR);
 	return UI::EVENT_DONE;
 }
 

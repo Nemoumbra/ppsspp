@@ -75,12 +75,7 @@ DrawEngineVulkan::DrawEngineVulkan(Draw::DrawContext *draw)
 	decOptions_.alignOutputToWord = true;
 #endif
 
-	// Allocate nicely aligned memory. Maybe graphics drivers will appreciate it.
-	// All this is a LOT of memory, need to see if we can cut down somehow.
-	decoded = (u8 *)AllocateMemoryPages(DECODED_VERTEX_BUFFER_SIZE, MEM_PROT_READ | MEM_PROT_WRITE);
-	decIndex = (u16 *)AllocateMemoryPages(DECODED_INDEX_BUFFER_SIZE, MEM_PROT_READ | MEM_PROT_WRITE);
-
-	indexGen.Setup(decIndex);
+	indexGen.Setup(decIndex_);
 }
 
 void DrawEngineVulkan::InitDeviceObjects() {
@@ -214,9 +209,6 @@ void DrawEngineVulkan::InitDeviceObjects() {
 }
 
 DrawEngineVulkan::~DrawEngineVulkan() {
-	FreeMemoryPages(decoded, DECODED_VERTEX_BUFFER_SIZE);
-	FreeMemoryPages(decIndex, DECODED_INDEX_BUFFER_SIZE);
-
 	DestroyDeviceObjects();
 }
 
@@ -360,7 +352,7 @@ void DrawEngineVulkan::EndFrame() {
 }
 
 void DrawEngineVulkan::DecodeVertsToPushBuffer(VulkanPushBuffer *push, uint32_t *bindOffset, VkBuffer *vkbuf) {
-	u8 *dest = decoded;
+	u8 *dest = decoded_;
 
 	// Figure out how much pushbuffer space we need to allocate.
 	if (push) {
@@ -371,7 +363,7 @@ void DrawEngineVulkan::DecodeVertsToPushBuffer(VulkanPushBuffer *push, uint32_t 
 }
 
 void DrawEngineVulkan::DecodeVertsToPushPool(VulkanPushPool *push, uint32_t *bindOffset, VkBuffer *vkbuf) {
-	u8 *dest = decoded;
+	u8 *dest = decoded_;
 
 	// Figure out how much pushbuffer space we need to allocate.
 	if (push) {
@@ -560,7 +552,7 @@ void DrawEngineVulkan::Invalidate(InvalidationCallbackFlags flags) {
 	}
 }
 
-// The inline wrapper in the header checks for numDrawCalls == 0
+// The inline wrapper in the header checks for numDrawCalls_ == 0
 void DrawEngineVulkan::DoFlush() {
 	VulkanRenderManager *renderManager = (VulkanRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 
@@ -693,7 +685,7 @@ void DrawEngineVulkan::DoFlush() {
 					if (useElements) {
 						u32 size = sizeof(uint16_t) * indexGen.VertexCount();
 						void *dest = vertexCache_->Allocate(size, 4, &vai->ib, &vai->ibOffset);
-						memcpy(dest, decIndex, size);
+						memcpy(dest, decIndex_, size);
 					} else {
 						vai->ib = VK_NULL_HANDLE;
 						vai->ibOffset = 0;
@@ -750,7 +742,7 @@ void DrawEngineVulkan::DoFlush() {
 				// If software skinning, we've already predecoded into "decoded". So push that content.
 				VkDeviceSize size = decodedVerts_ * dec_->GetDecVtxFmt().stride;
 				u8 *dest = (u8 *)pushVertex_->Allocate(size, 4, &vbuf, &vbOffset);
-				memcpy(dest, decoded, size);
+				memcpy(dest, decoded_, size);
 			} else {
 				// Decode directly into the pushbuffer
 				DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
@@ -783,7 +775,7 @@ void DrawEngineVulkan::DoFlush() {
 			textureCache_->ApplyTexture();
 			textureCache_->GetVulkanHandles(imageView, sampler);
 			if (imageView == VK_NULL_HANDLE)
-				imageView = (VkImageView)draw_->GetNativeObject(gstate_c.arrayTexture ? Draw::NativeObject::NULL_IMAGEVIEW_ARRAY : Draw::NativeObject::NULL_IMAGEVIEW);
+				imageView = (VkImageView)draw_->GetNativeObject(gstate_c.textureIsArray ? Draw::NativeObject::NULL_IMAGEVIEW_ARRAY : Draw::NativeObject::NULL_IMAGEVIEW);
 			if (sampler == VK_NULL_HANDLE)
 				sampler = nullSampler_;
 		}
@@ -836,9 +828,9 @@ void DrawEngineVulkan::DoFlush() {
 		};
 		if (useElements) {
 			if (!ibuf) {
-				ibOffset = (uint32_t)pushIndex_->Push(decIndex, sizeof(uint16_t) * indexGen.VertexCount(), 4, &ibuf);
+				ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * indexGen.VertexCount(), 4, &ibuf);
 			}
-			renderManager->DrawIndexed(ds, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1, VK_INDEX_TYPE_UINT16);
+			renderManager->DrawIndexed(ds, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
 			renderManager->Draw(ds, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
@@ -849,7 +841,7 @@ void DrawEngineVulkan::DoFlush() {
 			lastVType_ |= (1 << 26);
 			dec_ = GetVertexDecoder(lastVType_);
 		}
-		DecodeVerts(decoded);
+		DecodeVerts(decoded_);
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && (hasColor || gstate.getMaterialAmbientA() == 255);
@@ -863,12 +855,12 @@ void DrawEngineVulkan::DoFlush() {
 		if (prim == GE_PRIM_TRIANGLE_STRIP)
 			prim = GE_PRIM_TRIANGLES;
 
-		u16 *inds = decIndex;
+		u16 *inds = decIndex_;
 		SoftwareTransformResult result{};
 		SoftwareTransformParams params{};
-		params.decoded = decoded;
-		params.transformed = transformed;
-		params.transformedExpanded = transformedExpanded;
+		params.decoded = decoded_;
+		params.transformed = transformed_;
+		params.transformedExpanded = transformedExpanded_;
 		params.fbman = framebufferManager_;
 		params.texCache = textureCache_;
 		// In Vulkan, we have to force drawing of primitives if !framebufferManager_->UseBufferedRendering() because Vulkan clears
@@ -918,7 +910,7 @@ void DrawEngineVulkan::DoFlush() {
 				textureCache_->ApplyTexture();
 				textureCache_->GetVulkanHandles(imageView, sampler);
 				if (imageView == VK_NULL_HANDLE)
-					imageView = (VkImageView)draw_->GetNativeObject(gstate_c.arrayTexture ? Draw::NativeObject::NULL_IMAGEVIEW_ARRAY : Draw::NativeObject::NULL_IMAGEVIEW);
+					imageView = (VkImageView)draw_->GetNativeObject(gstate_c.textureIsArray ? Draw::NativeObject::NULL_IMAGEVIEW_ARRAY : Draw::NativeObject::NULL_IMAGEVIEW);
 				if (sampler == VK_NULL_HANDLE)
 					sampler = nullSampler_;
 			}
@@ -937,7 +929,7 @@ void DrawEngineVulkan::DoFlush() {
 				if (!pipeline || !pipeline->pipeline) {
 					// Already logged, let's bail out.
 					decodedVerts_ = 0;
-					numDrawCalls = 0;
+					numDrawCalls_ = 0;
 					decodeCounter_ = 0;
 					decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 					return;
@@ -976,7 +968,7 @@ void DrawEngineVulkan::DoFlush() {
 				VkBuffer vbuf, ibuf;
 				vbOffset = (uint32_t)pushVertex_->Push(result.drawBuffer, maxIndex * sizeof(TransformedVertex), 4, &vbuf);
 				ibOffset = (uint32_t)pushIndex_->Push(inds, sizeof(short) * result.drawNumTrans, 4, &ibuf);
-				renderManager->DrawIndexed(ds, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1, VK_INDEX_TYPE_UINT16);
+				renderManager->DrawIndexed(ds, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 			} else {
 				VkBuffer vbuf;
 				vbOffset = (uint32_t)pushVertex_->Push(result.drawBuffer, result.drawNumTrans * sizeof(TransformedVertex), 4, &vbuf);
@@ -1011,12 +1003,12 @@ void DrawEngineVulkan::DoFlush() {
 	}
 
 	gpuStats.numFlushes++;
-	gpuStats.numDrawCalls += numDrawCalls;
+	gpuStats.numDrawCalls += numDrawCalls_;
 	gpuStats.numVertsSubmitted += vertexCountInDrawCalls_;
 
 	indexGen.Reset();
 	decodedVerts_ = 0;
-	numDrawCalls = 0;
+	numDrawCalls_ = 0;
 	vertexCountInDrawCalls_ = 0;
 	decodeCounter_ = 0;
 	dcid_ = 0;

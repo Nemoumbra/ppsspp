@@ -16,8 +16,9 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #pragma once
-#include <cmath>
 
+#include <cmath>
+#include <string>
 #include "Common/CommonTypes.h"
 #include "Core/MIPS/MIPS.h"
 
@@ -66,6 +67,10 @@ extern float vfpu_exp2(float);
 extern float vfpu_rexp2(float);
 extern float vfpu_log2(float);
 extern float vfpu_rcp(float);
+
+extern void vrnd_init_default(uint32_t *rcx);
+extern void vrnd_init(uint32_t seed, uint32_t *rcx);
+extern uint32_t vrnd_generate(uint32_t *rcx);
 
 inline uint32_t get_uexp(uint32_t x) {
 	return (x >> 23) & 0xFF;
@@ -216,8 +221,8 @@ VectorSize MatrixVectorSize(MatrixSize sz);
 int GetNumVectorElements(VectorSize sz);
 int GetMatrixSideSafe(MatrixSize sz);
 int GetMatrixSide(MatrixSize sz);
-const char *GetVectorNotation(int reg, VectorSize size);
-const char *GetMatrixNotation(int reg, MatrixSize size);
+std::string GetVectorNotation(int reg, VectorSize size);
+std::string GetMatrixNotation(int reg, MatrixSize size);
 inline bool IsMatrixTransposed(int matrixReg) {
 	return (matrixReg >> 5) & 1;
 }

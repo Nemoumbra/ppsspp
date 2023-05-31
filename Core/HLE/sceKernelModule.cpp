@@ -884,7 +884,7 @@ void PSPModule::Cleanup() {
 	}
 }
 
-static void __SaveDecryptedEbootToStorageMedia(const u8 *decryptedEbootDataPtr, const u32 length) {
+static void SaveDecryptedEbootToStorageMedia(const u8 *decryptedEbootDataPtr, const u32 length, const char *name) {
 	if (!decryptedEbootDataPtr) {
 		ERROR_LOG(SCEMODULE, "Error saving decrypted EBOOT.BIN: invalid pointer");
 		return;
@@ -895,7 +895,7 @@ static void __SaveDecryptedEbootToStorageMedia(const u8 *decryptedEbootDataPtr, 
 		return;
 	}
 
-	const std::string filenameToDumpTo = g_paramSFO.GetDiscID() + ".BIN";
+	const std::string filenameToDumpTo = StringFromFormat("%s_%s.BIN", g_paramSFO.GetDiscID().c_str(), name);
 	const Path dumpDirectory = GetSysDirectory(DIRECTORY_DUMP);
 	const Path fullPath = dumpDirectory / filenameToDumpTo;
 
@@ -1264,9 +1264,10 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 
 			// If we've made it this far, it should be safe to dump.
 			if (g_Config.bDumpDecryptedEboot) {
-				INFO_LOG(SCEMODULE, "Dumping decrypted EBOOT.BIN to file.");
-				const u32 dumpLength = ret;
-				__SaveDecryptedEbootToStorageMedia(ptr, dumpLength);
+				// Copy the name to ensure it's null terminated.
+				char name[32]{};
+				strncpy(name, head->modname, ARRAY_SIZE(head->modname));
+				SaveDecryptedEbootToStorageMedia(ptr, (u32)elfSize, name);
 			}
 		}
 	}
@@ -1411,6 +1412,10 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 			// Note: scan end is inclusive.
 			u32 end = start + reader.GetSectionSize(id) - 4;
 			u32 len = end + 4 - start;
+			if (len == 0) {
+				// Seen in WWE: Smackdown vs Raw 2009. See #17435.
+				continue;
+			}
 			if (!Memory::IsValidRange(start, len)) {
 				ERROR_LOG(LOADER, "Bad section %08x (len %08x) of section %d", start, len, id);
 				continue;
@@ -2612,7 +2617,7 @@ static SceUID sceKernelLoadModuleBufferUsbWlan(u32 size, u32 bufPtr, u32 flags, 
 
 static u32 sceKernelQueryModuleInfo(u32 uid, u32 infoAddr)
 {
-	INFO_LOG(SCEMODULE, "sceKernelQueryModuleInfo(%i, %08x)", uid, infoAddr);
+	DEBUG_LOG(SCEMODULE, "sceKernelQueryModuleInfo(%i, %08x)", uid, infoAddr);
 	u32 error;
 	PSPModule *module = kernelObjects.Get<PSPModule>(uid, error);
 	if (!module)

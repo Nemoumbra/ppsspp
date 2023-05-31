@@ -157,7 +157,7 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 				// fboTexNeedsBind_ won't be set if we can read directly from the target.
 				if (fboTexBindState == FBO_TEX_COPY_BIND_TEX) {
 					// Note that this is positions, not UVs, that we need the copy from.
-					framebufferManager_->BindFramebufferAsColorTexture(1, framebufferManager_->GetCurrentRenderVFB(), BINDFBCOLOR_MAY_COPY, 0);
+					framebufferManager_->BindFramebufferAsColorTexture(1, framebufferManager_->GetCurrentRenderVFB(), BINDFBCOLOR_MAY_COPY | BINDFBCOLOR_UNCACHED, 0);
 					// If we are rendering at a higher resolution, linear is probably best for the dest color.
 					renderManager->SetTextureSampler(1, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_LINEAR, GL_LINEAR, 0.0f);
 					fboTexBound_ = true;
@@ -247,8 +247,9 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 
 		if (gstate.isModeClear()) {
 			// Depth Test
-			renderManager->SetStencilFunc(gstate.isClearModeAlphaMask(), GL_ALWAYS, 0xFF, 0xFF);
-			renderManager->SetStencilOp(stencilState.writeMask, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+			renderManager->SetStencil(
+				gstate.isClearModeAlphaMask(), GL_ALWAYS, 0xFF, 0xFF,
+				stencilState.writeMask, GL_REPLACE, GL_REPLACE, GL_REPLACE);
 			renderManager->SetDepth(true, gstate.isClearModeDepthMask() ? true : false, GL_ALWAYS);
 		} else {
 			// Depth Test
@@ -259,8 +260,9 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 
 			// Stencil Test
 			if (stencilState.enabled) {
-				renderManager->SetStencilFunc(stencilState.enabled, compareOps[stencilState.testFunc], stencilState.testRef, stencilState.testMask);
-				renderManager->SetStencilOp(stencilState.writeMask, stencilOps[stencilState.sFail], stencilOps[stencilState.zFail], stencilOps[stencilState.zPass]);
+				renderManager->SetStencil(
+					stencilState.enabled, compareOps[stencilState.testFunc], stencilState.testRef, stencilState.testMask,
+					stencilState.writeMask, stencilOps[stencilState.sFail], stencilOps[stencilState.zFail], stencilOps[stencilState.zPass]);
 
 				// Nasty special case for Spongebob and similar where it tries to write zeros to alpha/stencil during
 				// depth-fail. We can't write to alpha then because the pixel is killed. However, we can invert the depth
@@ -268,8 +270,7 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 				if (SpongebobDepthInverseConditions(stencilState)) {
 					renderManager->SetBlendAndMask(0x8, true, GL_ZERO, GL_ZERO, GL_ZERO, GL_ZERO, GL_FUNC_ADD, GL_FUNC_ADD);
 					renderManager->SetDepth(true, false, GL_LESS);
-					renderManager->SetStencilFunc(true, GL_ALWAYS, 0xFF, 0xFF);
-					renderManager->SetStencilOp(0xFF, GL_ZERO, GL_KEEP, GL_ZERO);
+					renderManager->SetStencil(true, GL_ALWAYS, 0xFF, 0xFF, 0xFF, GL_ZERO, GL_KEEP, GL_ZERO);
 
 					dirtyRequiresRecheck_ |= DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE;
 					gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE);
@@ -301,7 +302,8 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 
 void DrawEngineGLES::ApplyDrawStateLate(bool setStencilValue, int stencilValue) {
 	if (setStencilValue) {
-		render_->SetStencilFunc(GL_TRUE, GL_ALWAYS, stencilValue, 255);
+		render_->SetStencil(true, GL_ALWAYS, stencilValue, 255, 0xFF, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+		gstate_c.Dirty(DIRTY_DEPTHSTENCIL_STATE);  // For the next time.
 	}
 
 	// At this point, we know if the vertices are full alpha or not.

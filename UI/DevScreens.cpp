@@ -100,8 +100,10 @@ void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	items->Add(new Choice(sy->T("Developer Tools")))->OnClick.Handle(this, &DevMenuScreen::OnDeveloperTools);
 	items->Add(new Choice(dev->T("Jit Compare")))->OnClick.Handle(this, &DevMenuScreen::OnJitCompare);
 	items->Add(new Choice(dev->T("Shader Viewer")))->OnClick.Handle(this, &DevMenuScreen::OnShaderView);
-	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN) {
-		items->Add(new CheckBox(&g_Config.bShowAllocatorDebug, dev->T("Allocator Viewer")));
+	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) {
+		items->Add(new CheckBox(&g_Config.bShowAllocatorDebug, dev->T("GPU Allocator Viewer")));
+	}
+	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) {
 		items->Add(new CheckBox(&g_Config.bShowGpuProfile, dev->T("GPU Profile")));
 	}
 	items->Add(new Choice(dev->T("Toggle Freeze")))->OnClick.Handle(this, &DevMenuScreen::OnFreezeFrame);
@@ -784,20 +786,29 @@ void SystemInfoScreen::CreateViews() {
 			}
 		}
 	} else if (GetGPUBackend() == GPUBackend::VULKAN) {
+#if !PPSSPP_PLATFORM(UWP)
+		// Vulkan specific code here, can't be bothered to abstract.
+		// OK because of above check.
+
 		tabHolder->AddTab(si->T("Vulkan Features"), gpuExtensionsScroll);
+		VulkanContext *vk = (VulkanContext *)draw->GetNativeObject(Draw::NativeObject::CONTEXT);
 
 		gpuExtensions->Add(new ItemHeader(si->T("Vulkan Features")));
 		std::vector<std::string> features = draw->GetFeatureList();
 		for (auto &feature : features) {
 			gpuExtensions->Add(new TextView(feature, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
-		
-#if !PPSSPP_PLATFORM(UWP)
 
-		// Vulkan specific code here, can't be bothered to abstract.
-		// OK because of above check.
+		gpuExtensions->Add(new ItemHeader(si->T("Present Modes")));
+		for (auto mode : vk->GetAvailablePresentModes()) {
+			std::string str = VulkanPresentModeToString(mode);
+			if (mode == vk->GetPresentMode()) {
+				str += std::string(" (") + di->T("Current") + ")";
+			}
+			gpuExtensions->Add(new TextView(VulkanPresentModeToString(mode), new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+		}
+
 		gpuExtensions->Add(new ItemHeader(si->T("Display Color Formats")));
-		VulkanContext *vk = (VulkanContext *)draw->GetNativeObject(Draw::NativeObject::CONTEXT);
 		if (vk) {
 			for (auto &format : vk->SurfaceFormats()) {
 				std::string line = StringFromFormat("%s : %s", VulkanFormatToString(format.format), VulkanColorSpaceToString(format.colorSpace));
@@ -1132,7 +1143,7 @@ void JitCompareScreen::OnRandomBlock(int flag) {
 				MIPSOpcode opcode = Memory::Read_Instruction(addr);
 				if (MIPSGetInfo(opcode) & flag) {
 					char temp[256];
-					MIPSDisAsm(opcode, addr, temp);
+					MIPSDisAsm(opcode, addr, temp, sizeof(temp));
 					// INFO_LOG(HLE, "Stopping at random instruction: %08x %s", addr, temp);
 					anyWanted = true;
 					break;

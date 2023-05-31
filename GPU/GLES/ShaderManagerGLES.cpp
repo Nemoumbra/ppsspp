@@ -76,12 +76,14 @@ LinkedShader::LinkedShader(GLRenderManager *render, VShaderID VSID, Shader *vs, 
 		: render_(render), useHWTransform_(useHWTransform) {
 	PROFILE_THIS_SCOPE("shaderlink");
 
+	_assert_(vs);
+	_assert_(fs);
+
 	vs_ = vs;
 
 	std::vector<GLRShader *> shaders;
 	shaders.push_back(vs->shader);
 	shaders.push_back(fs->shader);
-
 
 	std::vector<GLRProgram::Semantic> semantics;
 	semantics.reserve(7);
@@ -152,8 +154,7 @@ LinkedShader::LinkedShader(GLRenderManager *render, VShaderID VSID, Shader *vs, 
 	queries.push_back({ &u_uvscaleoffset, "u_uvscaleoffset" });
 	queries.push_back({ &u_texclamp, "u_texclamp" });
 	queries.push_back({ &u_texclampoff, "u_texclampoff" });
-	queries.push_back({ &u_texNoAlpha, "u_texNoAlpha" });
-	queries.push_back({ &u_texMul, "u_texMul" });
+	queries.push_back({ &u_texNoAlphaMul, "u_texNoAlphaMul" });
 	queries.push_back({ &u_lightControl, "u_lightControl" });
 
 	for (int i = 0; i < 4; i++) {
@@ -464,8 +465,8 @@ void LinkedShader::UpdateUniforms(const ShaderID &vsid, bool useBufferedRenderin
 		if (gstate_c.textureFullAlpha && gstate.getTextureFunction() != GE_TEXFUNC_REPLACE) {
 			doTextureAlpha = false;
 		}
-		render_->SetUniformF1(&u_texNoAlpha, doTextureAlpha ? 0.0f : 1.0f);
-		render_->SetUniformF1(&u_texMul, gstate.isColorDoublingEnabled() ? 2.0f : 1.0f);
+		float noAlphaMul[2] = { doTextureAlpha ? 0.0f : 1.0f, gstate.isColorDoublingEnabled() ? 2.0f : 1.0f };
+		render_->SetUniformF(&u_texNoAlphaMul, 2, noAlphaMul);
 	}
 	if (dirty & DIRTY_ALPHACOLORREF) {
 		if (shaderLanguage.bitwiseOps) {
@@ -486,26 +487,21 @@ void LinkedShader::UpdateUniforms(const ShaderID &vsid, bool useBufferedRenderin
 			SetVRCompat(VR_COMPAT_FOG_COLOR, gstate.fogcolor);
 		}
 	}
-	if (dirty & DIRTY_FOGCOEFENABLE) {
-		if (gstate.isFogEnabled() && !gstate.isModeThrough()) {
-			float fogcoef[2] = {
-				getFloat24(gstate.fog1),
-				getFloat24(gstate.fog2),
-			};
-			// The PSP just ignores infnan here (ignoring IEEE), so take it down to a valid float.
-			// Workaround for https://github.com/hrydgard/ppsspp/issues/5384#issuecomment-38365988
-			if (my_isnanorinf(fogcoef[0])) {
-				// Not really sure what a sensible value might be, but let's try 64k.
-				fogcoef[0] = std::signbit(fogcoef[0]) ? -65535.0f : 65535.0f;
-			}
-			if (my_isnanorinf(fogcoef[1])) {
-				fogcoef[1] = std::signbit(fogcoef[1]) ? -65535.0f : 65535.0f;
-			}
-			render_->SetUniformF(&u_fogcoef, 2, fogcoef);
-		} else {
-			float fogcoef[2] = { -65536.0f, -65536.0f };
-			render_->SetUniformF(&u_fogcoef, 2, fogcoef);
+	if (dirty & DIRTY_FOGCOEF) {
+		float fogcoef[2] = {
+			getFloat24(gstate.fog1),
+			getFloat24(gstate.fog2),
+		};
+		// The PSP just ignores infnan here (ignoring IEEE), so take it down to a valid float.
+		// Workaround for https://github.com/hrydgard/ppsspp/issues/5384#issuecomment-38365988
+		if (my_isnanorinf(fogcoef[0])) {
+			// Not really sure what a sensible value might be, but let's try 64k.
+			fogcoef[0] = std::signbit(fogcoef[0]) ? -65535.0f : 65535.0f;
 		}
+		if (my_isnanorinf(fogcoef[1])) {
+			fogcoef[1] = std::signbit(fogcoef[1]) ? -65535.0f : 65535.0f;
+		}
+		render_->SetUniformF(&u_fogcoef, 2, fogcoef);
 	}
 	if (dirty & DIRTY_UVSCALEOFFSET) {
 		const float invW = 1.0f / (float)gstate_c.curTextureWidth;
@@ -872,7 +868,13 @@ LinkedShader *ShaderManagerGLES::ApplyFragmentShader(VShaderID VSID, Shader *vs,
 	shaderSwitchDirtyUniforms_ = 0;
 
 	if (ls == nullptr) {
+		_dbg_assert_(FSID.Bit(FS_BIT_LMODE) == VSID.Bit(VS_BIT_LMODE));
 		_dbg_assert_(FSID.Bit(FS_BIT_FLATSHADE) == VSID.Bit(VS_BIT_FLATSHADE));
+
+		if (vs == nullptr || fs == nullptr) {
+			// Can't draw. This shouldn't really happen.
+			return nullptr;
+		}
 
 		// Check if we can link these.
 		ls = new LinkedShader(render_, VSID, vs, FSID, fs, vs->UseHWTransform());
@@ -963,7 +965,7 @@ enum class CacheDetectFlags {
 };
 
 #define CACHE_HEADER_MAGIC 0x83277592
-#define CACHE_VERSION 27
+#define CACHE_VERSION 31
 
 struct CacheHeader {
 	uint32_t magic;

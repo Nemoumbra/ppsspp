@@ -65,7 +65,7 @@ static float MapAxisValue(float v) {
 	const float sensitivity = g_Config.fAnalogSensitivity;
 	const float sign = v >= 0.0f ? 1.0f : -1.0f;
 
-	return sign * Clamp(invDeadzone + (abs(v) - deadzone) / (1.0f - deadzone) * (sensitivity - invDeadzone), 0.0f, 1.0f);
+	return sign * Clamp(invDeadzone + (fabsf(v) - deadzone) / (1.0f - deadzone) * (sensitivity - invDeadzone), 0.0f, 1.0f);
 }
 
 void ConvertAnalogStick(float x, float y, float *outX, float *outY) {
@@ -136,11 +136,33 @@ void ControlMapper::SetPSPAxis(int device, int stick, char axis, float value) {
 
 	if (!ignore) {
 		history_[stick][axisId] = value;
-		float x, y;
-		ConvertAnalogStick(history_[stick][0], history_[stick][1], &x, &y);
-		converted_[stick][0] = x;
-		converted_[stick][1] = y;
-		setPSPAnalog_(stick, x, y);
+
+		UpdateAnalogOutput(stick);
+	}
+}
+
+void ControlMapper::UpdateAnalogOutput(int stick) {
+	float x, y;
+	ConvertAnalogStick(history_[stick][0], history_[stick][1], &x, &y);
+	if (virtKeyOn_[VIRTKEY_ANALOG_LIGHTLY - VIRTKEY_FIRST]) {
+		x *= g_Config.fAnalogLimiterDeadzone;
+		y *= g_Config.fAnalogLimiterDeadzone;
+	}
+	converted_[stick][0] = x;
+	converted_[stick][1] = y;
+	setPSPAnalog_(stick, x, y);
+}
+
+void ControlMapper::ForceReleaseVKey(int vkey) {
+	std::vector<KeyMap::MultiInputMapping> multiMappings;
+	if (KeyMap::InputMappingsFromPspButton(vkey, &multiMappings, true)) {
+		for (const auto &entry : multiMappings) {
+			for (const auto &mapping : entry.mappings) {
+				curInput_[mapping] = 0.0f;
+				// Different logic for signed axes?
+				UpdatePSPState(mapping);
+			}
+		}
 	}
 }
 
@@ -193,6 +215,37 @@ float ControlMapper::MapAxisValue(float value, int vkId, const InputMapping &map
 	}
 }
 
+static bool IsSwappableVKey(uint32_t vkey) {
+	switch (vkey) {
+	case CTRL_UP:
+	case CTRL_LEFT:
+	case CTRL_DOWN:
+	case CTRL_RIGHT:
+	case VIRTKEY_AXIS_X_MIN:
+	case VIRTKEY_AXIS_X_MAX:
+	case VIRTKEY_AXIS_Y_MIN:
+	case VIRTKEY_AXIS_Y_MAX:
+		return true;
+	default:
+		return false;
+	}
+}
+
+void ControlMapper::SwapMappingIfEnabled(uint32_t *vkey) {
+	if (swapAxes_) {
+		switch (*vkey) {
+		case CTRL_UP: *vkey = VIRTKEY_AXIS_Y_MAX; break;
+		case VIRTKEY_AXIS_Y_MAX: *vkey = CTRL_UP; break;
+		case CTRL_DOWN: *vkey = VIRTKEY_AXIS_Y_MIN; break;
+		case VIRTKEY_AXIS_Y_MIN: *vkey = CTRL_DOWN; break;
+		case CTRL_LEFT: *vkey = VIRTKEY_AXIS_X_MIN; break;
+		case VIRTKEY_AXIS_X_MIN: *vkey = CTRL_LEFT; break;
+		case CTRL_RIGHT: *vkey = VIRTKEY_AXIS_X_MAX; break;
+		case VIRTKEY_AXIS_X_MAX: *vkey = CTRL_RIGHT; break;
+		}
+	}
+}
+
 // Can only be called from Key or Axis.
 bool ControlMapper::UpdatePSPState(const InputMapping &changedMapping) {
 	// Instead of taking an input key and finding what it outputs, we loop through the OUTPUTS and
@@ -220,6 +273,8 @@ bool ControlMapper::UpdatePSPState(const InputMapping &changedMapping) {
 		for (int i = 0; i < rotations; i++) {
 			mappingBit = RotatePSPKeyCode(mappingBit);
 		}
+
+		SwapMappingIfEnabled(&mappingBit);
 
 		std::vector<MultiInputMapping> inputMappings;
 		if (!KeyMap::InputMappingsFromPspButton(mappingBit, &inputMappings, false))
@@ -249,12 +304,17 @@ bool ControlMapper::UpdatePSPState(const InputMapping &changedMapping) {
 	updatePSPButtons_(buttonMask & changedButtonMask, (~buttonMask) & changedButtonMask);
 
 	bool keyInputUsed = changedButtonMask != 0;
+	bool updateAnalogSticks = false;
 
 	// OK, handle all the virtual keys next. For these we need to do deltas here and send events.
 	for (int i = 0; i < VIRTKEY_COUNT; i++) {
 		int vkId = i + VIRTKEY_FIRST;
 		std::vector<MultiInputMapping> inputMappings;
-		if (!KeyMap::InputMappingsFromPspButton(vkId, &inputMappings, false))
+
+		uint32_t idForMapping = vkId;
+		SwapMappingIfEnabled(&idForMapping);
+
+		if (!KeyMap::InputMappingsFromPspButton(idForMapping, &inputMappings, false))
 			continue;
 
 		// If a mapping could consist of a combo, we could trivially check it here.
@@ -274,7 +334,7 @@ bool ControlMapper::UpdatePSPState(const InputMapping &changedMapping) {
 				if (iter != curInput_.end()) {
 					if (mapping.IsAxis()) {
 						threshold = GetDeviceAxisThreshold(iter->first.deviceId);
-						product *= MapAxisValue(iter->second, vkId, mapping, changedMapping, &touchedByMapping);
+						product *= MapAxisValue(iter->second, idForMapping, mapping, changedMapping, &touchedByMapping);
 					} else {
 						product *= iter->second;
 					}
@@ -322,10 +382,26 @@ bool ControlMapper::UpdatePSPState(const InputMapping &changedMapping) {
 		if (!bPrevValue && bValue) {
 			// INFO_LOG(G3D, "vkeyon %s", KeyMap::GetVirtKeyName(vkId));
 			onVKey(vkId, true);
+			virtKeyOn_[vkId - VIRTKEY_FIRST] = true;
+
+			if (vkId == VIRTKEY_ANALOG_LIGHTLY) {
+				updateAnalogSticks = true;
+			}
 		} else if (bPrevValue && !bValue) {
 			// INFO_LOG(G3D, "vkeyoff %s", KeyMap::GetVirtKeyName(vkId));
 			onVKey(vkId, false);
+			virtKeyOn_[vkId - VIRTKEY_FIRST] = false;
+
+			if (vkId == VIRTKEY_ANALOG_LIGHTLY) {
+				updateAnalogSticks = true;
+			}
 		}
+	}
+
+	if (updateAnalogSticks) {
+		// If "lightly" (analog limiter) was toggled, we need to update both computed stick outputs.
+		UpdateAnalogOutput(0);
+		UpdateAnalogOutput(1);
 	}
 
 	return keyInputUsed;
@@ -358,6 +434,31 @@ bool ControlMapper::Key(const KeyInput &key, bool *pauseTrigger) {
 	}
 
 	return UpdatePSPState(mapping);
+}
+
+void ControlMapper::ToggleSwapAxes() {
+	swapAxes_ = !swapAxes_;
+
+	updatePSPButtons_(0, CTRL_LEFT | CTRL_RIGHT | CTRL_UP | CTRL_DOWN);
+
+	for (uint32_t vkey = VIRTKEY_FIRST; vkey < VIRTKEY_LAST; vkey++) {
+		if (IsSwappableVKey(vkey)) {
+			if (virtKeyOn_[vkey - VIRTKEY_FIRST]) {
+				onVKey_(vkey, false);
+				virtKeyOn_[vkey - VIRTKEY_FIRST] = false;
+			}
+			if (virtKeys_[vkey - VIRTKEY_FIRST] > 0.0f) {
+				onVKeyAnalog_(vkey, 0.0f);
+				virtKeys_[vkey - VIRTKEY_FIRST] = 0.0f;
+			}
+		}
+	}
+
+	history_[0][0] = 0.0f;
+	history_[0][1] = 0.0f;
+
+	UpdateAnalogOutput(0);
+	UpdateAnalogOutput(1);
 }
 
 void ControlMapper::Axis(const AxisInput &axis) {
@@ -403,10 +504,12 @@ void ControlMapper::PSPKey(int deviceId, int pspKeyCode, int flags) {
 		if (flags & KEY_DOWN) {
 			virtKeys_[vk] = 1.0f;
 			onVKey(pspKeyCode, true);
+			onVKeyAnalog(deviceId, pspKeyCode, 1.0f);
 		}
 		if (flags & KEY_UP) {
 			virtKeys_[vk] = 0.0f;
 			onVKey(pspKeyCode, false);
+			onVKeyAnalog(deviceId, pspKeyCode, 0.0f);
 		}
 	} else {
 		// INFO_LOG(SYSTEM, "pspKey %d %d", pspKeyCode, flags);

@@ -102,13 +102,16 @@ if(ANDROID OR WIN32 OR (UNIX AND NOT ARM_NO_VULKAN))
 	set(VULKAN ON)
 endif()
 
+# Default to bundled SDL2 on macOS, system SDL2 elsewhere.
+if(APPLE AND NOT IOS)
+	set(DEFAULT_USE_SYSTEM_LIBSDL2 OFF)
+else()
+	set(DEFAULT_USE_SYSTEM_LIBSDL2 ON)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/Modules)
 if(NOT IOS)
 	list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/sdl)
-endif()
-
-if(MACOSX AND NOT USE_SYSTEM_LIBSDL2)
-	set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/SDL/macOS/SDL2.framework)
 endif()
 
 include(ccache)
@@ -161,7 +164,7 @@ option(USE_ARMIPS "Build with armips support in API/debugger" ON)
 option(USE_SYSTEM_SNAPPY "Dynamically link against system snappy" ${USE_SYSTEM_SNAPPY})
 option(USE_SYSTEM_FFMPEG "Dynamically link against system FFMPEG" ${USE_SYSTEM_FFMPEG})
 option(USE_SYSTEM_LIBZIP "Dynamically link against system libzip" ${USE_SYSTEM_LIBZIP})
-option(USE_SYSTEM_LIBSDL2 "Dynamically link against system SDL2" ON)
+option(USE_SYSTEM_LIBSDL2 "Dynamically link against system SDL2" ${DEFAULT_USE_SYSTEM_LIBSDL2})
 option(USE_SYSTEM_LIBPNG "Dynamically link against system libpng" ON)
 option(USE_SYSTEM_ZSTD "Dynamically link against system zstd" ${USE_SYSTEM_ZSTD})
 option(USE_SYSTEM_MINIUPNPC "Dynamically link against system miniUPnPc" ${USE_SYSTEM_MINIUPNPC})
@@ -241,9 +244,20 @@ if(USING_EGL)
 	set(OPENGL_LIBRARIES ${OPENGL_LIBRARIES} ${EGL_LIBRARIES})
 endif()
 
-if(NOT LIBRETRO AND NOT IOS)
+if(NOT LIBRETRO AND NOT IOS AND NOT MACOSX)
 	find_package(SDL2)
 endif()
+
+if(MACOSX AND NOT IOS)
+	if(USE_SYSTEM_LIBSDL2)
+		find_package(SDL2)
+	else()
+		find_library(SDL2Fwk SDL2 REQUIRED PATHS SDL/macOS)
+		message(STATUS "found SDL2Fwk=${SDL2Fwk}")
+		add_definitions(-DHAVE_SYSCTLBYNAME)
+	endif()
+endif()
+
 include(FindThreads)
 
 if(APPLE)
@@ -390,7 +404,7 @@ if(NOT MSVC)
 			add_definitions(-Wno-psabi)
 		endif()
 		add_definitions(-D_XOPEN_SOURCE=700)
-		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1)
+		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1 -D_BSD_SOURCE)
 		add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
 	elseif(ANDROID)
 		add_definitions(-fsigned-char)
@@ -552,6 +566,7 @@ add_library(Common STATIC
 	Common/Data/Collections/FixedSizeQueue.h
 	Common/Data/Collections/Hashmaps.h
 	Common/Data/Collections/TinySet.h
+	Common/Data/Collections/FastVec.h
 	Common/Data/Collections/ThreadSafeList.h
 	Common/Data/Color/RGBAUtil.cpp
 	Common/Data/Color/RGBAUtil.h
@@ -600,6 +615,8 @@ add_library(Common STATIC
 	Common/File/VFS/DirectoryReader.h
 	Common/File/AndroidStorage.h
 	Common/File/AndroidStorage.cpp
+	Common/File/AndroidContentURI.h
+	Common/File/AndroidContentURI.cpp
 	Common/File/DiskFree.h
 	Common/File/DiskFree.cpp
 	Common/File/Path.h
@@ -614,6 +631,8 @@ add_library(Common STATIC
 	Common/File/FileDescriptor.h
 	Common/GPU/DataFormat.h
 	Common/GPU/MiscTypes.h
+	Common/GPU/GPUBackendCommon.cpp
+	Common/GPU/GPUBackendCommon.h
 	Common/GPU/thin3d.cpp
 	Common/GPU/thin3d.h
 	Common/GPU/thin3d_create.h
@@ -635,6 +654,8 @@ add_library(Common STATIC
 	Common/GPU/OpenGL/GLFrameData.cpp
 	Common/GPU/OpenGL/GLFrameData.h
 	Common/GPU/OpenGL/thin3d_gl.cpp
+	Common/GPU/OpenGL/GLMemory.cpp
+	Common/GPU/OpenGL/GLMemory.h
 	Common/GPU/OpenGL/GLRenderManager.cpp
 	Common/GPU/OpenGL/GLRenderManager.h
 	Common/GPU/OpenGL/GLQueueRunner.cpp
@@ -1252,8 +1273,13 @@ elseif(WIN32)
 	else()
 		link_directories(dx9sdk/Lib/x86)
 	endif()
-elseif(TARGET SDL2::SDL2)
-	set(TargetBin PPSSPPSDL)
+elseif(LIBRETRO)
+else()
+	if(GOLD)
+		set(TargetBin PPSSPPGold)
+	else()
+		set(TargetBin PPSSPPSDL)
+	endif()
 	# Require SDL
 	add_definitions(-DSDL)
 	set(nativeExtra ${nativeExtra}
@@ -1267,18 +1293,39 @@ elseif(TARGET SDL2::SDL2)
 			SDL/SDLVulkanGraphicsContext.cpp
 		)
 	endif()
-	set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
 	if(APPLE)
-		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm SDL/SDLCocoaMetalLayer.h SDL/SDLCocoaMetalLayer.mm SDL/CocoaBarItems.mm SDL/CocoaBarItems.h UI/DarwinFileSystemServices.mm UI/DarwinFileSystemServices.h Common/Battery/AppleBatteryClient.m)
+		set(nativeExtra ${nativeExtra} 
+		SDL/SDLMain.h 
+		SDL/SDLMain.mm 
+		SDL/SDLCocoaMetalLayer.h 
+		SDL/SDLCocoaMetalLayer.mm 
+		SDL/CocoaBarItems.mm
+		SDL/CocoaBarItems.h
+		SDL/PPSSPPAboutViewController.m
+		SDL/PPSSPPAboutViewController.h
+		UI/DarwinFileSystemServices.mm 
+		UI/DarwinFileSystemServices.h 
+		Common/Battery/AppleBatteryClient.m 
+		UI/PSPNSApplicationDelegate.mm 
+		UI/PSPNSApplicationDelegate.h)
+
         set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(UI/PSPNSApplicationDelegate.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(SDL/CocoaBarItems.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(SDL/PPSSPPAboutViewController.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
+
+		if(USE_SYSTEM_LIBSDL2)
+			set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
+		else()
+			set(nativeExtraLibs ${nativeExtraLibs} ${SDL2Fwk})
+		endif()
 	elseif(USING_EGL)
-		set(nativeExtraLibs ${nativeExtraLibs} pthread)
+		set(nativeExtraLibs ${nativeExtraLibs} pthread SDL2::SDL2)
+	else()
+		set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
 	endif()
-elseif(NOT LIBRETRO)
-	message(FATAL_ERROR "Could not find SDL2. Failing.")
 endif()
 
 if(WIN32)
@@ -2457,6 +2504,7 @@ if(UNITTEST)
 		unittest/TestIRPassSimplify.cpp
 		unittest/TestX64Emitter.cpp
 		unittest/TestVertexJit.cpp
+		unittest/TestVFS.cpp
 		unittest/TestRiscVEmitter.cpp
 		unittest/TestSoftwareGPUJit.cpp
 		unittest/TestThreadManager.cpp
@@ -2490,11 +2538,18 @@ endif()
 if(TargetBin)
 	if(APPLE)
 		if(NOT IOS)
-			set(ICON_PATH_ABS ${CMAKE_CURRENT_SOURCE_DIR}/icons/ppsspp.icns)
-			set(MACOSX_BUNDLE_ICON_FILE ppsspp.icns)
+			if(GOLD)
+				set(ICON_PATH_ABS ${CMAKE_CURRENT_SOURCE_DIR}/icons/ppsspp_gold.icns)
+				set(MACOSX_BUNDLE_ICON_FILE ppsspp_gold.icns)
+				set(MACOSX_BUNDLE_BUNDLE_NAME "PPSSPP Gold")
+				set(MACOSX_BUNDLE_GUI_IDENTIFIER org.ppsspp.ppssppgold)
+			else()
+				set(ICON_PATH_ABS ${CMAKE_CURRENT_SOURCE_DIR}/icons/ppsspp.icns)
+				set(MACOSX_BUNDLE_ICON_FILE ppsspp.icns)
+				set(MACOSX_BUNDLE_BUNDLE_NAME "PPSSPP")
+				set(MACOSX_BUNDLE_GUI_IDENTIFIER org.ppsspp.ppsspp)
+			endif()
 			set_source_files_properties(${ICON_PATH_ABS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-			set(MACOSX_BUNDLE_BUNDLE_NAME PPSSPP)
-			set(MACOSX_BUNDLE_GUI_IDENTIFIER org.ppsspp.ppsspp)
 		endif()
 
 		# TODO: there must a native way to copy these.
@@ -2505,7 +2560,7 @@ if(TargetBin)
 		file(GLOB_RECURSE SHADER_FILES assets/shaders/*)
 		file(GLOB_RECURSE THEME_FILE assets/themes/*)
 		file(GLOB_RECURSE DEBUGGER_FILES assets/debugger/*)
-                file(GLOB_RECURSE VFPU_FILES assets/vfpu/*)
+		file(GLOB_RECURSE VFPU_FILES assets/vfpu/*)
 
 		if(NOT IOS)
 			set_source_files_properties(${BigFontAssets} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets")
@@ -2515,7 +2570,7 @@ if(TargetBin)
 			set_source_files_properties(${SHADER_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/shaders")
 			set_source_files_properties(${THEME_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/themes")
 			set_source_files_properties(${DEBUGGER_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/debugger")
-                        set_source_files_properties(${VFPU_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/vfpu")
+			set_source_files_properties(${VFPU_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/assets/vfpu")
 		endif()
 
 		if(IOS)
@@ -2523,11 +2578,11 @@ if(TargetBin)
 			file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/iOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/PPSSPP.app/Frameworks/")
 		else()
 			add_executable(${TargetBin} MACOSX_BUNDLE ${ICON_PATH_ABS} ${NativeAssets} ${BigFontAssets} ${SHADER_FILES} ${THEME_FILE} ${DEBUGGER_FILES} ${FLASH0_FILES} ${LANG_FILES} ${NativeAppSource})
-			file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/macOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/PPSSPPSDL.app/Contents/Frameworks/")
-			if(TARGET SDL2::SDL2 AND NOT USING_QT_UI)
-				add_custom_command(TARGET ${TargetBin} POST_BUILD COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/SDL/macbundle.sh" "${CMAKE_BINARY_DIR}/PPSSPPSDL.app")
-			elseif(USING_QT_UI)
+			file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/macOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/${TargetBin}.app/Contents/Frameworks/")
+			if(USING_QT_UI)
 				add_custom_command(TARGET ${TargetBin} POST_BUILD COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/Qt/macbundle.sh" "${CMAKE_BINARY_DIR}/PPSSPPQt.app")
+			elseif(NOT USE_SYSTEM_LIBSDL2)
+				add_custom_command(TARGET ${TargetBin} POST_BUILD COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/SDL/macbundle.sh" "${CMAKE_BINARY_DIR}/${TargetBin}.app" "${TargetBin}")
 			endif()
 		endif()
 	elseif(WIN32)
@@ -2590,6 +2645,18 @@ if(IOS AND NOT LIBRETRO)
 		XCODE_ATTRIBUTE_ENABLE_BITCODE NO
 		XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
 	)
+endif()
+
+if(MACOSX AND NOT IOS)
+	if(GOLD)
+		set_target_properties(${TargetBin} PROPERTIES
+			MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macOS/InfoGold.plist"
+		)
+	else()
+		set_target_properties(${TargetBin} PROPERTIES
+			MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macOS/Info.plist"
+		)
+	endif()
 endif()
 
 if(UNIX AND NOT ANDROID AND NOT APPLE)

@@ -43,6 +43,7 @@ NATIVE_FILES :=\
   $(SRC)/Common/GPU/OpenGL/GLSLProgram.cpp \
   $(SRC)/Common/GPU/OpenGL/GLFeatures.cpp \
   $(SRC)/Common/GPU/OpenGL/GLFrameData.cpp \
+  $(SRC)/Common/GPU/OpenGL/GLMemory.cpp \
   $(SRC)/Common/GPU/OpenGL/GLRenderManager.cpp \
   $(SRC)/Common/GPU/OpenGL/GLQueueRunner.cpp \
   $(SRC)/Common/GPU/OpenGL/DataFormatGL.cpp
@@ -177,6 +178,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Data/Text/Parsers.cpp \
   $(SRC)/Common/Data/Text/WrapText.cpp \
   $(SRC)/Common/File/AndroidStorage.cpp \
+  $(SRC)/Common/File/AndroidContentURI.cpp \
   $(SRC)/Common/File/VFS/VFS.cpp \
   $(SRC)/Common/File/VFS/ZipFileReader.cpp \
   $(SRC)/Common/File/VFS/DirectoryReader.cpp \
@@ -187,6 +189,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/File/DirListing.cpp \
   $(SRC)/Common/File/FileDescriptor.cpp \
   $(SRC)/Common/GPU/thin3d.cpp \
+  $(SRC)/Common/GPU/GPUBackendCommon.cpp \
   $(SRC)/Common/GPU/Shader.cpp \
   $(SRC)/Common/GPU/ShaderWriter.cpp \
   $(SRC)/Common/GPU/ShaderTranslation.cpp \
@@ -811,6 +814,7 @@ ifeq ($(UNITTEST),1)
     $(SRC)/unittest/TestSoftwareGPUJit.cpp \
     $(SRC)/unittest/TestThreadManager.cpp \
     $(SRC)/unittest/TestVertexJit.cpp \
+    $(SRC)/unittest/TestVFS.cpp \
     $(TESTARMEMITTER_FILE) \
     $(SRC)/unittest/UnitTest.cpp
 

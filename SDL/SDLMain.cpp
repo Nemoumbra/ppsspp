@@ -7,7 +7,13 @@
 #include <pwd.h>
 
 #include "ppsspp_config.h"
+#if PPSSPP_PLATFORM(MAC)
+#include "SDL2/SDL.h"
+#include "SDL2/SDL_syswm.h"
+#else
 #include "SDL.h"
+#include "SDL_syswm.h"
+#endif
 #include "SDL/SDLJoystick.h"
 SDLJoystick *joystick = NULL;
 
@@ -34,8 +40,6 @@ SDLJoystick *joystick = NULL;
 #include "Common/Math/math_util.h"
 #include "Common/GPU/OpenGL/GLRenderManager.h"
 #include "Common/Profiler/Profiler.h"
-
-#include "SDL_syswm.h"
 
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
 #include <X11/Xlib.h>
@@ -71,7 +75,8 @@ SDLJoystick *joystick = NULL;
 GlobalUIState lastUIState = UISTATE_MENU;
 GlobalUIState GetUIState();
 
-static int g_QuitRequested = 0;
+static bool g_QuitRequested = false;
+static bool g_RestartRequested = false;
 
 static int g_DesktopWidth = 0;
 static int g_DesktopHeight = 0;
@@ -185,8 +190,11 @@ void System_Vibrate(int length_ms) {
 
 bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int param3) {
 	switch (type) {
+	case SystemRequestType::RESTART_APP:
+		g_RestartRequested = true;
+		// TODO: Also save param1 and then split it into an argv.
+		return true;
 	case SystemRequestType::EXIT_APP:
-	case SystemRequestType::RESTART_APP:  // Not sure how we best do this, but do a clean exit, better than being stuck in a bad state.
 		// Do a clean exit
 		g_QuitRequested = true;
 		return true;
@@ -236,7 +244,8 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 	case SystemRequestType::SET_WINDOW_TITLE:
 	{
 		std::lock_guard<std::mutex> guard(g_mutexWindow);
-		g_windowState.title = param1.empty() ? "PPSSPP " : param1;
+		const char *app_name = System_GetPropertyBool(SYSPROP_APP_GOLD) ? "PPSSPP Gold" : "PPSSPP";
+		g_windowState.title = param1.empty() ? app_name : param1;
 		g_windowState.update = true;
 		return true;
 	}
@@ -266,20 +275,18 @@ void System_ShowFileInFolder(const char *path) {
 			SHOpenFolderAndSelectItems(pidl, 0, NULL, 0);
 		CoTaskMemFree(pidl);
 	}
-#elif PPSSPP_PLATFORM(MAC) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
+#elif PPSSPP_PLATFORM(MAC)
+	OSXShowInFinder(path);
+#elif (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
 	pid_t pid = fork();
 	if (pid < 0)
 		return;
 
 	if (pid == 0) {
-#if PPSSPP_PLATFORM(MAC)
-		execlp("open", "open", path, nullptr);
-#else
 		execlp("xdg-open", "xdg-open", path, nullptr);
-#endif
 		exit(1);
 	}
-#endif
+#endif /* PPSSPP_PLATFORM(WINDOWS) */
 }
 
 void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
@@ -298,8 +305,7 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 		std::wstring wurl = ConvertUTF8ToWString(url);
 		ShellExecute(NULL, L"open", wurl.c_str(), NULL, NULL, SW_SHOWNORMAL);
 #elif defined(__APPLE__)
-		std::string command = std::string("open ") + url;
-		system(command.c_str());
+		OSXOpenURL(url);
 #else
 		std::string command = std::string("xdg-open ") + url;
 		int err = system(command.c_str());
@@ -317,8 +323,8 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 		std::wstring mailto = std::wstring(L"mailto:") + ConvertUTF8ToWString(url);
 		ShellExecute(NULL, L"open", mailto.c_str(), NULL, NULL, SW_SHOWNORMAL);
 #elif defined(__APPLE__)
-		std::string command = std::string("open mailto:") + url;
-		system(command.c_str());
+		std::string mailToURL = std::string("mailto:") + url;
+		OSXOpenURL(mailToURL.c_str());
 #else
 		std::string command = std::string("xdg-email ") + url;
 		int err = system(command.c_str());
@@ -583,7 +589,7 @@ static void EmuThreadStart(GraphicsContext *context) {
 	emuThread = std::thread(&EmuThreadFunc, context);
 }
 
-static void EmuThreadStop() {
+static void EmuThreadStop(const char *reason) {
 	emuThreadState = (int)EmuThreadState::QUIT_REQUESTED;
 }
 
@@ -925,9 +931,11 @@ int main(int argc, char *argv[]) {
 	
 #if PPSSPP_PLATFORM(MAC)
 	// setup menu items for macOS
-	initBarItemsForApp();
+	initializeOSXExtras();
 #endif
 	
+	bool rebootEmuThread = false;
+
 	while (true) {
 		double startTime = time_now_d();
 
@@ -1040,6 +1048,13 @@ int main(int argc, char *argv[]) {
 					key.keyCode = mapped->second;
 					key.deviceId = DEVICE_ID_KEYBOARD;
 					NativeKey(key);
+
+#ifdef _DEBUG
+					if (k == SDLK_F7 && useEmuThread) {
+						printf("f7 pressed - rebooting emuthread\n");
+						rebootEmuThread = true;
+					}
+#endif
 					break;
 				}
 			case SDL_KEYUP:
@@ -1063,7 +1078,7 @@ int main(int argc, char *argv[]) {
 					int c = u8_nextchar(event.text.text, &pos);
 					KeyInput key;
 					key.flags = KEY_CHAR;
-					key.keyCode = c;
+					key.unicodeChar = c;
 					key.deviceId = DEVICE_ID_KEYBOARD;
 					NativeKey(key);
 					break;
@@ -1165,6 +1180,21 @@ int main(int argc, char *argv[]) {
 					KeyInput key;
 					key.deviceId = DEVICE_ID_MOUSE;
 					key.flags = KEY_DOWN;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+					if (event.wheel.preciseY != 0.0f) {
+						// Should the scale be DPI-driven?
+						const float scale = 30.0f;
+						key.keyCode = event.wheel.preciseY > 0 ? NKCODE_EXT_MOUSEWHEEL_UP : NKCODE_EXT_MOUSEWHEEL_DOWN;
+						key.flags |= KEY_HASWHEELDELTA;
+						int wheelDelta = event.wheel.preciseY * scale;
+						if (event.wheel.preciseY < 0) {
+							 wheelDelta = -wheelDelta;
+						}
+						key.flags |= wheelDelta << 16;
+						NativeKey(key);
+						break;
+					}
+#endif
 					if (event.wheel.y > 0) {
 						key.keyCode = NKCODE_EXT_MOUSEWHEEL_UP;
 						mouseWheelMovedUpFrames = 5;
@@ -1261,14 +1291,15 @@ int main(int argc, char *argv[]) {
 				break;
 			}
 		}
-		if (g_QuitRequested)
+		if (g_QuitRequested || g_RestartRequested)
 			break;
 		const uint8_t *keys = SDL_GetKeyboardState(NULL);
 		if (emuThreadState == (int)EmuThreadState::DISABLED) {
 			UpdateRunLoop();
 		}
-		if (g_QuitRequested)
+		if (g_QuitRequested || g_RestartRequested)
 			break;
+
 #if !defined(MOBILE_DEVICE)
 		if (lastUIState != GetUIState()) {
 			lastUIState = GetUIState();
@@ -1318,15 +1349,43 @@ int main(int argc, char *argv[]) {
 				break;
 		}
 
-
 		graphicsContext->SwapBuffers();
-
 
 		{
 			std::lock_guard<std::mutex> guard(g_mutexWindow);
 			if (g_windowState.update) {
 				UpdateWindowState(window);
 			}
+		}
+
+		if (rebootEmuThread) {
+			printf("rebooting emu thread");
+			rebootEmuThread = false;
+			EmuThreadStop("shutdown");
+			// Skipping GL calls, the old context is gone.
+			while (graphicsContext->ThreadFrame()) {
+				INFO_LOG(SYSTEM, "graphicsContext->ThreadFrame executed to clear buffers");
+			}
+			EmuThreadJoin();
+			graphicsContext->ThreadEnd();
+			graphicsContext->ShutdownFromRenderThread();
+
+			printf("OK, shutdown complete. starting up graphics again.\n");
+
+			if (g_Config.iGPUBackend == (int)GPUBackend::OPENGL) {
+				SDLGLGraphicsContext *ctx  = (SDLGLGraphicsContext *)graphicsContext;
+				if (!ctx->Init(window, x, y, w, h, mode, &error_message)) {
+					printf("Failed to reinit graphics.\n");
+				}
+			}
+
+			if (!graphicsContext->InitFromRenderThread(&error_message)) {
+				System_Toast("Graphics initialization failed. Quitting.");
+				return 1;
+			}
+
+			EmuThreadStart(graphicsContext);
+			graphicsContext->ThreadStart();
 		}
 
 		// Simple throttling to not burn the GPU in the menu.
@@ -1341,7 +1400,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (useEmuThread) {
-		EmuThreadStop();
+		EmuThreadStop("shutdown");
 		while (graphicsContext->ThreadFrame()) {
 			// Need to keep eating frames to allow the EmuThread to exit correctly.
 			continue;
@@ -1377,5 +1436,16 @@ int main(int argc, char *argv[]) {
 #ifdef HAVE_LIBNX
 	socketExit();
 #endif
+
+	// If a restart was requested (and supported on this platform), respawn the executable.
+	if (g_RestartRequested) {
+#if PPSSPP_PLATFORM(MAC)
+		RestartMacApp();
+#elif PPSSPP_PLATFORM(LINUX)
+		// Hackery from https://unix.stackexchange.com/questions/207935/how-to-restart-or-reset-a-running-process-in-linux,
+		char *exec_argv[] = { argv[0], nullptr };
+		execv("/proc/self/exe", exec_argv);
+#endif
+	}
 	return 0;
 }

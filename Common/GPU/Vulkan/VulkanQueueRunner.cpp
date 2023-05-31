@@ -9,7 +9,7 @@
 
 using namespace PPSSPP_VK;
 
-// Debug help: adb logcat -s DEBUG PPSSPPNativeActivity PPSSPP NativeGLView NativeRenderer NativeSurfaceView PowerSaveModeReceiver InputDeviceState
+// Debug help: adb logcat -s DEBUG AndroidRuntime PPSSPPNativeActivity PPSSPP NativeGLView NativeRenderer NativeSurfaceView PowerSaveModeReceiver InputDeviceState PpssppActivity CameraHelper
 
 static void MergeRenderAreaRectInto(VkRect2D *dest, const VkRect2D &src) {
 	if (dest->offset.x > src.offset.x) {
@@ -481,7 +481,7 @@ void VulkanQueueRunner::ApplyMGSHack(std::vector<VKRStep *> &steps) {
 					last = j - 1;
 				// should really also check descriptor sets...
 				if (steps[j]->commands.size()) {
-					VkRenderData &cmd = steps[j]->commands.back();
+					const VkRenderData &cmd = steps[j]->commands.back();
 					if (cmd.cmd == VKRRenderCommand::DRAW_INDEXED && cmd.draw.count != 6)
 						last = j - 1;
 				}
@@ -1241,7 +1241,7 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 	VKRGraphicsPipeline *lastGraphicsPipeline = nullptr;
 	VKRComputePipeline *lastComputePipeline = nullptr;
 
-	auto &commands = step.commands;
+	const auto &commands = step.commands;
 
 	// We can do a little bit of state tracking here to eliminate some calls into the driver.
 	// The stencil ones are very commonly mostly redundant so let's eliminate them where possible.
@@ -1400,7 +1400,7 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 		case VKRRenderCommand::DRAW_INDEXED:
 			if (pipelineOK) {
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &c.drawIndexed.ds, c.drawIndexed.numUboOffsets, c.drawIndexed.uboOffsets);
-				vkCmdBindIndexBuffer(cmd, c.drawIndexed.ibuffer, c.drawIndexed.ioffset, (VkIndexType)c.drawIndexed.indexType);
+				vkCmdBindIndexBuffer(cmd, c.drawIndexed.ibuffer, c.drawIndexed.ioffset, VK_INDEX_TYPE_UINT16);
 				VkDeviceSize voffset = c.drawIndexed.voffset;
 				vkCmdBindVertexBuffers(cmd, 0, 1, &c.drawIndexed.vbuffer, &voffset);
 				vkCmdDrawIndexed(cmd, c.drawIndexed.count, c.drawIndexed.instances, 0, 0, 0);

@@ -29,22 +29,33 @@ public:
 
 	// Inject raw PSP key input directly, such as from touch screen controls.
 	// Combined with the mapped input. Unlike __Ctrl APIs, this supports
-	// virtual key codes, though not analog mappings.
+	// virtual key codes, including analog mappings.
 	void PSPKey(int deviceId, int pspKeyCode, int flags);
+
+	// Toggle swapping DPAD and Analog. Useful on some input devices with few buttons.
+	void ToggleSwapAxes();
+
+	// Call this when a Vkey press triggers leaving the screen you're using the controlmapper on. This can cause
+	// the loss of key-up events, which will confuse things later when you're back.
+	// Might replace this later by allowing through "key-up" and similar events to lower screens.
+	void ForceReleaseVKey(int vkey);
 
 	void GetDebugString(char *buffer, size_t bufSize) const;
 
 private:
 	bool UpdatePSPState(const InputMapping &changedMapping);
 	float MapAxisValue(float value, int vkId, const InputMapping &mapping, const InputMapping &changedMapping, bool *oppositeTouched);
+	void SwapMappingIfEnabled(uint32_t *vkey);
 
 	void SetPSPAxis(int deviceId, int stick, char axis, float value);
+	void UpdateAnalogOutput(int stick);
 
 	void onVKey(int vkey, bool down);
 	void onVKeyAnalog(int deviceId, int vkey, float value);
 
 	// To track mappable virtual keys. We can have as many as we want.
 	float virtKeys_[VIRTKEY_COUNT]{};
+	bool virtKeyOn_[VIRTKEY_COUNT]{};  // Track boolean output separaately since thresholds may differ.
 
 	int lastNonDeadzoneDeviceID_[2]{};
 
@@ -54,6 +65,8 @@ private:
 	// Mappable auto-rotation. Useful for keyboard/dpad->analog in a few games.
 	bool autoRotatingAnalogCW_ = false;
 	bool autoRotatingAnalogCCW_ = false;
+
+	bool swapAxes_ = false;
 
 	// Protects basically all the state.
 	std::mutex mutex_;

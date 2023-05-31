@@ -163,13 +163,13 @@ public:
 
 	// So that this can be inlined
 	void Flush() {
-		if (!numDrawCalls)
+		if (!numDrawCalls_)
 			return;
 		DoFlush();
 	}
 
 	void FinishDeferred() {
-		if (!numDrawCalls)
+		if (!numDrawCalls_)
 			return;
 		// Decode any pending vertices. And also flush while we're at it, for simplicity.
 		// It might be possible to only decode like in the other backends, but meh, it can't matter.
@@ -177,7 +177,11 @@ public:
 		DoFlush();
 	}
 
-	void DispatchFlush() override { Flush(); }
+	void DispatchFlush() override {
+		if (!numDrawCalls_)
+			return;
+		Flush();
+	}
 
 	VkPipelineLayout GetPipelineLayout() const {
 		return pipelineLayout_;

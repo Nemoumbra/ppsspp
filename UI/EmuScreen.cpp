@@ -538,7 +538,7 @@ void EmuScreen::sendMessage(const char *message, const char *value) {
 	}
 }
 
-void EmuScreen::touch(const TouchInput &touch) {
+void EmuScreen::UnsyncTouch(const TouchInput &touch) {
 	Core_NotifyActivity();
 
 	if (chatMenu_ && chatMenu_->GetVisibility() == UI::V_VISIBLE) {
@@ -561,6 +561,7 @@ void EmuScreen::touch(const TouchInput &touch) {
 
 void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 	auto sc = GetI18NCategory(I18NCat::SCREEN);
+	auto mc = GetI18NCategory(I18NCat::MAPPABLECONTROLS);
 
 	switch (virtualKeyCode) {
 	case VIRTKEY_FASTFORWARD:
@@ -619,7 +620,11 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 
 	case VIRTKEY_PAUSE:
 		if (down) {
+			// Trigger on key-up to partially avoid repetition problems.
+			// This is needed whenever we pop up a menu since the mapper
+			// might miss  the key-up. Same as VIRTKEY_OPENCHAT.
 			pauseTrigger_ = true;
+			controlMapper_.ForceReleaseVKey(virtualKeyCode);
 		}
 		break;
 
@@ -636,18 +641,17 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 
 	case VIRTKEY_OPENCHAT:
-		// If we react at "down", the control mapper will never receive the "up" since
-		// we pop up a dialog which takes over input.
-		// Could hack around it, but this seems more sensible, even if it might feel less snappy.
-		if (!down && g_Config.bEnableNetworkChat) {
+		if (down && g_Config.bEnableNetworkChat) {
 			UI::EventParams e{};
 			OnChatMenu.Trigger(e);
+			controlMapper_.ForceReleaseVKey(virtualKeyCode);
 		}
 		break;
 
 	case VIRTKEY_AXIS_SWAP:
 		if (down) {
-			KeyMap::SwapAxis();
+			controlMapper_.ToggleSwapAxes();
+			osm.Show(mc->T("AxisSwap"));  // best string we have.
 		}
 		break;
 
@@ -696,6 +700,12 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 	case VIRTKEY_LOAD_STATE:
 		if (down)
 			SaveState::LoadSlot(gamePath_, g_Config.iCurrentStateSlot, &AfterSaveStateAction);
+		break;
+	case VIRTKEY_PREVIOUS_SLOT:
+		if (down) {
+			SaveState::PrevSlot();
+			NativeMessageReceived("savestate_displayslot", "");
+		}
 		break;
 	case VIRTKEY_NEXT_SLOT:
 		if (down) {
@@ -769,7 +779,7 @@ void EmuScreen::onVKeyAnalog(int virtualKeyCode, float value) {
 
 	// Xbox controllers need a pretty big deadzone here to not leave behind small values
 	// on occasion when releasing the trigger. Still feels right.
-	static constexpr float DEADZONE_THRESHOLD = 0.20f;
+	static constexpr float DEADZONE_THRESHOLD = 0.2f;
 	static constexpr float DEADZONE_SCALE = 1.0f / (1.0f - DEADZONE_THRESHOLD);
 
 	FPSLimit &limitMode = PSP_CoreParameter().fpsLimit;
@@ -792,11 +802,11 @@ void EmuScreen::onVKeyAnalog(int virtualKeyCode, float value) {
 	limitMode = PSP_CoreParameter().analogFpsLimit == 60 ? FPSLimit::NORMAL : FPSLimit::ANALOG;
 }
 
-bool EmuScreen::key(const KeyInput &key) {
+bool EmuScreen::UnsyncKey(const KeyInput &key) {
 	Core_NotifyActivity();
 
 	if (UI::IsFocusMovementEnabled()) {
-		if (UIScreen::key(key)) {
+		if (UIScreen::UnsyncKey(key)) {
 			return true;
 		} else if ((key.flags & KEY_DOWN) != 0 && UI::IsEscapeKey(key)) {
 			if (chatMenu_)
@@ -811,7 +821,7 @@ bool EmuScreen::key(const KeyInput &key) {
 	return controlMapper_.Key(key, &pauseTrigger_);
 }
 
-void EmuScreen::axis(const AxisInput &axis) {
+void EmuScreen::UnsyncAxis(const AxisInput &axis) {
 	Core_NotifyActivity();
 
 	return controlMapper_.Axis(axis);
@@ -1171,7 +1181,7 @@ static const char *CPUCoreAsString(int core) {
 }
 
 static void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
-	const ExceptionInfo &info = Core_GetExceptionInfo();
+	const MIPSExceptionInfo &info = Core_GetExceptionInfo();
 
 	auto sy = GetI18NCategory(I18NCat::SYSTEM);
 	FontID ubuntu24("UBUNTU24");
@@ -1237,7 +1247,7 @@ static void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
 	ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
 	y += 160;
 
-	if (info.type == ExceptionType::MEMORY) {
+	if (info.type == MIPSExceptionType::MEMORY) {
 		snprintf(statbuf, sizeof(statbuf), R"(
 Access: %s at %08x (sz: %d)
 PC: %08x
@@ -1249,7 +1259,7 @@ PC: %08x
 			info.info.c_str());
 		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
 		y += 180;
-	} else if (info.type == ExceptionType::BAD_EXEC_ADDR) {
+	} else if (info.type == MIPSExceptionType::BAD_EXEC_ADDR) {
 		snprintf(statbuf, sizeof(statbuf), R"(
 Destination: %s to %08x
 PC: %08x
@@ -1260,7 +1270,7 @@ RA: %08x)",
 			info.ra);
 		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
 		y += 180;
-	} else if (info.type == ExceptionType::BREAK) {
+	} else if (info.type == MIPSExceptionType::BREAK) {
 		snprintf(statbuf, sizeof(statbuf), R"(
 BREAK
 PC: %08x
@@ -1493,8 +1503,8 @@ void EmuScreen::render() {
 	case CORE_RUNTIME_ERROR:
 	{
 		// If there's an exception, display information.
-		const ExceptionInfo &info = Core_GetExceptionInfo();
-		if (info.type != ExceptionType::NONE) {
+		const MIPSExceptionInfo &info = Core_GetExceptionInfo();
+		if (info.type != MIPSExceptionType::NONE) {
 			// Clear to blue background screen
 			bool dangerousSettings = !Reporting::IsSupported();
 			uint32_t color = dangerousSettings ? 0xFF900050 : 0xFF900000;
@@ -1608,11 +1618,11 @@ void EmuScreen::renderUI() {
 	}
 
 #if !PPSSPP_PLATFORM(UWP) && !PPSSPP_PLATFORM(SWITCH)
-	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN && g_Config.bShowAllocatorDebug) {
-		DrawAllocatorVis(ctx, gpu);
+	if ((g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) && g_Config.bShowAllocatorDebug) {
+		DrawGPUMemoryVis(ctx, gpu);
 	}
 
-	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN && g_Config.bShowGpuProfile) {
+	if ((g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) && g_Config.bShowGpuProfile) {
 		DrawGPUProfilerVis(ctx, gpu);
 	}
 
@@ -1625,8 +1635,8 @@ void EmuScreen::renderUI() {
 #endif
 
 	if (coreState == CORE_RUNTIME_ERROR || coreState == CORE_STEPPING) {
-		const ExceptionInfo &info = Core_GetExceptionInfo();
-		if (info.type != ExceptionType::NONE) {
+		const MIPSExceptionInfo &info = Core_GetExceptionInfo();
+		if (info.type != MIPSExceptionType::NONE) {
 			DrawCrashDump(ctx, gamePath_);
 		} else {
 			// We're somehow in ERROR or STEPPING without a crash dump. This case is what lead

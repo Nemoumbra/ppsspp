@@ -70,7 +70,7 @@ static double lastKeepAwake = 0.0;
 static GraphicsContext *graphicsContext;
 static bool powerSaving = false;
 
-static ExceptionInfo g_exceptionInfo;
+static MIPSExceptionInfo g_exceptionInfo;
 
 void Core_SetGraphicsContext(GraphicsContext *ctx) {
 	graphicsContext = ctx;
@@ -408,11 +408,11 @@ SteppingReason Core_GetSteppingReason() {
 	return r;
 }
 
-const char *ExceptionTypeAsString(ExceptionType type) {
+const char *ExceptionTypeAsString(MIPSExceptionType type) {
 	switch (type) {
-	case ExceptionType::MEMORY: return "Invalid Memory Access";
-	case ExceptionType::BREAK: return "Break";
-	case ExceptionType::BAD_EXEC_ADDR: return "Bad Execution Address";
+	case MIPSExceptionType::MEMORY: return "Invalid Memory Access";
+	case MIPSExceptionType::BREAK: return "Break";
+	case MIPSExceptionType::BAD_EXEC_ADDR: return "Bad Execution Address";
 	default: return "N/A";
 	}
 }
@@ -454,9 +454,9 @@ void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionTy
 		std::string stackTrace = FormatStackTrace(stackFrames);
 		WARN_LOG(MEMMAP, "\n%s", stackTrace.c_str());
 
-		ExceptionInfo &e = g_exceptionInfo;
+		MIPSExceptionInfo &e = g_exceptionInfo;
 		e = {};
-		e.type = ExceptionType::MEMORY;
+		e.type = MIPSExceptionType::MEMORY;
 		e.info.clear();
 		e.memory_type = type;
 		e.address = address;
@@ -467,7 +467,7 @@ void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionTy
 	}
 }
 
-void Core_MemoryExceptionInfo(u32 address, u32 pc, u32 accessSize, MemoryExceptionType type, std::string additionalInfo, bool forceReport) {
+void Core_MemoryExceptionInfo(u32 address, u32 accessSize, u32 pc, MemoryExceptionType type, std::string additionalInfo, bool forceReport) {
 	const char *desc = MemoryExceptionTypeAsString(type);
 	// In jit, we only flush PC when bIgnoreBadMemAccess is off.
 	if (g_Config.iCpuCore == (int)CPUCore::JIT && g_Config.bIgnoreBadMemAccess) {
@@ -482,12 +482,13 @@ void Core_MemoryExceptionInfo(u32 address, u32 pc, u32 accessSize, MemoryExcepti
 		std::string stackTrace = FormatStackTrace(stackFrames);
 		WARN_LOG(MEMMAP, "\n%s", stackTrace.c_str());
 
-		ExceptionInfo &e = g_exceptionInfo;
+		MIPSExceptionInfo &e = g_exceptionInfo;
 		e = {};
-		e.type = ExceptionType::MEMORY;
+		e.type = MIPSExceptionType::MEMORY;
 		e.info = additionalInfo;
 		e.memory_type = type;
 		e.address = address;
+		e.accessSize = accessSize;
 		e.stackTrace = stackTrace;
 		e.pc = pc;
 		Core_EnableStepping(true, "memory.exception", address);
@@ -499,9 +500,9 @@ void Core_ExecException(u32 address, u32 pc, ExecExceptionType type) {
 	const char *desc = ExecExceptionTypeAsString(type);
 	WARN_LOG(MEMMAP, "%s: Invalid exec address %08x PC %08x LR %08x", desc, address, pc, currentMIPS->r[MIPS_REG_RA]);
 
-	ExceptionInfo &e = g_exceptionInfo;
+	MIPSExceptionInfo &e = g_exceptionInfo;
 	e = {};
-	e.type = ExceptionType::BAD_EXEC_ADDR;
+	e.type = MIPSExceptionType::BAD_EXEC_ADDR;
 	e.info.clear();
 	e.exec_type = type;
 	e.address = address;
@@ -515,9 +516,9 @@ void Core_ExecException(u32 address, u32 pc, ExecExceptionType type) {
 void Core_Break(u32 pc) {
 	ERROR_LOG(CPU, "BREAK!");
 
-	ExceptionInfo &e = g_exceptionInfo;
+	MIPSExceptionInfo &e = g_exceptionInfo;
 	e = {};
-	e.type = ExceptionType::BREAK;
+	e.type = MIPSExceptionType::BREAK;
 	e.info.clear();
 	e.pc = pc;
 
@@ -527,9 +528,9 @@ void Core_Break(u32 pc) {
 }
 
 void Core_ResetException() {
-	g_exceptionInfo.type = ExceptionType::NONE;
+	g_exceptionInfo.type = MIPSExceptionType::NONE;
 }
 
-const ExceptionInfo &Core_GetExceptionInfo() {
+const MIPSExceptionInfo &Core_GetExceptionInfo() {
 	return g_exceptionInfo;
 }

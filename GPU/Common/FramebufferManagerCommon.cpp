@@ -470,16 +470,18 @@ VirtualFramebuffer *FramebufferManagerCommon::DoSetRenderFrameBuffer(Framebuffer
 				bool needsRecreate = vfb->bufferWidth > params.fb_stride;
 				needsRecreate = needsRecreate || vfb->newWidth > vfb->bufferWidth || vfb->newWidth * 2 < vfb->bufferWidth;
 				needsRecreate = needsRecreate || vfb->newHeight > vfb->bufferHeight || vfb->newHeight * 2 < vfb->bufferHeight;
+
+				// Whether we resize or not, change the size parameters so we stop detecting a resize.
+				// It might be larger if all drawing has been in throughmode.
+				vfb->width = drawing_width;
+				vfb->height = drawing_height;
+
 				if (needsRecreate) {
 					ResizeFramebufFBO(vfb, vfb->width, vfb->height, true);
 					resized = true;
 					// Let's discard this information, might be wrong now.
 					vfb->safeWidth = 0;
 					vfb->safeHeight = 0;
-				} else {
-					// Even though we won't resize it, let's at least change the size params.
-					vfb->width = drawing_width;
-					vfb->height = drawing_height;
 				}
 			}
 		} else {
@@ -1215,7 +1217,6 @@ void FramebufferManagerCommon::DrawPixels(VirtualFramebuffer *vfb, int dstX, int
 			u0, v0, u1, v1, ROTATION_LOCKED_HORIZONTAL, flags);
 
 		gpuStats.numUploads++;
-		pixelsTex->Release();
 		draw_->Invalidate(InvalidationFlags::CACHED_RENDER_STATE);
 
 		gstate_c.Dirty(DIRTY_ALL_RENDER_STATE);
@@ -1238,7 +1239,7 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		// Self-texturing, need a copy currently (some backends can potentially support it though).
 		WARN_LOG_ONCE(selfTextureCopy, G3D, "Attempting to texture from current render target (src=%08x / target=%08x / flags=%d), making a copy", framebuffer->fb_address, currentRenderVfb_->fb_address, flags);
 		// TODO: Maybe merge with bvfbs_?  Not sure if those could be packing, and they're created at a different size.
-		if (currentFramebufferCopy_) {
+		if (currentFramebufferCopy_ && (flags & BINDFBCOLOR_UNCACHED) == 0) {
 			// We have a copy already that hasn't been invalidated, let's keep using it.
 			draw_->BindFramebufferAsTexture(currentFramebufferCopy_, stage, Draw::FB_COLOR_BIT, layer);
 			return true;
@@ -1256,7 +1257,7 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 
 			// Only cache the copy if it wasn't a partial copy.
 			// TODO: Improve on this.
-			if (!partial) {
+			if (!partial && (flags & BINDFBCOLOR_UNCACHED) == 0) {
 				currentFramebufferCopy_ = renderCopy;
 			}
 			gpuStats.numCopiesForSelfTex++;
@@ -1399,11 +1400,29 @@ Draw::Texture *FramebufferManagerCommon::MakePixelTexture(const u8 *srcPixels, G
 		return true;
 	};
 
+	Draw::DataFormat texFormat = srcPixelFormat == GE_FORMAT_DEPTH16 ? depthFormat : preferredPixelsFormat_;
+
+	int frameNumber = draw_->GetFrameCount();
+
+	// Look for a matching texture we can re-use.
+	for (auto &iter : drawPixelsCache_) {
+		if (iter.frameNumber >= frameNumber - 3 || iter.tex->Width() != width || iter.tex->Height() != height || iter.tex->Format() != texFormat) {
+			continue;
+		}
+
+		// OK, current one seems good, let's use it (and mark it used).
+		gpuStats.numDrawPixels++;
+		draw_->UpdateTextureLevels(iter.tex, &srcPixels, generateTexture, 1);
+		// NOTE: numFlips is no good - this is called every frame when paused sometimes!
+		iter.frameNumber = frameNumber;
+		return iter.tex;
+	}
+
 	// Note: For depth, we create an R16_UNORM texture, that'll be just fine for uploading depth through a shader,
 	// and likely more efficient.
 	Draw::TextureDesc desc{
 		Draw::TextureType::LINEAR2D,
-		srcPixelFormat == GE_FORMAT_DEPTH16 ? depthFormat : preferredPixelsFormat_,
+		texFormat,
 		width,
 		height,
 		1,
@@ -1416,10 +1435,18 @@ Draw::Texture *FramebufferManagerCommon::MakePixelTexture(const u8 *srcPixels, G
 	};
 
 	// Hot Shots Golf (#12355) does tons of these in a frame in some situations! So creating textures
-	// better be fast.
+	// better be fast. So does God of War, a lot of the time, a bit unclear what it's doing.
 	Draw::Texture *tex = draw_->CreateTexture(desc);
-	if (!tex)
+	if (!tex) {
 		ERROR_LOG(G3D, "Failed to create DrawPixels texture");
+	}
+	gpuStats.numDrawPixels++;
+	gpuStats.numTexturesDecoded++;  // Separate stat for this later?
+
+	// INFO_LOG(G3D, "Creating drawPixelsCache texture: %dx%d", tex->Width(), tex->Height());
+
+	DrawPixelsEntry entry{ tex, frameNumber };
+	drawPixelsCache_.push_back(entry);
 	return tex;
 }
 
@@ -1446,7 +1473,6 @@ void FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int 
 	presentation_->UpdateUniforms(textureCache_->VideoIsPlaying());
 	presentation_->SourceTexture(pixelsTex, 512, 272);
 	presentation_->CopyToOutput(flags, uvRotation, u0, v0, u1, v1);
-	pixelsTex->Release();
 
 	// PresentationCommon sets all kinds of state, we can't rely on anything.
 	gstate_c.Dirty(DIRTY_ALL);
@@ -1523,6 +1549,11 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 			// Log should be "Displaying from framebuf" but not worth changing the report.
 			INFO_LOG_REPORT_ONCE(displayoffset, FRAMEBUF, "Rendering from framebuf with offset %08x -> %08x+%dx%d", addr, vfb->fb_address, offsetX, offsetY);
 		}
+	}
+
+	// Reject too-tiny framebuffers to display (Godfather, see issue #16915).
+	if (vfb && vfb->height < 64) {
+		vfb = nullptr;
 	}
 
 	if (!vfb) {
@@ -1661,6 +1692,20 @@ void FramebufferManagerCommon::DecimateFBOs() {
 			INFO_LOG(FRAMEBUF, "Decimating FBO for %08x (%dx%d %s), age %i", vfb->fb_address, vfb->width, vfb->height, GeBufferFormatToString(vfb->fb_format), age);
 			DestroyFramebuf(vfb);
 			bvfbs_.erase(bvfbs_.begin() + i--);
+		}
+	}
+
+	// And DrawPixels cached textures.
+
+	for (auto it = drawPixelsCache_.begin(); it != drawPixelsCache_.end(); ) {
+		int age = draw_->GetFrameCount() - it->frameNumber;
+		if (age > 10) {
+			// INFO_LOG(G3D, "Releasing drawPixelsCache texture: %dx%d", it->tex->Width(), it->tex->Height());
+			it->tex->Release();
+			it->tex = nullptr;
+			it = drawPixelsCache_.erase(it);
+		} else {
+			++it;
 		}
 	}
 }
@@ -2595,10 +2640,15 @@ void FramebufferManagerCommon::DestroyAllFBOs() {
 	}
 	tempFBOs_.clear();
 
-	for (auto iter : fbosToDelete_) {
+	for (auto &iter : fbosToDelete_) {
 		iter->Release();
 	}
 	fbosToDelete_.clear();
+
+	for (auto &iter : drawPixelsCache_) {
+		iter.tex->Release();
+	}
+	drawPixelsCache_.clear();
 }
 
 static const char *TempFBOReasonToString(TempFBO reason) {

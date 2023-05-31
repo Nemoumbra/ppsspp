@@ -125,9 +125,20 @@ void CalculateDisplayOutputRect(FRect *rc, float origW, float origH, const FRect
 		if (rotated) {
 			wDim = 272.0f;
 		}
+
+		int zoom = g_Config.iInternalResolution;
+		if (zoom == 0) {
+			// Auto (1:1) mode, not super meaningful with integer scaling, but let's do something that makes
+			// some sense. use the longest dimension, just to have something. round down.
+			if (!g_Config.IsPortrait()) {
+				zoom = (PSP_CoreParameter().pixelWidth) / 480;
+			} else {
+				zoom = (PSP_CoreParameter().pixelHeight) / 480;
+			}
+		}
 		// If integer scaling, limit ourselves to even multiples of the rendered resolution,
 		// to make sure all the pixels are square.
-		wDim *= g_Config.iInternalResolution;
+		wDim *= zoom;
 		outW = std::max(1.0f, floorf(outW / wDim)) * wDim;
 		outH = outW / origRatio;
 	}
@@ -281,6 +292,8 @@ bool PresentationCommon::UpdatePostShader() {
 	if (usePreviousFrame) {
 		int w = usePreviousAtOutputResolution ? pixelWidth_ : renderWidth_;
 		int h = usePreviousAtOutputResolution ? pixelHeight_ : renderHeight_;
+
+		_dbg_assert_(w > 0 && h > 0);
 
 		static constexpr int FRAMES = 2;
 		previousFramebuffers_.resize(FRAMES);
@@ -568,20 +581,23 @@ Draw::ShaderModule *PresentationCommon::CompileShaderModule(ShaderStage stage, S
 }
 
 void PresentationCommon::SourceTexture(Draw::Texture *texture, int bufferWidth, int bufferHeight) {
+	// AddRef before release and assign in case it's the same.
+	texture->AddRef();
+
 	DoRelease(srcTexture_);
 	DoRelease(srcFramebuffer_);
 
-	texture->AddRef();
 	srcTexture_ = texture;
 	srcWidth_ = bufferWidth;
 	srcHeight_ = bufferHeight;
 }
 
 void PresentationCommon::SourceFramebuffer(Draw::Framebuffer *fb, int bufferWidth, int bufferHeight) {
+	fb->AddRef();
+
 	DoRelease(srcTexture_);
 	DoRelease(srcFramebuffer_);
 
-	fb->AddRef();
 	srcFramebuffer_ = fb;
 	srcWidth_ = bufferWidth;
 	srcHeight_ = bufferHeight;
@@ -657,7 +673,7 @@ void PresentationCommon::CopyToOutput(OutputFlags flags, int uvRotation, float u
 
 	float finalU0 = u0, finalU1 = u1, finalV0 = v0, finalV1 = v1;
 
-	if (usePostShader) {
+	if (usePostShader && !(isFinalAtOutputResolution && postShaderPipelines_.size() == 1)) {
 		// The final blit will thus use the full texture.
 		finalU0 = 0.0f;
 		finalV0 = 0.0f;
