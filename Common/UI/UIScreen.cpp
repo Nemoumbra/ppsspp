@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "Common/System/Display.h"
+#include "Common/System/System.h"
 #include "Common/Input/InputState.h"
 #include "Common/Input/KeyCodes.h"
 #include "Common/Math/curves.h"
@@ -9,7 +10,6 @@
 #include "Common/UI/Root.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Render/DrawBuffer.h"
-
 #include "Common/Log.h"
 
 static const bool ClickDebug = false;
@@ -74,8 +74,7 @@ void UIScreen::axis(const AxisInput &axis) {
 
 bool UIScreen::key(const KeyInput &key) {
 	if (!ignoreInput_ && root_) {
-		UI::KeyEvent(key, root_);
-		return false;
+		return UI::KeyEvent(key, root_);
 	} else {
 		return false;
 	}
@@ -127,7 +126,7 @@ bool UIScreen::UnsyncKey(const KeyInput &key) {
 	ev.type = QueuedEventType::KEY;
 	ev.key = key;
 	eventQueue_.push_back(ev);
-	return true;
+	return retval;
 }
 
 void UIScreen::update() {
@@ -427,7 +426,6 @@ void PopupScreen::CreateViews() {
 
 	CreatePopupContents(box_);
 	root_->SetDefaultFocusView(box_);
-
 	if (ShowButtons() && !button1_.empty()) {
 		// And the two buttons at the bottom.
 		LinearLayout *buttonRow = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(200, WRAP_CONTENT));

@@ -72,6 +72,11 @@ SDLJoystick *joystick = NULL;
 #include "CocoaBarItems.h"
 #endif
 
+#if PPSSPP_PLATFORM(SWITCH)
+#define LIBNX_SWKBD_LIMIT 500 // enforced by HOS
+extern u32 __nx_applet_type; // Not exposed through a header?
+#endif
+
 GlobalUIState lastUIState = UISTATE_MENU;
 GlobalUIState GetUIState();
 
@@ -198,6 +203,36 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 		// Do a clean exit
 		g_QuitRequested = true;
 		return true;
+#if PPSSPP_PLATFORM(SWITCH)
+	case SystemRequestType::INPUT_TEXT_MODAL: {
+		// swkbd only works on "real" titles
+		if (__nx_applet_type != AppletType_Application && __nx_applet_type != AppletType_SystemApplication) {
+			g_requestManager.PostSystemFailure(requestId);
+			return true;
+		}
+
+		SwkbdConfig kbd;
+		Result rc = swkbdCreate(&kbd, 0);
+
+		if (R_SUCCEEDED(rc)) {
+			char buf[LIBNX_SWKBD_LIMIT] = {'\0'};
+			swkbdConfigMakePresetDefault(&kbd);
+
+			swkbdConfigSetHeaderText(&kbd, param1.c_str());
+			swkbdConfigSetInitialText(&kbd, param2.c_str());
+
+			rc = swkbdShow(&kbd, buf, sizeof(buf));
+
+			swkbdClose(&kbd);
+
+			g_requestManager.PostSystemSuccess(requestId, buf);
+			return true;
+		}
+
+		g_requestManager.PostSystemFailure(requestId);
+		return true;
+	}
+#endif // PPSSPP_PLATFORM(SWITCH)
 #if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
 	case SystemRequestType::BROWSE_FOR_FILE:
 	{
@@ -209,7 +244,8 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 			}
 		};
 		DarwinFileSystemServices services;
-		services.presentDirectoryPanel(callback, /* allowFiles = */ true, /* allowDirectories = */ false);
+		BrowseFileType fileType = (BrowseFileType)param3;
+		services.presentDirectoryPanel(callback, /* allowFiles = */ true, /* allowDirectories = */ false, fileType);
 		return true;
 	}
 	case SystemRequestType::BROWSE_FOR_FOLDER:
@@ -395,6 +431,8 @@ std::string System_GetProperty(SystemProperty prop) {
 			}
 			return result;
 		}
+	case SYSPROP_BUILD_VERSION:
+		return PPSSPP_GIT_VERSION;
 	default:
 		return "";
 	}
@@ -477,6 +515,10 @@ bool System_GetPropertyBool(SystemProperty prop) {
 #endif
 	case SYSPROP_HAS_BACK_BUTTON:
 		return true;
+#if PPSSPP_PLATFORM(SWITCH)
+	case SYSPROP_HAS_TEXT_INPUT_DIALOG:
+		return __nx_applet_type == AppletType_Application || __nx_applet_type != AppletType_SystemApplication;
+#endif
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
 		return true;
@@ -487,6 +529,10 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return true;
 	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
 		return true;  // FileUtil.cpp: OpenFileInEditor
+#ifndef HTTPS_NOT_AVAILABLE
+	case SYSPROP_SUPPORTS_HTTPS:
+		return true;
+#endif
 #if PPSSPP_PLATFORM(MAC)
 	case SYSPROP_HAS_FOLDER_BROWSER:
 	case SYSPROP_HAS_FILE_BROWSER:

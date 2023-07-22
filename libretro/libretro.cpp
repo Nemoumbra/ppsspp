@@ -425,6 +425,10 @@ static std::string map_psp_language_to_i18n_locale(int val)
 
 static void check_variables(CoreParameter &coreParam)
 {
+   bool isFastForwarding;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_FASTFORWARDING, &isFastForwarding))
+       coreParam.fastForward = isFastForwarding;
+
    bool updated = false;
 
    if (     coreState != CoreState::CORE_POWERUP
@@ -1024,9 +1028,6 @@ static void check_variables(CoreParameter &coreParam)
       retro_get_system_av_info(&avInfo);
       environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &avInfo);
    }
-
-   bool isFastForwarding = environ_cb(RETRO_ENVIRONMENT_GET_FASTFORWARDING, &isFastForwarding);
-   coreParam.fastForward = isFastForwarding;
 
    set_variable_visibility();
 }
@@ -1682,7 +1683,8 @@ bool System_GetPropertyBool(SystemProperty prop)
    {
    case SYSPROP_CAN_JIT:
 #if PPSSPP_PLATFORM(IOS)
-      return false;
+      bool can_jit;
+      return (environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && can_jit);
 #else
       return true;
 #endif
@@ -1702,7 +1704,6 @@ void System_Notify(SystemNotification notification) {
 }
 bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int param3) { return false; }
 void System_PostUIMessage(const std::string &message, const std::string &param) {}
-void System_NotifyUserMessage(const std::string &message, float duration, u32 color, const char *id) {}
 void NativeUpdate() {}
 void NativeRender(GraphicsContext *graphicsContext) {}
 void NativeResized() {}
@@ -1745,3 +1746,9 @@ bool System_AudioRecordingState() { return false; }
 
 void System_InputBoxGetString(const std::string &title, const std::string &defaultValue, std::function<void(bool, const std::string &)> cb) { cb(false, ""); }
 #endif
+
+// TODO: To avoid having to define these here, these should probably be turned into system "requests".
+void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {}
+std::string NativeLoadSecret(const char *nameOfSecret) {
+   return "";
+}

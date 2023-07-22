@@ -22,6 +22,7 @@
 
 #include "Common/System/Display.h"
 #include "Common/System/System.h"
+#include "Common/System/OSD.h"
 #include "Common/System/NativeApp.h"
 #include "Common/File/VFS/VFS.h"
 #include "Common/Log.h"
@@ -205,7 +206,7 @@ extern float g_safeInsetBottom;
 	graphicsContext = new IOSGraphicsContext();
 
 	graphicsContext->GetDrawContext()->SetErrorCallback([](const char *shortDesc, const char *details, void *userdata) {
-		System_NotifyUserMessage(details, 5.0, 0xFFFFFFFF, "error_callback");
+		g_OSD.Show(OSDType::MESSAGE_ERROR, details, 0.0f, "error_callback");
 	}, nullptr);
 
 	graphicsContext->ThreadStart();

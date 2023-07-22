@@ -41,8 +41,8 @@ enum ChatPositions {
 };
 
 namespace http {
-	class Download;
-	class Downloader;
+	class Request;
+	class RequestManager;
 }
 
 struct UrlEncoder;
@@ -341,16 +341,9 @@ public:
 	ConfigTouchPos touchAnalogStick;
 	ConfigTouchPos touchRightAnalogStick;
 
-	ConfigTouchPos touchCustom0;
-	ConfigTouchPos touchCustom1;
-	ConfigTouchPos touchCustom2;
-	ConfigTouchPos touchCustom3;
-	ConfigTouchPos touchCustom4;
-	ConfigTouchPos touchCustom5;
-	ConfigTouchPos touchCustom6;
-	ConfigTouchPos touchCustom7;
-	ConfigTouchPos touchCustom8;
-	ConfigTouchPos touchCustom9;
+	enum { CUSTOM_BUTTON_COUNT = 20 };
+
+	ConfigTouchPos touchCustom[CUSTOM_BUTTON_COUNT];
 
 	float fLeftStickHeadScale;
 	float fRightStickHeadScale;
@@ -364,16 +357,7 @@ public:
 	bool bShowTouchTriangle;
 	bool bShowTouchSquare;
 
-	ConfigCustomButton CustomButton0;
-	ConfigCustomButton CustomButton1;
-	ConfigCustomButton CustomButton2;
-	ConfigCustomButton CustomButton3;
-	ConfigCustomButton CustomButton4;
-	ConfigCustomButton CustomButton5;
-	ConfigCustomButton CustomButton6;
-	ConfigCustomButton CustomButton7;
-	ConfigCustomButton CustomButton8;
-	ConfigCustomButton CustomButton9;
+	ConfigCustomButton CustomButton[CUSTOM_BUTTON_COUNT];
 
 	// Ignored on iOS and other platforms that lack pause.
 	bool bShowTouchPause;
@@ -391,6 +375,9 @@ public:
 
 	// Sets up how much the analog limiter button restricts digital->analog input.
 	float fAnalogLimiterDeadzone;
+
+	// Sets whether combo mapping is enabled.
+	bool bAllowMappingCombos;
 
 	bool bMouseControl;
 	bool bMapMouse; // Workaround for mapping screen:|
@@ -453,11 +440,13 @@ public:
 	bool bEnableMotions;
 	bool bForce72Hz;
 	bool bManualForceVR;
+	bool bPassthrough;
 	bool bRescaleHUD;
 	float fCameraDistance;
 	float fCameraHeight;
 	float fCameraSide;
 	float fCanvasDistance;
+	float fCanvas3DDistance;
 	float fFieldOfViewPercentage;
 	float fHeadUpDisplayScale;
 	float fMotionLength;
@@ -496,6 +485,24 @@ public:
 	// Volatile development settings
 	bool bShowFrameProfiler;
 	bool bGpuLogProfiler; // Controls the Vulkan logging profiler (profiles textures uploads etc).
+
+	// Retro Achievement settings
+	// Copied from Duckstation, we might want to remove some.
+	bool bAchievementsEnable;
+	bool bAchievementsChallengeMode;
+	bool bAchievementsEncoreMode;
+	bool bAchievementsUnofficial;
+	bool bAchievementsSoundEffects;
+	bool bAchievementsLogBadMemReads;
+
+	// Customizations
+	std::string sAchievementsUnlockAudioFile;
+	std::string sAchievementsLeaderboardSubmitAudioFile;
+
+	// Achivements login info. Note that password is NOT stored, only a login token.
+	// Still, we may wanna store it more securely than in PPSSPP.ini, especially on Android.
+	std::string sAchievementsUserName;
+	std::string sAchievementsToken;  // Not saved, to be used if you want to manually make your RA login persistent. See Native_SaveSecret for the normal case.
 
 	// Various directories. Autoconfigured, not read from ini.
 	Path currentDirectory;  // The directory selected in the game browsing window.
@@ -536,7 +543,7 @@ public:
 	void RemoveRecent(const std::string &file);
 	void CleanRecent();
 
-	static void DownloadCompletedCallback(http::Download &download);
+	static void DownloadCompletedCallback(http::Request &download);
 	void DismissUpgrade();
 
 	void ResetControlLayout();
@@ -588,6 +595,6 @@ private:
 std::string CreateRandMAC();
 
 // TODO: Find a better place for this.
-extern http::Downloader g_DownloadManager;
+extern http::RequestManager g_DownloadManager;
 extern Config g_Config;
 

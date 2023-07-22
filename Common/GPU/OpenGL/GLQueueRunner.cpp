@@ -711,9 +711,8 @@ void GLQueueRunner::RunSteps(const std::vector<GLRStep *> &steps, GLFrameData &f
 		case GLRStepType::RENDER:
 			renderCount++;
 			if (IsVREnabled()) {
-				GLRStep &vrStep = step;
-				PreprocessStepVR(&vrStep);
-				PerformRenderPass(vrStep, renderCount == 1, renderCount == totalRenderCount, frameData.profile);
+				PreprocessStepVR(&step);
+				PerformRenderPass(step, renderCount == 1, renderCount == totalRenderCount, frameData.profile);
 			} else {
 				PerformRenderPass(step, renderCount == 1, renderCount == totalRenderCount, frameData.profile);
 			}
@@ -1237,10 +1236,9 @@ void GLQueueRunner::PerformRenderPass(const GLRStep &step, bool first, bool last
 		}
 		case GLRRenderCommand::DRAW:
 		{
-			// TODO: Add fast path for glBindVertexBuffer
 			GLRInputLayout *layout = c.draw.inputLayout;
-			GLuint buf = c.draw.vertexBuffer ? c.draw.vertexBuffer->buffer_ : 0;
-			_dbg_assert_(!c.draw.vertexBuffer || !c.draw.vertexBuffer->Mapped());
+			GLuint buf = c.draw.vertexBuffer->buffer_;
+			_dbg_assert_(!c.draw.vertexBuffer->Mapped());
 			if (buf != curArrayBuffer) {
 				glBindBuffer(GL_ARRAY_BUFFER, buf);
 				curArrayBuffer = buf;
@@ -1255,7 +1253,7 @@ void GLQueueRunner::PerformRenderPass(const GLRStep &step, bool first, bool last
 			}
 			if (c.draw.indexBuffer) {
 				GLuint buf = c.draw.indexBuffer->buffer_;
-				_dbg_assert_(!(c.draw.indexBuffer && c.draw.indexBuffer->Mapped()));
+				_dbg_assert_(!c.draw.indexBuffer->Mapped());
 				if (buf != curElemArrayBuffer) {
 					glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buf);
 					curElemArrayBuffer = buf;

@@ -130,7 +130,7 @@ public:
 	virtual void ClearTrackedVertexArrays() {}
 
 protected:
-	virtual bool UpdateUseHWTessellation(bool enabled) { return enabled; }
+	virtual bool UpdateUseHWTessellation(bool enabled) const { return enabled; }
 
 	int ComputeNumVertsToDecode() const;
 	void DecodeVerts(u8 *dest);
@@ -143,7 +143,7 @@ protected:
 	uint64_t ComputeHash();
 
 	// Vertex decoding
-	void DecodeVertsStep(u8 *dest, int &i, int &decodedVerts);
+	void DecodeVertsStep(u8 *dest, int &i, int &decodedVerts, const UVScale *uvScale);
 
 	void ApplyFramebufferRead(FBOTexState *fboTexState);
 
@@ -174,6 +174,8 @@ protected:
 			break;
 		}
 	}
+
+	uint32_t ComputeDrawcallsHash() const;
 
 	bool useHWTransform_ = false;
 	bool useHWTessellation_ = false;
@@ -218,7 +220,6 @@ protected:
 
 	int decimationCounter_ = 0;
 	int decodeCounter_ = 0;
-	u32 dcid_ = 0;
 
 	// Vertex collector state
 	IndexGenerator indexGen;

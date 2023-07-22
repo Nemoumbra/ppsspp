@@ -99,10 +99,15 @@ bool System_GetPropertyBool(SystemProperty prop) {
 }
 void System_Notify(SystemNotification notification) {}
 void System_PostUIMessage(const std::string &message, const std::string &param) {}
-void System_NotifyUserMessage(const std::string &message, float duration, u32 color, const char *id) {}
 void System_AudioGetDebugStats(char *buf, size_t bufSize) { if (buf) buf[0] = '\0'; }
 void System_AudioClear() {}
 void System_AudioPushSamples(const s32 *audio, int numSamples) {}
+
+// TODO: To avoid having to define these here, these should probably be turned into system "requests".
+void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {}
+std::string NativeLoadSecret(const char *nameOfSecret) {
+	return "";
+}
 
 #if PPSSPP_PLATFORM(ANDROID)
 JNIEnv *getEnv() {
@@ -966,6 +971,12 @@ bool TestEscapeMenuString() {
 	return true;
 }
 
+bool TestSubstitutions() {
+	std::string output = ApplySafeSubstitutions("%3 %2 %1", "a", "b", "c");
+	EXPECT_EQ_STR(output, std::string("c b a"));
+	return true;
+}
+
 typedef bool (*TestFunc)();
 struct TestItem {
 	const char *name;
@@ -1023,6 +1034,7 @@ TestItem availableTests[] = {
 	TEST_ITEM(InputMapping),
 	TEST_ITEM(EscapeMenuString),
 	TEST_ITEM(VFS),
+	TEST_ITEM(Substitutions),
 };
 
 int main(int argc, const char *argv[]) {

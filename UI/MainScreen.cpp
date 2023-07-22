@@ -433,7 +433,7 @@ std::string GameButton::DescribeText() const {
 		return "...";
 
 	auto u = GetI18NCategory(I18NCat::UI_ELEMENTS);
-	return ReplaceAll(u->T("%1 button"), "%1", ginfo->GetTitle());
+	return ApplySafeSubstitutions(u->T("%1 button"), ginfo->GetTitle());
 }
 
 class DirButton : public UI::Button {
@@ -1260,6 +1260,8 @@ void MainScreen::CreateViews() {
 		root_->SetDefaultFocusView(tabHolder_);
 	}
 
+	root_->SetTag("mainroot");
+
 	auto u = GetI18NCategory(I18NCat::UPGRADE);
 
 	upgradeBar_ = 0;
@@ -1291,14 +1293,12 @@ bool MainScreen::key(const KeyInput &touch) {
 	if (touch.flags & KEY_DOWN) {
 		if (touch.keyCode == NKCODE_CTRL_LEFT || touch.keyCode == NKCODE_CTRL_RIGHT)
 			searchKeyModifier_ = true;
-		if (touch.keyCode == NKCODE_F && searchKeyModifier_) {
-#if PPSSPP_PLATFORM(WINDOWS) || defined(USING_QT_UI) || defined(__ANDROID__)
+		if (touch.keyCode == NKCODE_F && searchKeyModifier_ && System_GetPropertyBool(SYSPROP_HAS_TEXT_INPUT_DIALOG)) {
 			auto se = GetI18NCategory(I18NCat::SEARCH);
 			System_InputBoxGetString(se->T("Search term"), searchFilter_, [&](const std::string &value, int) {
 				searchFilter_ = StripSpaces(value);
 				searchChanged_ = true;
 			});
-#endif
 		}
 	} else if (touch.flags & KEY_UP) {
 		if (touch.keyCode == NKCODE_CTRL_LEFT || touch.keyCode == NKCODE_CTRL_RIGHT)
@@ -1377,7 +1377,7 @@ UI::EventReturn MainScreen::OnLoadFile(UI::EventParams &e) {
 	if (System_GetPropertyBool(SYSPROP_HAS_FILE_BROWSER)) {
 		auto mm = GetI18NCategory(I18NCat::MAINMENU);
 		System_BrowseForFile(mm->T("Load"), BrowseFileType::BOOTABLE, [](const std::string &value, int) {
-			NativeMessageReceived("boot", value.c_str());
+			System_PostUIMessage("boot", value.c_str());
 		});
 	}
 	return UI::EVENT_DONE;

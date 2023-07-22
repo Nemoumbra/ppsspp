@@ -21,7 +21,7 @@ static bool focusMovementEnabled;
 bool focusForced;
 static std::mutex eventMutex_;
 
-static std::function<void(UISound)> soundCallback;
+static std::function<void(UISound, float)> soundCallback;
 static bool soundEnabled = true;
 
 struct DispatchQueueItem {
@@ -133,16 +133,15 @@ void LayoutViewHierarchy(const UIContext &dc, ViewGroup *root, bool ignoreInsets
 	root->Layout();
 }
 
-void MoveFocus(ViewGroup *root, FocusDirection direction) {
-	if (!GetFocusedView()) {
+static void MoveFocus(ViewGroup *root, FocusDirection direction) {
+	View *focusedView = GetFocusedView();
+	if (!focusedView) {
 		// Nothing was focused when we got in here. Focus the first non-group in the hierarchy.
 		root->SetFocus();
 		return;
 	}
 
-	NeighborResult neigh(0, 0);
-	neigh = root->FindNeighbor(GetFocusedView(), direction, neigh);
-
+	NeighborResult neigh = root->FindNeighbor(focusedView, direction, NeighborResult());
 	if (neigh.view) {
 		neigh.view->SetFocus();
 		root->SubviewFocused(neigh.view);
@@ -155,13 +154,13 @@ void SetSoundEnabled(bool enabled) {
 	soundEnabled = enabled;
 }
 
-void SetSoundCallback(std::function<void(UISound)> func) {
+void SetSoundCallback(std::function<void(UISound, float)> func) {
 	soundCallback = func;
 }
 
-void PlayUISound(UISound sound) {
+void PlayUISound(UISound sound, float volume) {
 	if (soundEnabled && soundCallback) {
-		soundCallback(sound);
+		soundCallback(sound, volume);
 	}
 }
 
@@ -204,7 +203,7 @@ bool IsScrollKey(const KeyInput &input) {
 	}
 }
 
-KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
+static KeyEventResult KeyEventToFocusMoves(const KeyInput &key) {
 	KeyEventResult retval = KeyEventResult::PASS_THROUGH;
 	// Ignore repeats for focus moves.
 	if ((key.flags & (KEY_DOWN | KEY_IS_REPEAT)) == KEY_DOWN) {
@@ -215,6 +214,7 @@ KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
 			hk.deviceId = key.deviceId;
 			hk.triggerTime = time_now_d() + repeatDelay;
 
+			std::lock_guard<std::mutex> lock(focusLock);
 			// Check if the key is already held. If it is, ignore it. This is to avoid
 			// multiple key repeat mechanisms colliding.
 			if (heldKeys.find(hk) != heldKeys.end()) {
@@ -222,7 +222,6 @@ KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
 			}
 
 			heldKeys.insert(hk);
-			std::lock_guard<std::mutex> lock(focusLock);
 			focusMoves.push_back(key.keyCode);
 			retval = KeyEventResult::ACCEPT;
 		}
@@ -240,6 +239,11 @@ KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
 			}
 		}
 	}
+	return retval;
+}
+
+KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
+	KeyEventResult retval = KeyEventToFocusMoves(key);
 
 	// Ignore volume keys and stuff here. Not elegant but need to propagate bools through the view hierarchy as well...
 	switch (key.keyCode) {
@@ -249,39 +253,18 @@ KeyEventResult UnsyncKeyEvent(const KeyInput &key, ViewGroup *root) {
 		retval = KeyEventResult::PASS_THROUGH;
 		break;
 	default:
+		if (!(key.flags & KEY_IS_REPEAT)) {
+			// If a repeat, we follow what KeyEventToFocusMoves set it to.
+			// Otherwise we signal that we used the key, always.
+			retval = KeyEventResult::ACCEPT;
+		}
 		break;
 	}
 	return retval;
 }
 
-void KeyEvent(const KeyInput &key, ViewGroup *root) {
-	root->Key(key);
-}
-
-static void ProcessHeldKeys(ViewGroup *root) {
-	double now = time_now_d();
-
-restart:
-
-	for (std::set<HeldKey>::iterator iter = heldKeys.begin(); iter != heldKeys.end(); ++iter) {
-		if (iter->triggerTime < now) {
-			KeyInput key;
-			key.keyCode = iter->key;
-			key.deviceId = iter->deviceId;
-			key.flags = KEY_DOWN;
-			KeyEvent(key, root);
-
-			std::lock_guard<std::mutex> lock(focusLock);
-			focusMoves.push_back(key.keyCode);
-
-			// Cannot modify the current item when looping over a set, so let's do this instead.
-			HeldKey hk = *iter;
-			heldKeys.erase(hk);
-			hk.triggerTime = now + repeatInterval;
-			heldKeys.insert(hk);
-			goto restart;
-		}
-	}
+bool KeyEvent(const KeyInput &key, ViewGroup *root) {
+	return root->Key(key);
 }
 
 void TouchEvent(const TouchInput &touch, ViewGroup *root) {
@@ -292,6 +275,11 @@ void TouchEvent(const TouchInput &touch, ViewGroup *root) {
 	}
 }
 
+static void FakeKeyEvent(const KeyInput &key, ViewGroup *root) {
+	KeyEventToFocusMoves(key);
+	KeyEvent(key, root);
+}
+
 void AxisEvent(const AxisInput &axis, ViewGroup *root) {
 	enum class DirState {
 		NONE = 0,
@@ -299,9 +287,7 @@ void AxisEvent(const AxisInput &axis, ViewGroup *root) {
 		NEG = 2,
 	};
 	struct PrevState {
-		PrevState() : x(DirState::NONE), y(DirState::NONE) {
-		}
-
+		PrevState() : x(DirState::NONE), y(DirState::NONE) {}
 		DirState x;
 		DirState y;
 	};
@@ -320,18 +306,18 @@ void AxisEvent(const AxisInput &axis, ViewGroup *root) {
 
 	// Cannot use the remapper since this is for the menu, so we provide our own
 	// axis->button emulation here.
-	auto GenerateKeyFromAxis = [&](DirState old, DirState cur, InputKeyCode neg_key, InputKeyCode pos_key) {
+	auto GenerateKeyFromAxis = [=](DirState old, DirState cur, InputKeyCode neg_key, InputKeyCode pos_key) {
 		if (old == cur)
 			return;
 		if (old == DirState::POS) {
-			KeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, pos_key, KEY_UP }, root);
+			FakeKeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, pos_key, KEY_UP }, root);
 		} else if (old == DirState::NEG) {
-			KeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, neg_key, KEY_UP }, root);
+			FakeKeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, neg_key, KEY_UP }, root);
 		}
 		if (cur == DirState::POS) {
-			KeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, pos_key, KEY_DOWN }, root);
+			FakeKeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, pos_key, KEY_DOWN }, root);
 		} else if (cur == DirState::NEG) {
-			KeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, neg_key, KEY_DOWN }, root);
+			FakeKeyEvent(KeyInput{ DEVICE_ID_KEYBOARD, neg_key, KEY_DOWN }, root);
 		}
 	};
 
@@ -362,7 +348,7 @@ void AxisEvent(const AxisInput &axis, ViewGroup *root) {
 				// We stupidly interpret the joystick Y axis backwards on Android and Linux instead of reversing
 				// it early (see keymaps...). Too late to fix without invalidating a lot of config files, so we
 				// reverse it here too.
-#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(LINUX)
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(LINUX) || PPSSPP_PLATFORM(SWITCH)
 				GenerateKeyFromAxis(old.y, dir, NKCODE_DPAD_UP, NKCODE_DPAD_DOWN);
 #else
 				GenerateKeyFromAxis(old.y, dir, NKCODE_DPAD_DOWN, NKCODE_DPAD_UP);
@@ -383,6 +369,31 @@ void AxisEvent(const AxisInput &axis, ViewGroup *root) {
 	root->Axis(axis);
 }
 
+static void ProcessHeldKeys(ViewGroup *root) {
+	double now = time_now_d();
+
+restart:
+	for (std::set<HeldKey>::iterator iter = heldKeys.begin(); iter != heldKeys.end(); ++iter) {
+		if (iter->triggerTime < now) {
+			KeyInput key;
+			key.keyCode = iter->key;
+			key.deviceId = iter->deviceId;
+			key.flags = KEY_DOWN;
+			KeyEvent(key, root);
+
+			std::lock_guard<std::mutex> lock(focusLock);
+			focusMoves.push_back(key.keyCode);
+
+			// Cannot modify the current item when looping over a set, so let's do this instead.
+			HeldKey hk = *iter;
+			heldKeys.erase(hk);
+			hk.triggerTime = now + repeatInterval;
+			heldKeys.insert(hk);
+			goto restart;
+		}
+	}
+}
+
 void UpdateViewHierarchy(ViewGroup *root) {
 	ProcessHeldKeys(root);
 	frameCount++;
@@ -396,6 +407,7 @@ void UpdateViewHierarchy(ViewGroup *root) {
 		std::lock_guard<std::mutex> lock(focusLock);
 		EnableFocusMovement(true);
 		if (!GetFocusedView()) {
+			// Find a view to focus.
 			View *defaultView = root->GetDefaultFocusView();
 			// Can't focus what you can't see.
 			if (defaultView && defaultView->GetVisibility() == V_VISIBLE) {
@@ -425,4 +437,4 @@ void UpdateViewHierarchy(ViewGroup *root) {
 	DispatchEvents();
 }
 
-}
+}  // namespace UI

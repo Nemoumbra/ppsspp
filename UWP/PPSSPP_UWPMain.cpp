@@ -347,6 +347,8 @@ std::string System_GetProperty(SystemProperty prop) {
 		return "";
 	case SYSPROP_GPUDRIVER_VERSION:
 		return "";
+	case SYSPROP_BUILD_VERSION:
+		return PPSSPP_GIT_VERSION;
 	default:
 		return "";
 	}
@@ -487,6 +489,9 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 				break;
 			case BrowseFileType::DB:
 				picker->FileTypeFilter->Append(".db");
+				break;
+			case BrowseFileType::SOUND_EFFECT:
+				picker->FileTypeFilter->Append(".wav");
 				break;
 			case BrowseFileType::ANY:
 				picker->FileTypeFilter->Append("*");

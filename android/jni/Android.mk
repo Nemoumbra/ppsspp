@@ -5,8 +5,10 @@ include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
 
 LOCAL_C_INCLUDES += \
-  $(LOCAL_PATH)/../../ext/cpu_features/include
-LOCAL_CFLAGS += -DSTACK_LINE_READER_BUFFER_SIZE=1024 -DHAVE_DLFCN_H
+  $(LOCAL_PATH)/../../ext/cpu_features/include \
+  $(LOCAL_PATH)/../../ext/rcheevos/include
+
+LOCAL_CFLAGS += -DSTACK_LINE_READER_BUFFER_SIZE=1024 -DHAVE_DLFCN_H -DRC_DISABLE_LUA
 
 # http://software.intel.com/en-us/articles/getting-started-on-optimizing-ndk-project-for-multiple-cpu-architectures
 
@@ -77,6 +79,35 @@ SPIRV_CROSS_FILES := \
   $(SRC)/ext/SPIRV-Cross/spirv_glsl.cpp \
   $(SRC)/ext/SPIRV-Cross/spirv_parser.cpp \
   $(SRC)/ext/SPIRV-Cross/spirv_cross_parsed_ir.cpp
+
+NAETT_FILES := \
+  ${SRC}/ext/naett/naett.c
+
+RCHEEVOS_FILES := \
+  ${SRC}/ext/rcheevos/src/rapi/rc_api_common.c \
+  ${SRC}/ext/rcheevos/src/rapi/rc_api_editor.c \
+  ${SRC}/ext/rcheevos/src/rapi/rc_api_info.c \
+  ${SRC}/ext/rcheevos/src/rapi/rc_api_runtime.c \
+  ${SRC}/ext/rcheevos/src/rapi/rc_api_user.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/alloc.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/compat.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/condition.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/condset.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/consoleinfo.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/format.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/lboard.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/memref.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/operand.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/rc_client.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/rc_validate.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/richpresence.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/runtime.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/runtime_progress.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/trigger.c \
+  ${SRC}/ext/rcheevos/src/rcheevos/value.c \
+  ${SRC}/ext/rcheevos/src/rhash/cdreader.c \
+  ${SRC}/ext/rcheevos/src/rhash/hash.c \
+  ${SRC}/ext/rcheevos/src/rhash/md5.c
 
 VR_FILES := \
   $(SRC)/Common/VR/OpenXRLoader.cpp \
@@ -149,6 +180,8 @@ EXEC_AND_LIB_FILES := \
   $(VR_FILES) \
   $(VMA_FILES) \
   $(SPIRV_CROSS_FILES) \
+  $(RCHEEVOS_FILES) \
+  $(NAETT_FILES) \
   $(EXT_FILES) \
   $(NATIVE_FILES) \
   $(SRC)/Common/Buffer.cpp \
@@ -209,6 +242,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Math/lin/matrix4x4.cpp.arm \
   $(SRC)/Common/Net/HTTPClient.cpp \
   $(SRC)/Common/Net/HTTPHeaders.cpp \
+  $(SRC)/Common/Net/HTTPRequest.cpp \
+  $(SRC)/Common/Net/HTTPNaettRequest.cpp \
   $(SRC)/Common/Net/HTTPServer.cpp \
   $(SRC)/Common/Net/NetBuffer.cpp \
   $(SRC)/Common/Net/Resolve.cpp \
@@ -218,6 +253,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/Profiler/Profiler.cpp \
   $(SRC)/Common/System/Display.cpp \
   $(SRC)/Common/System/Request.cpp \
+  $(SRC)/Common/System/OSD.cpp \
   $(SRC)/Common/Thread/ThreadUtil.cpp \
   $(SRC)/Common/Thread/ThreadManager.cpp \
   $(SRC)/Common/Thread/ParallelLoop.cpp \
@@ -228,6 +264,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/UI/Context.cpp \
   $(SRC)/Common/UI/UIScreen.cpp \
   $(SRC)/Common/UI/Tween.cpp \
+  $(SRC)/Common/UI/IconCache.cpp \
   $(SRC)/Common/UI/View.cpp \
   $(SRC)/Common/UI/ViewGroup.cpp \
   $(SRC)/Common/UI/ScrollView.cpp \
@@ -464,6 +501,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPSLogger.cpp \
   $(SRC)/Core/Reporting.cpp \
   $(SRC)/Core/Replay.cpp \
+  $(SRC)/Core/RetroAchievements.cpp \
   $(SRC)/Core/SaveState.cpp \
   $(SRC)/Core/Screenshot.cpp \
   $(SRC)/Core/System.cpp \
@@ -477,6 +515,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Debugger/WebSocket.cpp \
   $(SRC)/Core/Debugger/WebSocket/BreakpointSubscriber.cpp \
   $(SRC)/Core/Debugger/WebSocket/CPUCoreSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/ClientConfigSubscriber.cpp \
   $(SRC)/Core/Debugger/WebSocket/DisasmSubscriber.cpp \
   $(SRC)/Core/Debugger/WebSocket/GameBroadcaster.cpp \
   $(SRC)/Core/Debugger/WebSocket/GameSubscriber.cpp \
@@ -728,6 +767,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/DisplayLayoutScreen.cpp \
   $(SRC)/UI/EmuScreen.cpp \
   $(SRC)/UI/MainScreen.cpp \
+  $(SRC)/UI/TabbedDialogScreen.cpp \
   $(SRC)/UI/MemStickScreen.cpp \
   $(SRC)/UI/MiscScreens.cpp \
   $(SRC)/UI/RemoteISOScreen.cpp \
@@ -751,7 +791,8 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/ProfilerDraw.cpp \
   $(SRC)/UI/NativeApp.cpp \
   $(SRC)/UI/Theme.cpp \
-  $(SRC)/UI/CustomButtonMappingScreen.cpp
+  $(SRC)/UI/CustomButtonMappingScreen.cpp \
+  $(SRC)/UI/RetroAchievementScreens.cpp
 
 ifneq ($(SKIPAPP),1)
   include $(BUILD_SHARED_LIBRARY)

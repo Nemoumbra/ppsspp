@@ -87,6 +87,7 @@
 #define MOUSEEVENTF_FROMTOUCH_NOPEN 0xFF515780 //http://msdn.microsoft.com/en-us/library/windows/desktop/ms703320(v=vs.85).aspx
 #define MOUSEEVENTF_MASK_PLUS_PENTOUCH 0xFFFFFF80
 
+// See https://github.com/unknownbrackets/verysleepy/commit/fc1b1b3bd6081fae3566cdb542d896e413238b71
 int verysleepy__useSendMessage = 1;
 
 const UINT WM_VERYSLEEPY_MSG = WM_APP + 0x3117;
@@ -240,7 +241,7 @@ namespace MainWindow
 				g_Config.iInternalResolution = 0;
 		}
 
-		NativeMessageReceived("gpu_renderResized", "");
+		System_PostUIMessage("gpu_renderResized", "");
 	}
 
 	void CorrectCursor() {
@@ -281,7 +282,7 @@ namespace MainWindow
 		SavePosition();
 		Core_NotifyWindowHidden(false);
 		if (!g_Config.bPauseWhenMinimized) {
-			NativeMessageReceived("window minimized", "false");
+			System_PostUIMessage("window minimized", "false");
 		}
 
 		int width = 0, height = 0;
@@ -304,8 +305,8 @@ namespace MainWindow
 		DEBUG_LOG(SYSTEM, "Pixel width/height: %dx%d", PSP_CoreParameter().pixelWidth, PSP_CoreParameter().pixelHeight);
 
 		if (UpdateScreenScale(width, height)) {
-			NativeMessageReceived("gpu_displayResized", "");
-			NativeMessageReceived("gpu_renderResized", "");
+			System_PostUIMessage("gpu_displayResized", "");
+			System_PostUIMessage("gpu_renderResized", "");
 		}
 
 		// Don't save the window state if fullscreen.
@@ -855,12 +856,12 @@ namespace MainWindow
 				}
 
 				if (wParam == WA_ACTIVE || wParam == WA_CLICKACTIVE) {
-					NativeMessageReceived("got_focus", "");
+					System_PostUIMessage("got_focus", "");
 					hasFocus = true;
 					trapMouse = true;
 				}
 				if (wParam == WA_INACTIVE) {
-					NativeMessageReceived("lost_focus", "");
+					System_PostUIMessage("lost_focus", "");
 					WindowsRawInput::LoseFocus();
 					InputDevice::LoseFocus();
 					hasFocus = false;
@@ -907,7 +908,7 @@ namespace MainWindow
 			case SIZE_MINIMIZED:
 				Core_NotifyWindowHidden(true);
 				if (!g_Config.bPauseWhenMinimized) {
-					NativeMessageReceived("window minimized", "true");
+					System_PostUIMessage("window minimized", "true");
 				}
 				InputDevice::LoseFocus();
 				break;
@@ -1031,7 +1032,7 @@ namespace MainWindow
 					TCHAR filename[512];
 					if (DragQueryFile(hdrop, 0, filename, 512) != 0) {
 						const std::string utf8_filename = ReplaceAll(ConvertWStringToUTF8(filename), "\\", "/");
-						NativeMessageReceived("boot", utf8_filename.c_str());
+						System_PostUIMessage("boot", utf8_filename.c_str());
 						Core_EnableStepping(false);
 					}
 				}

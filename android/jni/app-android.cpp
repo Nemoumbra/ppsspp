@@ -61,6 +61,7 @@ struct JNIEnv {};
 #include "Common/System/Display.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
+#include "Common/System/OSD.h"
 #include "Common/System/Request.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/File/Path.h"
@@ -89,6 +90,7 @@ struct JNIEnv {};
 #include "Core/ConfigValues.h"
 #include "Core/Loaders.h"
 #include "Core/FileLoaders/LocalFileLoader.h"
+#include "Core/KeyMap.h"
 #include "Core/System.h"
 #include "Core/HLE/sceUsbCam.h"
 #include "Core/HLE/sceUsbGps.h"
@@ -156,7 +158,8 @@ static int desiredBackbufferSizeX;
 static int desiredBackbufferSizeY;
 
 // Cache the class loader so we can use it from native threads. Required for TextAndroid.
-static JavaVM* gJvm = nullptr;
+extern JavaVM *gJvm;
+
 static jobject gClassLoader;
 static jmethodID gFindClassMethod;
 
@@ -368,7 +371,7 @@ static void EmuThreadJoin() {
 
 static void ProcessFrameCommands(JNIEnv *env);
 
-void PushCommand(std::string cmd, std::string param) {
+static void PushCommand(std::string cmd, std::string param) {
 	std::lock_guard<std::mutex> guard(frameCommandLock);
 	frameCommands.push(FrameCommand(cmd, param));
 }
@@ -410,6 +413,8 @@ std::string System_GetProperty(SystemProperty prop) {
 		return mogaVersion;
 	case SYSPROP_BOARDNAME:
 		return boardName;
+	case SYSPROP_BUILD_VERSION:
+		return PPSSPP_GIT_VERSION;
 	default:
 		return "";
 	}
@@ -480,6 +485,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		}
 	case SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE:
 		return sustainedPerfSupported;  // 7.0 introduced sustained performance mode as an optional feature.
+	case SYSPROP_HAS_TEXT_INPUT_DIALOG:
+		return true;
 	case SYSPROP_HAS_OPEN_DIRECTORY:
 		return false;
 	case SYSPROP_HAS_ADDITIONAL_STORAGE:
@@ -528,6 +535,10 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		}
 	case SYSPROP_HAS_KEYBOARD:
 		return deviceType != DEVICE_TYPE_VR;
+#ifndef HTTPS_NOT_AVAILABLE
+	case SYSPROP_SUPPORTS_HTTPS:
+		return true;
+#endif
 	default:
 		return false;
 	}
@@ -856,7 +867,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
 	INFO_LOG(SYSTEM, "NativeApp.resume() - resuming audio");
 	AndroidAudio_Resume(g_audioState);
 
-	NativeMessageReceived("app_resumed", "");
+	System_PostUIMessage("app_resumed", "");
 }
 
 extern "C" void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
@@ -946,7 +957,7 @@ extern "C" bool Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * env, 
 		}
 
 		graphicsContext->GetDrawContext()->SetErrorCallback([](const char *shortDesc, const char *details, void *userdata) {
-			System_NotifyUserMessage(details, 5.0, 0xFFFFFFFF, "error_callback");
+			g_OSD.Show(OSDType::MESSAGE_ERROR, details, 5.0);
 		}, nullptr);
 
 		EmuThreadStart();
@@ -962,14 +973,14 @@ extern "C" bool Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * env, 
 		}
 
 		graphicsContext->GetDrawContext()->SetErrorCallback([](const char *shortDesc, const char *details, void *userdata) {
-			System_NotifyUserMessage(details, 5.0, 0xFFFFFFFF, "error_callback");
+			g_OSD.Show(OSDType::MESSAGE_ERROR, details, 5.0);
 		}, nullptr);
 
 		graphicsContext->ThreadStart();
 		renderer_inited = true;
 	}
 
-	NativeMessageReceived("recreateviews", "");
+	System_PostUIMessage("recreateviews", "");
 
 	if (IsVREnabled()) {
 		EnterVR(firstStart, graphicsContext->GetAPIContext());
@@ -1033,6 +1044,9 @@ void System_Notify(SystemNotification notification) {
 	case SystemNotification::SUSTAINED_PERF_CHANGE:
 		PushCommand("sustainedPerfMode", "");
 		break;
+	case SystemNotification::TEST_JAVA_EXCEPTION:
+		PushCommand("testException", "This is a test exception");
+		break;
 	default:
 		break;
 	}
@@ -1059,8 +1073,18 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 		PushCommand("browse_image", StringFromFormat("%d", requestId));
 		return true;
 	case SystemRequestType::BROWSE_FOR_FILE:
-		PushCommand("browse_file", StringFromFormat("%d", requestId));
+	{
+		BrowseFileType fileType = (BrowseFileType)param3;
+		switch (fileType) {
+		case BrowseFileType::SOUND_EFFECT:
+			PushCommand("browse_file_audio", StringFromFormat("%d", requestId));
+			break;
+		default:
+			PushCommand("browse_file", StringFromFormat("%d", requestId));
+			break;
+		}
 		return true;
+	}
 	case SystemRequestType::BROWSE_FOR_FOLDER:
 		PushCommand("browse_folder", StringFromFormat("%d", requestId));
 		return true;
@@ -1086,16 +1110,8 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 }
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendRequestResult(JNIEnv *env, jclass, jint jrequestID, jboolean result, jstring jvalue, jint jintValue) {
-	std::string value = GetJavaString(env, jvalue);
-
-	static jint lastSeqID = -1;
-	if (lastSeqID == jrequestID) {
-		// We send this on dismiss, so twice in many cases.
-		WARN_LOG(SYSTEM, "Ignoring duplicate sendInputBox");
-		return;
-	}
-	lastSeqID = jrequestID;
-
+	std::string value = jvalue ? GetJavaString(env, jvalue) : "(no value)";
+	INFO_LOG(SYSTEM, "Received result of request %d from Java: %d: %d '%s'", jrequestID, (int)result, jintValue, value.c_str());
 	if (result) {
 		g_requestManager.PostSystemSuccess(jrequestID, value.c_str());
 	} else {
@@ -1166,20 +1182,19 @@ PermissionStatus System_GetPermissionStatus(SystemPermission permission) {
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
 	(JNIEnv *, jclass, float x, float y, int code, int pointerId) {
-
-	float scaledX = x * g_display.dpi_scale_x;
-	float scaledY = y * g_display.dpi_scale_y;
-
+	if (!renderer_inited)
+		return;
 	TouchInput touch;
 	touch.id = pointerId;
-	touch.x = scaledX;
-	touch.y = scaledY;
+	touch.x = x * g_display.dpi_scale_x;
+	touch.y = y * g_display.dpi_scale_y;
 	touch.flags = code;
-
 	NativeTouch(touch);
 }
 
 extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, jint deviceId, jint key, jboolean isRepeat) {
+	if (!renderer_inited)
+		return false;
 	KeyInput keyInput;
 	keyInput.deviceId = (InputDeviceID)deviceId;
 	keyInput.keyCode = (InputKeyCode)key;
@@ -1191,6 +1206,8 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, j
 }
 
 extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jint deviceId, jint key) {
+	if (!renderer_inited)
+		return false;
 	KeyInput keyInput;
 	keyInput.deviceId = (InputDeviceID)deviceId;
 	keyInput.keyCode = (InputKeyCode)key;
@@ -1204,10 +1221,9 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 		return;
 
 	AxisInput axis;
-	axis.axisId = (InputAxis)axisId;
 	axis.deviceId = (InputDeviceID)deviceId;
+	axis.axisId = (InputAxis)axisId;
 	axis.value = value;
-
 	NativeAxis(axis);
 }
 
@@ -1215,7 +1231,6 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
 	JNIEnv *env, jclass, jint stick, jfloat x, jfloat y) {
 	if (!renderer_inited)
 		return false;
-
 	// TODO: Support mousewheel for android
 	return true;
 }
@@ -1240,9 +1255,12 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_accelerometer(JNIEnv *,
 	NativeAxis(axis);
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessage(JNIEnv *env, jclass, jstring message, jstring param) {
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNIEnv *env, jclass, jstring message, jstring param) {
 	std::string msg = GetJavaString(env, message);
 	std::string prm = GetJavaString(env, param);
+
+	// A bit ugly, see InputDeviceState.java.
+	static InputDeviceID nextInputDeviceID = DEVICE_ID_ANY;
 
 	// Some messages are caught by app-android. TODO: Should be all.
 	if (msg == "moga") {
@@ -1251,12 +1269,16 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessage(JNIEnv *env
 		INFO_LOG(SYSTEM, "STORAGE PERMISSION: PENDING");
 		// TODO: Add support for other permissions
 		permissions[SYSTEM_PERMISSION_STORAGE] = PERMISSION_STATUS_PENDING;
+		// Don't need to send along, nothing else is listening.
 	} else if (msg == "permission_denied") {
 		INFO_LOG(SYSTEM, "STORAGE PERMISSION: DENIED");
 		permissions[SYSTEM_PERMISSION_STORAGE] = PERMISSION_STATUS_DENIED;
+		// Don't need to send along, nothing else is listening.
 	} else if (msg == "permission_granted") {
 		INFO_LOG(SYSTEM, "STORAGE PERMISSION: GRANTED");
 		permissions[SYSTEM_PERMISSION_STORAGE] = PERMISSION_STATUS_GRANTED;
+		// Send along.
+		System_PostUIMessage(msg.c_str(), prm.c_str());
 	} else if (msg == "sustained_perf_supported") {
 		sustainedPerfSupported = true;
 	} else if (msg == "safe_insets") {
@@ -1269,10 +1291,18 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessage(JNIEnv *env
 			g_safeInsetTop = (float)top * g_display.dpi_scale_y;
 			g_safeInsetBottom = (float)bottom * g_display.dpi_scale_y;
 		}
+	} else if (msg == "inputDeviceConnectedID") {
+		nextInputDeviceID = (InputDeviceID)parseLong(prm);
+	} else if (msg == "inputDeviceConnected") {
+		KeyMap::NotifyPadConnected(nextInputDeviceID, prm);
+	} else if (msg == "core_powerSaving") {
+		// Forward.
+		System_PostUIMessage(msg.c_str(), prm.c_str());
+	} else if (msg == "exception") {
+		g_OSD.Show(OSDType::MESSAGE_ERROR, std::string("Java Exception"), prm, 10.0f);
+	} else {
+		ERROR_LOG(SYSTEM, "Got unexpected message from Java, ignoring: %s / %s", msg.c_str(), prm.c_str());
 	}
-
-	// Ensures that the receiver can handle it on a sensible thread.
-	NativeMessageReceived(msg.c_str(), prm.c_str());
 }
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeActivity_requestExitVulkanRenderLoop(JNIEnv *env, jobject obj) {

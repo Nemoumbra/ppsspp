@@ -5,6 +5,7 @@
 #include <functional>
 #include <vector>
 
+#include "Common/Data/Collections/FastVec.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/GPUBackendCommon.h"
 
@@ -135,6 +136,8 @@ public:
 		return blocks_[curBlockIndex_].writePtr;
 	}
 
+	// NOTE: If you can avoid this by writing the data directly into memory returned from Allocate,
+	// do so. Savings from avoiding memcpy can be significant.
 	VkDeviceSize Push(const void *data, VkDeviceSize numBytes, int alignment, VkBuffer *vkbuf) {
 		uint32_t bindOffset;
 		uint8_t *ptr = Allocate(numBytes, alignment, vkbuf, &bindOffset);
@@ -203,4 +206,3 @@ private:
 	uint32_t usage_ = 0;
 	bool grow_;
 };
-
