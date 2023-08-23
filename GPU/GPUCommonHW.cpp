@@ -191,12 +191,12 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_ANTIALIASENABLE, FLAG_FLUSHBEFOREONCHANGE },
 
 	// Viewport.
-	{ GE_CMD_OFFSETX, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
-	{ GE_CMD_OFFSETY, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
-	{ GE_CMD_VIEWPORTXSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
-	{ GE_CMD_VIEWPORTYSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
-	{ GE_CMD_VIEWPORTXCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
-	{ GE_CMD_VIEWPORTYCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
+	{ GE_CMD_OFFSETX, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
+	{ GE_CMD_OFFSETY, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
+	{ GE_CMD_VIEWPORTXSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULL_PLANES },
+	{ GE_CMD_VIEWPORTYSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULL_PLANES },
+	{ GE_CMD_VIEWPORTXCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULL_PLANES },
+	{ GE_CMD_VIEWPORTYCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULL_PLANES },
 	{ GE_CMD_VIEWPORTZSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_DEPTHRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
 	{ GE_CMD_VIEWPORTZCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_CULLRANGE | DIRTY_DEPTHRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
 	{ GE_CMD_DEPTHCLAMPENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_RASTER_STATE },
@@ -206,12 +206,12 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_MAXZ, FLAG_FLUSHBEFOREONCHANGE, DIRTY_DEPTHRANGE | DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
 
 	// Region
-	{ GE_CMD_REGION1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
-	{ GE_CMD_REGION2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
+	{ GE_CMD_REGION1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
+	{ GE_CMD_REGION2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
 
 	// Scissor
-	{ GE_CMD_SCISSOR1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
-	{ GE_CMD_SCISSOR2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE },
+	{ GE_CMD_SCISSOR1, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
+	{ GE_CMD_SCISSOR2, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_CULLRANGE | DIRTY_CULL_PLANES },
 
 	// Lighting base colors
 	{ GE_CMD_AMBIENTCOLOR, FLAG_FLUSHBEFOREONCHANGE, DIRTY_AMBIENT },
@@ -607,7 +607,11 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 		features |= GPU_USE_VS_RANGE_CULLING;
 	}
 
-	if (draw_->GetShaderLanguageDesc().bitwiseOps) {
+	if (draw_->GetDeviceCaps().framebufferFetchSupported) {
+		features |= GPU_USE_FRAMEBUFFER_FETCH;
+	}
+
+	if (draw_->GetShaderLanguageDesc().bitwiseOps && g_Config.bUberShaderVertex) {
 		features |= GPU_USE_LIGHT_UBERSHADER;
 	}
 
@@ -618,6 +622,11 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 	// Even without depth clamp, force accurate depth on for some games that break without it.
 	if (PSP_CoreParameter().compat.flags().DepthRangeHack) {
 		features |= GPU_USE_ACCURATE_DEPTH;
+	}
+
+	// Some backends will turn this off again in the calling function.
+	if (g_Config.bUberShaderFragment) {
+		features |= GPU_USE_FRAGMENT_UBERSHADER;
 	}
 
 	return features;
@@ -1364,7 +1373,7 @@ void GPUCommonHW::Execute_WorldMtxNum(u32 op, u32 diff) {
 			if (dst[i] != newVal) {
 				Flush();
 				dst[i] = newVal;
-				gstate_c.Dirty(DIRTY_WORLDMATRIX);
+				gstate_c.Dirty(DIRTY_WORLDMATRIX | DIRTY_CULL_PLANES);
 			}
 			if (++i >= end) {
 				break;
@@ -1387,7 +1396,7 @@ void GPUCommonHW::Execute_WorldMtxData(u32 op, u32 diff) {
 	if (num < 12 && newVal != ((const u32 *)gstate.worldMatrix)[num]) {
 		Flush();
 		((u32 *)gstate.worldMatrix)[num] = newVal;
-		gstate_c.Dirty(DIRTY_WORLDMATRIX);
+		gstate_c.Dirty(DIRTY_WORLDMATRIX | DIRTY_CULL_PLANES);
 	}
 	num++;
 	gstate.worldmtxnum = (GE_CMD_WORLDMATRIXNUMBER << 24) | (num & 0x00FFFFFF);
@@ -1417,7 +1426,7 @@ void GPUCommonHW::Execute_ViewMtxNum(u32 op, u32 diff) {
 			if (dst[i] != newVal) {
 				Flush();
 				dst[i] = newVal;
-				gstate_c.Dirty(DIRTY_VIEWMATRIX);
+				gstate_c.Dirty(DIRTY_VIEWMATRIX | DIRTY_CULL_PLANES);
 			}
 			if (++i >= end) {
 				break;
@@ -1440,7 +1449,7 @@ void GPUCommonHW::Execute_ViewMtxData(u32 op, u32 diff) {
 	if (num < 12 && newVal != ((const u32 *)gstate.viewMatrix)[num]) {
 		Flush();
 		((u32 *)gstate.viewMatrix)[num] = newVal;
-		gstate_c.Dirty(DIRTY_VIEWMATRIX);
+		gstate_c.Dirty(DIRTY_VIEWMATRIX | DIRTY_CULL_PLANES);
 	}
 	num++;
 	gstate.viewmtxnum = (GE_CMD_VIEWMATRIXNUMBER << 24) | (num & 0x00FFFFFF);
@@ -1470,7 +1479,7 @@ void GPUCommonHW::Execute_ProjMtxNum(u32 op, u32 diff) {
 			if (dst[i] != newVal) {
 				Flush();
 				dst[i] = newVal;
-				gstate_c.Dirty(DIRTY_PROJMATRIX);
+				gstate_c.Dirty(DIRTY_PROJMATRIX | DIRTY_CULL_PLANES);
 			}
 			if (++i >= end) {
 				break;
@@ -1493,7 +1502,7 @@ void GPUCommonHW::Execute_ProjMtxData(u32 op, u32 diff) {
 	if (num < 16 && newVal != ((const u32 *)gstate.projMatrix)[num]) {
 		Flush();
 		((u32 *)gstate.projMatrix)[num] = newVal;
-		gstate_c.Dirty(DIRTY_PROJMATRIX);
+		gstate_c.Dirty(DIRTY_PROJMATRIX | DIRTY_CULL_PLANES);
 	}
 	num++;
 	if (num <= 16)
@@ -1643,8 +1652,8 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 	float vertexAverageCycles = gpuStats.numVertsSubmitted > 0 ? (float)gpuStats.vertexGPUCycles / (float)gpuStats.numVertsSubmitted : 0.0f;
 	return snprintf(buffer, size,
 		"DL processing time: %0.2f ms, %d drawsync, %d listsync\n"
-		"Draw calls: %d, flushes %d, clears %d (cached: %d)\n"
-		"Num Tracked Vertex Arrays: %d\n"
+		"Draw calls: %d, flushes %d, clears %d, bbox jumps %d (%d updates)\n"
+		"Cached draws: %d (tracked: %d)\n"
 		"Vertices: %d cached: %d uncached: %d\n"
 		"FBOs active: %d (evaluations: %d)\n"
 		"Textures: %d, dec: %d, invalidated: %d, hashed: %d kB\n"
@@ -1658,6 +1667,8 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numDrawCalls,
 		gpuStats.numFlushes,
 		gpuStats.numClears,
+		gpuStats.numBBOXJumps,
+		gpuStats.numPlaneUpdates,
 		gpuStats.numCachedDrawCalls,
 		gpuStats.numTrackedVertexArrays,
 		gpuStats.numVertsSubmitted,

@@ -243,7 +243,6 @@ protected:
 	}
 
 	void BeginFrame() override;
-	void UpdateVsyncInterval(bool force);
 
 	virtual void CheckDepthUsage(VirtualFramebuffer *vfb) {}
 	virtual void FastRunLoop(DisplayList &list) = 0;
@@ -352,6 +351,4 @@ private:
 	// Debug stats.
 	double timeSteppingStarted_;
 	double timeSpentStepping_;
-
-	int lastVsync_ = -1;
 };

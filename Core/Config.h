@@ -29,17 +29,6 @@
 
 extern const char *PPSSPP_GIT_VERSION;
 
-enum ChatPositions {
-	BOTTOM_LEFT = 0,
-	BOTTOM_CENTER = 1,
-	BOTOM_RIGHT = 2,
-	TOP_LEFT = 3,
-	TOP_CENTER = 4,
-	TOP_RIGHT = 5,
-	CENTER_LEFT = 6,
-	CENTER_RIGHT = 7,
-};
-
 namespace http {
 	class Request;
 	class RequestManager;
@@ -224,6 +213,8 @@ public:
 	int iSplineBezierQuality; // 0 = low , 1 = Intermediate , 2 = High
 	bool bHardwareTessellation;
 	bool bShaderCache;  // Hidden ini-only setting, useful for debugging shader compile times.
+	bool bUberShaderVertex;
+	bool bUberShaderFragment;
 
 	std::vector<std::string> vPostShaderNames; // Off for chain end (only Off for no shader)
 	std::map<std::string, float> mPostShaderSetting;
@@ -238,6 +229,7 @@ public:
 	bool bGfxDebugOutput;
 	int iInflightFrames;
 	bool bRenderDuplicateFrames;
+	bool bRenderMultiThreading;
 
 	// Sound
 	bool bEnableSound;
@@ -263,10 +255,6 @@ public:
 
 	// These aren't saved, just for instant debugging.
 	bool bLogFrameDrops;
-	bool bShowDebugStats;
-	bool bShowAudioDebug;
-	bool bShowControlDebug;
-	bool bShowGpuProfile;
 
 	// Analog stick tilting
 	// This is the held base angle (from the horizon), that we compute the tilt relative from.
@@ -386,6 +374,7 @@ public:
 	float fMouseSmoothing;
 
 	bool bSystemControls;
+	int iRapidFireInterval;
 
 	// Use the hardware scaler to scale up the image to save fillrate. Similar to Windows' window size, really.
 	int iAndroidHwScale;  // 0 = device resolution. 1 = 480x272 (extended to correct aspect), 2 = 960x544 etc.
@@ -474,16 +463,18 @@ public:
 	bool bDisplayStatusBar;
 	bool bShowBottomTabTitles;
 	bool bShowDeveloperMenu;
-	bool bShowAllocatorDebug;
+
 	// Double edged sword: much easier debugging, but not accurate.
 	bool bSkipDeadbeefFilling;
+
 	bool bFuncHashMap;
 	std::string sSkipFuncHashMap;
 	bool bDebugMemInfoDetailed;
-	bool bDrawFrameGraph;
 
 	// Volatile development settings
-	bool bShowFrameProfiler;
+	// Overlays
+	int iDebugOverlay;
+
 	bool bGpuLogProfiler; // Controls the Vulkan logging profiler (profiles textures uploads etc).
 
 	// Retro Achievement settings
@@ -494,6 +485,14 @@ public:
 	bool bAchievementsUnofficial;
 	bool bAchievementsSoundEffects;
 	bool bAchievementsLogBadMemReads;
+
+	// Positioning of the various notifications
+	int iAchievementsLeaderboardTrackerPos;
+	int iAchievementsLeaderboardStartedOrFailedPos;
+	int iAchievementsLeaderboardSubmittedPos;
+	int iAchievementsProgressPos;
+	int iAchievementsChallengePos;
+	int iAchievementsUnlockedPos;
 
 	// Customizations
 	std::string sAchievementsUnlockAudioFile;
@@ -569,6 +568,10 @@ public:
 	void SetAppendedConfigIni(const Path &path);
 	void UpdateAfterSettingAutoFrameSkip();
 	void NotifyUpdatedCpuCore();
+
+	// Applies the Auto setting if set. Returns an enum value from PSP_SYSTEMPARAM_LANGUAGE_*.
+	int GetPSPLanguage();
+
 protected:
 	void LoadStandardControllerIni();
 	void LoadLangValuesMapping();

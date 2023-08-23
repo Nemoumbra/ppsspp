@@ -49,7 +49,6 @@
 
 GPU_GLES::GPU_GLES(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	: GPUCommonHW(gfxCtx, draw), drawEngine_(draw), fragmentTestCache_(draw) {
-	UpdateVsyncInterval(true);
 	gstate_c.SetUseFlags(CheckGPUFeatures());
 
 	shaderManagerGL_ = new ShaderManagerGLES(draw);
@@ -86,8 +85,6 @@ GPU_GLES::GPU_GLES(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	UpdateCmdInfo();
 
 	BuildReportingInfo();
-	// Update again after init to be sure of any silly driver problems.
-	UpdateVsyncInterval(true);
 
 	textureCache_->NotifyConfigChanged();
 
@@ -180,6 +177,11 @@ u32 GPU_GLES::CheckGPUFeatures() const {
 		features |= GPU_USE_SINGLE_PASS_STEREO;
 	}
 
+	if (!gl_extensions.GLES3) {
+		// Heuristic.
+		features &= ~GPU_USE_FRAGMENT_UBERSHADER;
+	}
+
 	features = CheckGPUFeaturesLate(features);
 
 	if (draw_->GetBugs().Has(Draw::Bugs::ADRENO_RESOURCE_DEADLOCK) && g_Config.bVendorBugChecksEnabled) {
@@ -196,11 +198,6 @@ u32 GPU_GLES::CheckGPUFeatures() const {
 			features |= GPU_ROUND_DEPTH_TO_16BIT;
 		}
 	}
-
-	if (gl_extensions.GLES3) {
-		features |= GPU_USE_FRAGMENT_UBERSHADER;
-	}
-
 	return features;
 }
 
@@ -251,7 +248,6 @@ void GPU_GLES::DeviceRestore(Draw::DrawContext *draw) {
 	GPUCommonHW::DeviceRestore(draw);
 
 	fragmentTestCache_.DeviceRestore(draw_);
-	UpdateVsyncInterval(true);
 }
 
 void GPU_GLES::BeginHostFrame() {
@@ -308,9 +304,4 @@ void GPU_GLES::GetStats(char *buffer, size_t bufsize) {
 		shaderManagerGL_->GetNumFragmentShaders(),
 		shaderManagerGL_->GetNumPrograms()
 	);
-}
-
-std::string GPU_GLES::GetGpuProfileString() {
-	GLRenderManager *rm = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
-	return rm->GetGpuProfileString();
 }

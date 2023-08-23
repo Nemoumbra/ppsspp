@@ -667,18 +667,21 @@ SOURCES_CXX += \
 	       $(COREDIR)/HW/SasReverb.cpp \
 	       $(COREDIR)/HW/StereoResampler.cpp \
 	       $(COREDIR)/Compatibility.cpp \
+	       $(COREDIR)/FrameTiming.cpp \
 	       $(COREDIR)/Loaders.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitCommon.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitState.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitBlockCache.cpp \
+	       $(COREDIR)/MIPS/IR/IRAnalysis.cpp \
 	       $(COREDIR)/MIPS/IR/IRCompALU.cpp \
 	       $(COREDIR)/MIPS/IR/IRCompBranch.cpp \
 	       $(COREDIR)/MIPS/IR/IRCompFPU.cpp \
 	       $(COREDIR)/MIPS/IR/IRCompLoadStore.cpp \
 	       $(COREDIR)/MIPS/IR/IRCompVFPU.cpp \
+	       $(COREDIR)/MIPS/IR/IRInst.cpp \
 	       $(COREDIR)/MIPS/IR/IRInterpreter.cpp \
 	       $(COREDIR)/MIPS/IR/IRJit.cpp \
-	       $(COREDIR)/MIPS/IR/IRInst.cpp \
+	       $(COREDIR)/MIPS/IR/IRNativeCommon.cpp \
 	       $(COREDIR)/MIPS/IR/IRPassSimplify.cpp \
 	       $(COREDIR)/MIPS/IR/IRRegCache.cpp \
 	       $(COREDIR)/MIPS/IR/IRFrontend.cpp \
@@ -799,6 +802,15 @@ ifeq ($(WITH_DYNAREC),1)
 						$(COREDIR)/MIPS/x86/JitSafeMem.cpp \
 						$(COREDIR)/MIPS/x86/RegCache.cpp \
 						$(COREDIR)/MIPS/x86/RegCacheFPU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRAsm.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompALU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompBranch.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompFPU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompLoadStore.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompSystem.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompVec.cpp \
+						$(COREDIR)/MIPS/x86/X64IRJit.cpp \
+						$(COREDIR)/MIPS/x86/X64IRRegCache.cpp \
 						$(GPUDIR)/Common/VertexDecoderX86.cpp
    endif
 endif

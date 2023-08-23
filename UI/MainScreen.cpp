@@ -776,6 +776,15 @@ void GameBrowser::Refresh() {
 			if (System_GetPropertyBool(SYSPROP_HAS_FOLDER_BROWSER)) {
 				topBar->Add(new Choice(mm->T("Browse"), ImageID("I_FOLDER_OPEN"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::BrowseClick);
 			}
+			if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_TV) {
+				topBar->Add(new Choice(mm->T("Enter Path"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Add([=](UI::EventParams &) {
+					auto mm = GetI18NCategory(I18NCat::MAINMENU);
+					System_InputBoxGetString(mm->T("Enter Path"), path_.GetPath().ToString(), [=](const char *responseString, int responseValue) {
+						this->SetPath(Path(responseString));
+					});
+					return UI::EVENT_DONE;
+				});
+			}
 #endif
 		} else {
 			topBar->Add(new Spacer(new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
@@ -1235,11 +1244,8 @@ void MainScreen::CreateViews() {
 		}
 	}
 
-#if !PPSSPP_PLATFORM(UWP)
-	// Having an exit button is against UWP guidelines.
 	rightColumnChoices->Add(new Spacer(25.0));
 	rightColumnChoices->Add(new Choice(mm->T("Exit")))->OnClick.Handle(this, &MainScreen::OnExit);
-#endif
 
 	if (vertical) {
 		root_ = new LinearLayout(ORIENT_VERTICAL);
@@ -1592,7 +1598,7 @@ void UmdReplaceScreen::CreateViews() {
 			new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
 		scrollRecentGames->Add(tabRecentGames);
 		leftColumn->AddTab(mm->T("Recent"), scrollRecentGames);
-		tabRecentGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelectedInstant);
+		tabRecentGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 		tabRecentGames->OnHoldChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 	}
 	ScrollView *scrollAllGames = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
@@ -1606,7 +1612,7 @@ void UmdReplaceScreen::CreateViews() {
 
 	leftColumn->AddTab(mm->T("Games"), scrollAllGames);
 
-	tabAllGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelectedInstant);
+	tabAllGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 
 	tabAllGames->OnHoldChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 
@@ -1637,12 +1643,6 @@ UI::EventReturn UmdReplaceScreen::OnGameSelected(UI::EventParams &e) {
 
 UI::EventReturn UmdReplaceScreen::OnGameSettings(UI::EventParams &e) {
 	screenManager()->push(new GameSettingsScreen(Path()));
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn UmdReplaceScreen::OnGameSelectedInstant(UI::EventParams &e) {
-	__UmdReplace(Path(e.s));
-	TriggerFinish(DR_OK);
 	return UI::EVENT_DONE;
 }
 

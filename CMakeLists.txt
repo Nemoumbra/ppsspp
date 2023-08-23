@@ -182,14 +182,13 @@ if(UNIX AND NOT (APPLE OR ANDROID) AND VULKAN)
 	endif()
 
 	# add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
-	if(USE_WAYLAND_WSI)
-		find_package(Wayland)
-		if(NOT WAYLAND_FOUND)
-			message(STATUS "Could not find Wayland libraries, disabling Wayland WSI support for Vulkan.")
-		else()
-			include_directories(${WAYLAND_INCLUDE_DIR})
-			add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
-		endif()
+	find_package(Wayland)
+	if(NOT WAYLAND_FOUND)
+		message(STATUS "Could not find Wayland libraries, disabling Wayland WSI support for Vulkan.")
+	else()
+		include_directories(${WAYLAND_INCLUDE_DIR})
+		add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
+		add_definitions(-DUSE_WAYLAND_WSI=ON)
 	endif()
 
 	if(USE_VULKAN_DISPLAY_KHR)
@@ -258,11 +257,14 @@ endif()
 
 if(NOT LIBRETRO AND NOT IOS AND NOT MACOSX)
 	find_package(SDL2)
+	find_package(SDL2_ttf)
+	find_package(Fontconfig)
 endif()
 
 if(MACOSX AND NOT IOS)
 	if(USE_SYSTEM_LIBSDL2)
 		find_package(SDL2)
+		find_package(SDL2_ttf)
 	else()
 		find_library(SDL2Fwk SDL2 REQUIRED PATHS SDL/macOS)
 		message(STATUS "found SDL2Fwk=${SDL2Fwk}")
@@ -416,8 +418,11 @@ if(NOT MSVC)
 			add_definitions(-Wno-psabi)
 		endif()
 		add_definitions(-D_XOPEN_SOURCE=700)
-		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1 -D_BSD_SOURCE)
+		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1 -D_BSD_SOURCE -D_DEFAULT_SOURCE)
 		add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
+		if(${CMAKE_SYSTEM_NAME} STREQUAL "NetBSD")
+			add_definitions(-D_NETBSD_SOURCE)
+		endif()
 	elseif(ANDROID)
 		add_definitions(-fsigned-char)
 	endif()
@@ -748,6 +753,8 @@ add_library(Common STATIC
 	Common/Render/Text/draw_text.h
 	Common/Render/Text/draw_text_android.cpp
 	Common/Render/Text/draw_text_android.h
+	Common/Render/Text/draw_text_sdl.cpp
+	Common/Render/Text/draw_text_sdl.h
 	Common/Render/Text/draw_text_win.cpp
 	Common/Render/Text/draw_text_win.h
 	Common/Render/Text/draw_text_uwp.cpp
@@ -1178,15 +1185,6 @@ set(nativeExtra)
 set(nativeExtraLibs)
 
 if(ANDROID)
-	set(nativeExtra ${nativeExtra}
-		Common/GL/GLInterface/EGLAndroid.cpp
-		Common/GL/GLInterface/EGLAndroid.h
-		Common/GL/GLInterface/EGL.cpp
-		Common/GL/GLInterface/EGL.h
-		Common/GL/GLInterface/GLInterface.cpp
-		Common/GL/GLInterfaceBase.h
-	)
-
 	set(NativeAppSource ${NativeAppSource}
 		android/jni/app-android.cpp
 		android/jni/AndroidJavaGLContext.cpp
@@ -1317,6 +1315,15 @@ else()
 			SDL/SDLVulkanGraphicsContext.cpp
 		)
 	endif()
+	if(SDL2_ttf_FOUND)
+		add_definitions(-DUSE_SDL2_TTF)
+		set(nativeExtraLibs ${nativeExtraLibs} SDL2_ttf::SDL2_ttf)
+
+		if(FONTCONFIG_FOUND)
+			add_definitions(-DUSE_SDL2_TTF_FONTCONFIG)
+			set(nativeExtraLibs ${nativeExtraLibs} Fontconfig::Fontconfig)
+		endif()
+	endif()
 	if(APPLE)
 		set(nativeExtra ${nativeExtra} 
 		SDL/SDLMain.h 
@@ -1378,6 +1385,8 @@ list(APPEND NativeAppSource
 	UI/BackgroundAudio.cpp
 	UI/ChatScreen.h
 	UI/ChatScreen.cpp
+	UI/DebugOverlay.cpp
+	UI/DebugOverlay.h
 	UI/DevScreens.cpp
 	UI/DevScreens.h
 	UI/DisplayLayoutScreen.cpp
@@ -1526,6 +1535,8 @@ set(CoreExtra)
 set(CoreExtraLibs)
 
 set(CoreExtra ${CoreExtra}
+	Core/MIPS/IR/IRAnalysis.cpp
+	Core/MIPS/IR/IRAnalysis.h
 	Core/MIPS/IR/IRCompALU.cpp
 	Core/MIPS/IR/IRCompBranch.cpp
 	Core/MIPS/IR/IRCompFPU.cpp
@@ -1539,6 +1550,8 @@ set(CoreExtra ${CoreExtra}
 	Core/MIPS/IR/IRInterpreter.h
 	Core/MIPS/IR/IRJit.cpp
 	Core/MIPS/IR/IRJit.h
+	Core/MIPS/IR/IRNativeCommon.cpp
+	Core/MIPS/IR/IRNativeCommon.h
 	Core/MIPS/IR/IRPassSimplify.cpp
 	Core/MIPS/IR/IRPassSimplify.h
 	Core/MIPS/IR/IRRegCache.cpp
@@ -1598,6 +1611,17 @@ list(APPEND CoreExtra
 	Core/MIPS/x86/RegCache.h
 	Core/MIPS/x86/RegCacheFPU.cpp
 	Core/MIPS/x86/RegCacheFPU.h
+	Core/MIPS/x86/X64IRAsm.cpp
+	Core/MIPS/x86/X64IRCompALU.cpp
+	Core/MIPS/x86/X64IRCompBranch.cpp
+	Core/MIPS/x86/X64IRCompFPU.cpp
+	Core/MIPS/x86/X64IRCompLoadStore.cpp
+	Core/MIPS/x86/X64IRCompSystem.cpp
+	Core/MIPS/x86/X64IRCompVec.cpp
+	Core/MIPS/x86/X64IRJit.cpp
+	Core/MIPS/x86/X64IRJit.h
+	Core/MIPS/x86/X64IRRegCache.cpp
+	Core/MIPS/x86/X64IRRegCache.h
 	GPU/Common/VertexDecoderX86.cpp
 	GPU/Software/DrawPixelX86.cpp
 	GPU/Software/SamplerX86.cpp
@@ -1609,6 +1633,17 @@ list(APPEND CoreExtra
 )
 
 list(APPEND CoreExtra
+	Core/MIPS/RiscV/RiscVAsm.cpp
+	Core/MIPS/RiscV/RiscVCompALU.cpp
+	Core/MIPS/RiscV/RiscVCompBranch.cpp
+	Core/MIPS/RiscV/RiscVCompFPU.cpp
+	Core/MIPS/RiscV/RiscVCompLoadStore.cpp
+	Core/MIPS/RiscV/RiscVCompSystem.cpp
+	Core/MIPS/RiscV/RiscVCompVec.cpp
+	Core/MIPS/RiscV/RiscVJit.cpp
+	Core/MIPS/RiscV/RiscVJit.h
+	Core/MIPS/RiscV/RiscVRegCache.cpp
+	Core/MIPS/RiscV/RiscVRegCache.h
 	GPU/Common/VertexDecoderRiscV.cpp
 )
 
@@ -1829,6 +1864,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/CoreTiming.h
 	Core/CwCheat.cpp
 	Core/CwCheat.h
+	Core/FrameTiming.cpp
+	Core/FrameTiming.h
 	Core/HDRemaster.cpp
 	Core/HDRemaster.h
 	Core/Instance.cpp

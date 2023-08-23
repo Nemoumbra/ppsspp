@@ -84,8 +84,6 @@ GPU_Vulkan::GPU_Vulkan(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	}
 
 	BuildReportingInfo();
-	// Update again after init to be sure of any silly driver problems.
-	UpdateVsyncInterval(true);
 
 	textureCache_->NotifyConfigChanged();
 
@@ -286,10 +284,6 @@ u32 GPU_Vulkan::CheckGPUFeatures() const {
 			features |= GPU_USE_VS_RANGE_CULLING;
 		}
 	}
-
-	// Only a few low-power GPUs should probably avoid this.
-	// Let's figure that out later.
-	features |= GPU_USE_FRAGMENT_UBERSHADER;
 
 	// Attempt to workaround #17386
 	if (draw_->GetBugs().Has(Draw::Bugs::UNIFORM_INDEXING_BROKEN)) {
@@ -498,9 +492,4 @@ std::string GPU_Vulkan::DebugGetShaderString(std::string id, DebugShaderType typ
 	default:
 		return GPUCommonHW::DebugGetShaderString(id, type, stringType);
 	}
-}
-
-std::string GPU_Vulkan::GetGpuProfileString() {
-	VulkanRenderManager *rm = (VulkanRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
-	return rm->GetGpuProfileString();
 }

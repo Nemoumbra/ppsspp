@@ -90,6 +90,7 @@
 #include "Core/ConfigValues.h"
 #include "Core/Core.h"
 #include "Core/FileLoaders/DiskCachingFileLoader.h"
+#include "Core/FrameTiming.h"
 #include "Core/KeyMap.h"
 #include "Core/Reporting.h"
 #include "Core/RetroAchievements.h"
@@ -150,6 +151,8 @@
 #endif
 
 #include <Core/HLE/Plugins.h>
+
+void HandleGlobalMessage(const std::string &msg, const std::string &value);
 
 ScreenManager *g_screenManager;
 std::string config_filename;
@@ -287,15 +290,10 @@ static bool CheckFontIsUsable(const wchar_t *fontFace) {
 }
 #endif
 
-bool CreateDirectoriesAndroid();
-
 void PostLoadConfig() {
-	// On Windows, we deal with currentDirectory in InitSysDirectories().
-#if !PPSSPP_PLATFORM(WINDOWS)
 	if (g_Config.currentDirectory.empty()) {
 		g_Config.currentDirectory = g_Config.defaultCurrentDirectory;
 	}
-#endif
 
 	// Allow the lang directory to be overridden for testing purposes (e.g. Android, where it's hard to
 	// test new languages without recompiling the entire app, which is a hassle).
@@ -307,49 +305,9 @@ void PostLoadConfig() {
 	else
 		g_i18nrepo.LoadIni(g_Config.sLanguageIni, langOverridePath);
 
-#if PPSSPP_PLATFORM(ANDROID)
-	CreateDirectoriesAndroid();
+#if !PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
+	CreateSysDirectories();
 #endif
-}
-
-bool CreateDirectoriesAndroid() {
-	// TODO: We should probably simply use this as the shared function to create memstick directories.
-#if PPSSPP_PLATFORM(ANDROID)
-	const bool createNoMedia = true;
-#else
-	const bool createNoMedia = false;
-#endif
-
-	Path pspDir = GetSysDirectory(DIRECTORY_PSP);
-
-	INFO_LOG(IO, "Creating '%s' and subdirs:", pspDir.c_str());
-	File::CreateFullPath(pspDir);
-	if (!File::Exists(pspDir)) {
-		INFO_LOG(IO, "Not a workable memstick directory. Giving up");
-		return false;
-	}
-
-	static const PSPDirectories sysDirs[] = {
-		DIRECTORY_CHEATS,
-		DIRECTORY_SAVEDATA,
-		DIRECTORY_SAVESTATE,
-		DIRECTORY_GAME,
-		DIRECTORY_SYSTEM,
-		DIRECTORY_TEXTURES,
-		DIRECTORY_PLUGINS,
-		DIRECTORY_CACHE,
-	};
-
-	for (auto dir : sysDirs) {
-		Path path = GetSysDirectory(dir);
-		File::CreateFullPath(path);
-		if (createNoMedia) {
-			// Create a nomedia file in each specified subdirectory.
-			File::CreateEmptyFile(path / ".nomedia");
-		}
-	}
-
-	return true;
 }
 
 static void CheckFailedGPUBackends() {
@@ -473,8 +431,15 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 #endif
 	g_VFS.Register("", new DirectoryReader(Path(savegame_dir)));
 
+#if PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(MAC)
+	g_Config.defaultCurrentDirectory = Path(System_GetProperty(SYSPROP_USER_DOCUMENTS_DIR));
+#else
 	g_Config.defaultCurrentDirectory = Path("/");
+#endif
+
+#if !PPSSPP_PLATFORM(UWP)
 	g_Config.internalDataDirectory = Path(savegame_dir);
+#endif
 
 #if PPSSPP_PLATFORM(ANDROID)
 	// In Android 12 with scoped storage, due to the above, the external directory
@@ -517,15 +482,34 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 
 	// Attempt to create directories after reading the path.
 	if (!System_GetPropertyBool(SYSPROP_ANDROID_SCOPED_STORAGE)) {
-		CreateDirectoriesAndroid();
+		CreateSysDirectories();
 	}
-
+#elif PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
+	Path memstickDirFile = g_Config.internalDataDirectory / "memstick_dir.txt";
+	if (File::Exists(memstickDirFile)) {
+		INFO_LOG(SYSTEM, "Reading '%s' to find memstick dir.", memstickDirFile.c_str());
+		std::string memstickDir;
+		if (File::ReadFileToString(true, memstickDirFile, memstickDir)) {
+			Path memstickPath(memstickDir);
+			if (!memstickPath.empty() && File::Exists(memstickPath)) {
+				g_Config.memStickDirectory = memstickPath;
+				g_Config.SetSearchPath(GetSysDirectory(DIRECTORY_SYSTEM));
+				g_Config.Reload();
+				INFO_LOG(SYSTEM, "Memstick Directory from memstick_dir.txt: '%s'", g_Config.memStickDirectory.c_str());
+			} else {
+				ERROR_LOG(SYSTEM, "Couldn't read directory '%s' specified by memstick_dir.txt.", memstickDir.c_str());
+				g_Config.memStickDirectory.clear();
+			}
+		}
+	}
+	else {
+		INFO_LOG(SYSTEM, "No memstick directory file found (tried to open '%s')", memstickDirFile.c_str());
+	}
 #elif PPSSPP_PLATFORM(IOS)
 	g_Config.defaultCurrentDirectory = g_Config.internalDataDirectory;
 	g_Config.memStickDirectory = DarwinFileSystemServices::appropriateMemoryStickDirectoryToUse();
 	g_Config.flash0Directory = Path(std::string(external_dir)) / "flash0";
 #elif PPSSPP_PLATFORM(MAC)
-	g_Config.defaultCurrentDirectory = Path(getenv("HOME"));
 	g_Config.memStickDirectory = DarwinFileSystemServices::appropriateMemoryStickDirectoryToUse();
 	g_Config.flash0Directory = Path(std::string(external_dir)) / "flash0";
 #elif PPSSPP_PLATFORM(SWITCH)
@@ -551,11 +535,9 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	}
 #endif
 
-#if (PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)) || PPSSPP_PLATFORM(MAC)
 	if (g_Config.currentDirectory.empty()) {
-		g_Config.currentDirectory = Path("/");
+		g_Config.currentDirectory = g_Config.defaultCurrentDirectory;
 	}
-#endif
 
 	if (cache_dir && strlen(cache_dir)) {
 		g_Config.appCacheDirectory = Path(cache_dir);
@@ -621,7 +603,11 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 				g_Config.bSaveSettings = false;
 				break;
 			case 'r':
-				g_Config.iCpuCore = (int)CPUCore::IR_JIT;
+				g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
+				g_Config.bSaveSettings = false;
+				break;
+			case 'J':
+				g_Config.iCpuCore = (int)CPUCore::JIT_IR;
 				g_Config.bSaveSettings = false;
 				break;
 			case '-':
@@ -825,7 +811,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	// We do this here, instead of in NativeInitGraphics, because the display may be reset.
 	// When it's reset we don't want to forget all our managed things.
 	CheckFailedGPUBackends();
-	SetGPUBackend((GPUBackend) g_Config.iGPUBackend);
+	SetGPUBackend((GPUBackend)g_Config.iGPUBackend);
 	renderCounter = 0;
 
 	// Initialize retro achievements runtime.
@@ -1047,23 +1033,8 @@ void RenderOverlays(UIContext *dc, void *userdata) {
 	}
 }
 
-void NativeRender(GraphicsContext *graphicsContext) {
-	_dbg_assert_(graphicsContext != nullptr);
-	_dbg_assert_(g_screenManager != nullptr);
-
-	g_GameManager.Update();
-
-	if (GetUIState() != UISTATE_INGAME) {
-		// Note: We do this from NativeRender so that the graphics context is
-		// guaranteed valid, to be safe - g_gameInfoCache messes around with textures.
-		g_BackgroundAudio.Update();
-	}
-
-	float xres = g_display.dp_xres;
-	float yres = g_display.dp_yres;
-
-	// Apply the UIContext bounds as a 2D transformation matrix.
-	// TODO: This should be moved into the draw context...
+static Matrix4x4 ComputeOrthoMatrix(float xres, float yres) {
+	// TODO: Should be able to share the y-flip logic here with the one in postprocessing/presentation, for example.
 	Matrix4x4 ortho;
 	switch (GetGPUBackend()) {
 	case GPUBackend::VULKAN:
@@ -1091,24 +1062,91 @@ void NativeRender(GraphicsContext *graphicsContext) {
 	if (g_display.rotation != DisplayRotation::ROTATE_0) {
 		ortho = ortho * g_display.rot_matrix;
 	}
+	return ortho;
+}
+
+void NativeFrame(GraphicsContext *graphicsContext) {
+	PROFILE_END_FRAME();
+
+	std::vector<PendingMessage> toProcess;
+	{
+		std::lock_guard<std::mutex> lock(pendingMutex);
+		toProcess = std::move(pendingMessages);
+		pendingMessages.clear();
+	}
+
+	for (const auto &item : toProcess) {
+		HandleGlobalMessage(item.msg, item.value);
+		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
+	}
+
+	g_requestManager.ProcessRequests();
+
+	// it's ok to call this redundantly with DoFrame from EmuScreen
+	Achievements::Idle();
+
+	g_DownloadManager.Update();
+	g_screenManager->update();
+
+	g_Discord.Update();
+	g_BackgroundAudio.Play();
+
+	g_OSD.Update();
+
+	UI::SetSoundEnabled(g_Config.bUISound);
+
+	_dbg_assert_(graphicsContext != nullptr);
+	_dbg_assert_(g_screenManager != nullptr);
+
+	g_GameManager.Update();
+
+	if (GetUIState() != UISTATE_INGAME) {
+		// Note: We do this from NativeFrame so that the graphics context is
+		// guaranteed valid, to be safe - g_gameInfoCache messes around with textures.
+		g_BackgroundAudio.Update();
+	}
+
+	// Apply the UIContext bounds as a 2D transformation matrix.
+	// TODO: This should be moved into the draw context...
+	Matrix4x4 ortho = ComputeOrthoMatrix(g_display.dp_xres, g_display.dp_yres);
+
+	Draw::DebugFlags debugFlags = Draw::DebugFlags::NONE;
+	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::GPU_PROFILE)
+		debugFlags |= Draw::DebugFlags::PROFILE_TIMESTAMPS;
+	if (g_Config.bGpuLogProfiler)
+		debugFlags |= Draw::DebugFlags::PROFILE_SCOPES;
+
+	g_frameTiming.Reset(g_draw);
+
+	g_draw->BeginFrame(debugFlags);
 
 	ui_draw2d.PushDrawMatrix(ortho);
 	ui_draw2d_front.PushDrawMatrix(ortho);
 
 	g_screenManager->getUIContext()->SetTintSaturation(g_Config.fUITint, g_Config.fUISaturation);
 
-	Draw::DebugFlags debugFlags = Draw::DebugFlags::NONE;
-	if (g_Config.bShowGpuProfile)
-		debugFlags |= Draw::DebugFlags::PROFILE_TIMESTAMPS;
-	if (g_Config.bGpuLogProfiler)
-		debugFlags |= Draw::DebugFlags::PROFILE_SCOPES;
-	g_screenManager->getDrawContext()->SetDebugFlags(debugFlags);
-
 	// All actual rendering happen in here.
 	g_screenManager->render();
 	if (g_screenManager->getUIContext()->Text()) {
 		g_screenManager->getUIContext()->Text()->OncePerFrame();
 	}
+
+	ui_draw2d.PopDrawMatrix();
+	ui_draw2d_front.PopDrawMatrix();
+
+	g_draw->EndFrame();
+
+	// This, between EndFrame and Present, is where we should actually wait to do present time management.
+	// There might not be a meaningful distinction here for all backends..
+
+	if (renderCounter < 10 && ++renderCounter == 10) {
+		// We're rendering fine, clear out failure info.
+		ClearFailedGPUBackends();
+	}
+
+	int interval;
+	Draw::PresentMode presentMode = ComputePresentMode(g_draw, &interval);
+	g_draw->Present(presentMode, interval);
 
 	if (resized) {
 		INFO_LOG(G3D, "Resized flag set - recalculating bounds");
@@ -1140,14 +1178,6 @@ void NativeRender(GraphicsContext *graphicsContext) {
 	} else {
 		// INFO_LOG(G3D, "Polling graphics context");
 		graphicsContext->Poll();
-	}
-
-	ui_draw2d.PopDrawMatrix();
-	ui_draw2d_front.PopDrawMatrix();
-
-	if (renderCounter < 10 && ++renderCounter == 10) {
-		// We're rendering fine, clear out failure info.
-		ClearFailedGPUBackends();
 	}
 }
 
@@ -1186,15 +1216,12 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		Core_SetPowerSaving(value != "false");
 	}
 	else if (msg == "permission_granted" && value == "storage") {
-#if PPSSPP_PLATFORM(ANDROID)
-		CreateDirectoriesAndroid();
-#endif
+		CreateSysDirectories();
 		// We must have failed to load the config before, so load it now to avoid overwriting the old config
 		// with a freshly generated one.
 		// NOTE: If graphics backend isn't what's in the config (due to error fallback, or not matching the default
 		// and then getting permission), it will get out of sync. So we save and restore g_Config.iGPUBackend.
-		// Ideally we should simply reinitialize graphics to the mode from the config, but there are potential issues
-		// and I can't risk it before 1.9.0.
+		// Ideally we should simply reinitialize graphics to the mode from the config, but there are potential issues.
 		int gpuBackend = g_Config.iGPUBackend;
 		INFO_LOG(IO, "Reloading config after storage permission grant.");
 		g_Config.Reload();
@@ -1204,37 +1231,6 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		// Assume that the user may have modified things.
 		MemoryStick_NotifyWrite();
 	}
-}
-
-void NativeUpdate() {
-	PROFILE_END_FRAME();
-
-	std::vector<PendingMessage> toProcess;
-	{
-		std::lock_guard<std::mutex> lock(pendingMutex);
-		toProcess = std::move(pendingMessages);
-		pendingMessages.clear();
-	}
-
-	for (const auto &item : toProcess) {
-		HandleGlobalMessage(item.msg, item.value);
-		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
-	}
-
-	g_requestManager.ProcessRequests();
-
-	// it's ok to call this redundantly with DoFrame from EmuScreen
-	Achievements::Idle();
-
-	g_DownloadManager.Update();
-	g_screenManager->update();
-
-	g_Discord.Update();
-	g_BackgroundAudio.Play();
-
-	g_OSD.Update();
-
-	UI::SetSoundEnabled(g_Config.bUISound);
 }
 
 bool NativeIsAtTopLevel() {

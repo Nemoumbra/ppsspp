@@ -77,6 +77,7 @@ std::string s_game_hash;
 std::set<uint32_t> g_activeChallenges;
 bool g_isIdentifying = false;
 bool g_isLoggingIn = false;
+int g_loginResult;
 
 // rc_client implementation
 static rc_client_t *g_rcClient;
@@ -88,7 +89,7 @@ rc_client_t *GetClient() {
 }
 
 bool IsLoggedIn() {
-	return rc_client_get_user_info(g_rcClient) != nullptr;
+	return rc_client_get_user_info(g_rcClient) != nullptr && !g_isLoggingIn;
 }
 
 bool EncoreModeActive() {
@@ -128,7 +129,11 @@ bool WarnUserIfChallengeModeActive(const char *message) {
 }
 
 bool IsBlockingExecution() {
-	return g_isIdentifying || g_isLoggingIn;
+	if (g_isLoggingIn || g_isIdentifying) {
+		// Useful for debugging race conditions.
+		// INFO_LOG(ACHIEVEMENTS, "isLoggingIn: %d   isIdentifying: %d", (int)g_isLoggingIn, (int)g_isIdentifying);
+	}
+	return g_isLoggingIn || g_isIdentifying;
 }
 
 static u32 GetGameID() {
@@ -239,45 +244,74 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		break;
 	}
 	case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
-		// A leaderboard attempt has started. The handler may show a message with the leaderboard title and /or description indicating the attempt started.
-		INFO_LOG(ACHIEVEMENTS, "Leaderboard attempt started: %s", event->leaderboard->title);
-		g_OSD.Show(OSDType::MESSAGE_INFO, ApplySafeSubstitutions(ac->T("%1: Leaderboard attempt started"), event->leaderboard->title), DeNull(event->leaderboard->description), 3.0f);
-		break;
 	case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
-		NOTICE_LOG(ACHIEVEMENTS, "Leaderboard attempt failed: %s", event->leaderboard->title);
-		g_OSD.Show(OSDType::MESSAGE_INFO, ApplySafeSubstitutions(ac->T("%1: Leaderboard attempt failed"), event->leaderboard->title), 3.0f);
-		// A leaderboard attempt has failed.
+	{
+		bool started = event->type == RC_CLIENT_EVENT_LEADERBOARD_STARTED;
+		// A leaderboard attempt has started. The handler may show a message with the leaderboard title and /or description indicating the attempt started.
+		const char *title = "";
+		const char *description = "";
+		// Hack around some problematic events in Burnout Legends. Hopefully this can be fixed in the backend.
+		if (strlen(event->leaderboard->title) > 0) {
+			title = event->leaderboard->title;
+			description = event->leaderboard->description;
+		} else {
+			title = event->leaderboard->description;
+		}
+		INFO_LOG(ACHIEVEMENTS, "Attempt %s: %s", started ? "started" : "failed", title);
+		g_OSD.ShowLeaderboardStartEnd(ApplySafeSubstitutions(ac->T(started ? "%1: Attempt started" : "%1: Attempt failed"), title), description, started);
 		break;
+	}
 	case RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED:
-		NOTICE_LOG(ACHIEVEMENTS, "Leaderboard result submitted: %s", event->leaderboard->title);
-		g_OSD.Show(OSDType::MESSAGE_SUCCESS,
-			ApplySafeSubstitutions(ac->T("Submitted %1 for %2"), DeNull(event->leaderboard->tracker_value), DeNull(event->leaderboard->title)),
-			DeNull(event->leaderboard->description), 3.0f);
+	{
+		INFO_LOG(ACHIEVEMENTS, "Leaderboard result submitted: %s", event->leaderboard->title);
+		const char *title = "";
+		// Hack around some problematic events in Burnout Legends. Hopefully this can be fixed in the backend.
+		if (strlen(event->leaderboard->title) > 0) {
+			title = event->leaderboard->title;
+		} else {
+			title = event->leaderboard->description;
+		}
+		g_OSD.ShowLeaderboardSubmitted(ApplySafeSubstitutions(ac->T("Submitted %1 for %2"), DeNull(event->leaderboard->tracker_value), title), "");
 		System_PostUIMessage("play_sound", "leaderboard_submitted");
 		break;
+	}
 	case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
-		NOTICE_LOG(ACHIEVEMENTS, "Challenge indicator show: %s", event->achievement->title);
+		INFO_LOG(ACHIEVEMENTS, "Challenge indicator show: %s", event->achievement->title);
 		g_OSD.ShowChallengeIndicator(event->achievement->id, true);
 		g_activeChallenges.insert(event->achievement->id);
 		// A challenge achievement has become active. The handler should show a small version of the achievement icon
 		// to indicate the challenge is active.
 		break;
 	case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
-		NOTICE_LOG(ACHIEVEMENTS, "Challenge indicator hide: %s", event->achievement->title);
+		INFO_LOG(ACHIEVEMENTS, "Challenge indicator hide: %s", event->achievement->title);
 		g_OSD.ShowChallengeIndicator(event->achievement->id, false);
 		g_activeChallenges.erase(event->achievement->id);
 		// The handler should hide the small version of the achievement icon that was shown by the corresponding RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW event.
 		break;
 	case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
-		NOTICE_LOG(ACHIEVEMENTS, "Progress indicator show: %s, progress: '%s' (%f)", event->achievement->title, event->achievement->measured_progress, event->achievement->measured_percent);
+		INFO_LOG(ACHIEVEMENTS, "Progress indicator show: %s, progress: '%s' (%f)", event->achievement->title, event->achievement->measured_progress, event->achievement->measured_percent);
 		// An achievement that tracks progress has changed the amount of progress that has been made.
 		// The handler should show a small version of the achievement icon along with the achievement->measured_progress text (for two seconds).
 		// Only one progress indicator should be shown at a time.
 		// If a progress indicator is already visible, it should be updated with the new icon and text, and the two second timer should be restarted.
-		g_OSD.ShowAchievementProgress(event->achievement->id, 2.0f);
+		g_OSD.ShowAchievementProgress(event->achievement->id, true);
 		break;
+		/*
+	case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
+		INFO_LOG(ACHIEVEMENTS, "Progress indicator update: %s, progress: '%s' (%f)", event->achievement->title, event->achievement->measured_progress, event->achievement->measured_percent);
+		g_OSD.ShowAchievementProgress(event->achievement->id, true);
+		break;
+	case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
+		INFO_LOG(ACHIEVEMENTS, "Progress indicator hide");
+		// An achievement that tracks progress has changed the amount of progress that has been made.
+		// The handler should show a small version of the achievement icon along with the achievement->measured_progress text (for two seconds).
+		// Only one progress indicator should be shown at a time.
+		// If a progress indicator is already visible, it should be updated with the new icon and text, and the two second timer should be restarted.
+		g_OSD.ShowAchievementProgress(0, false);
+		break;
+		*/
 	case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
-		NOTICE_LOG(ACHIEVEMENTS, "Leaderboard tracker show: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
+		INFO_LOG(ACHIEVEMENTS, "Leaderboard tracker show: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
 		// A leaderboard_tracker has become active. The handler should show the tracker text on screen.
 		// Multiple active leaderboards may share a single tracker if they have the same definition and value.
 		// As such, the leaderboard tracker IDs are unique amongst the leaderboard trackers, and have no correlation to the active leaderboard(s).
@@ -286,12 +320,12 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		break;
 	case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE:
 		// A leaderboard_tracker has become inactive. The handler should hide the tracker text from the screen.
-		NOTICE_LOG(ACHIEVEMENTS, "Leaderboard tracker hide: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
+		INFO_LOG(ACHIEVEMENTS, "Leaderboard tracker hide: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
 		g_OSD.ShowLeaderboardTracker(event->leaderboard_tracker->id, nullptr, false);
 		break;
 	case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE:
 		// A leaderboard_tracker value has been updated. The handler should update the tracker text on the screen.
-		NOTICE_LOG(ACHIEVEMENTS, "Leaderboard tracker update: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
+		INFO_LOG(ACHIEVEMENTS, "Leaderboard tracker update: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
 		g_OSD.ShowLeaderboardTracker(event->leaderboard_tracker->id, event->leaderboard_tracker->display, true);
 		break;
 	case RC_CLIENT_EVENT_RESET:
@@ -312,6 +346,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 static void login_token_callback(int result, const char *error_message, rc_client_t *client, void *userdata) {
 	switch (result) {
 	case RC_OK:
+		INFO_LOG(ACHIEVEMENTS, "Successful login by token.");
 		OnAchievementsLoginStateChange();
 		break;
 	case RC_NO_RESPONSE:
@@ -320,15 +355,20 @@ static void login_token_callback(int result, const char *error_message, rc_clien
 		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to connect to server, check your internet connection."));
 		break;
 	}
-	case RC_INVALID_STATE:
 	case RC_API_FAILURE:
+	case RC_INVALID_STATE:
 	case RC_MISSING_VALUE:
 	case RC_INVALID_JSON:
 	default:
-		ERROR_LOG(ACHIEVEMENTS, "Failure logging in via token: %d, %s", result, error_message);
+	{
+		auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+		ERROR_LOG(ACHIEVEMENTS, "Callback: Failure logging in via token: %d, %s", result, error_message);
+		g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Failed logging in to RetroAchievements"));
 		OnAchievementsLoginStateChange();
 		break;
 	}
+	}
+	g_loginResult = result;
 	g_isLoggingIn = false;
 }
 
@@ -356,6 +396,19 @@ void Initialize() {
 
 	rc_client_set_event_handler(g_rcClient, event_handler_callback);
 
+	TryLoginByToken();
+}
+
+bool HasToken() {
+	return !NativeLoadSecret(RA_TOKEN_SECRET_NAME).empty();
+}
+
+bool LoginProblems(std::string *errorString) {
+	// TODO: Set error string.
+	return g_loginResult != RC_OK;
+}
+
+void TryLoginByToken() {
 	std::string api_token = NativeLoadSecret(RA_TOKEN_SECRET_NAME);
 	if (!api_token.empty()) {
 		g_isLoggingIn = true;
@@ -398,6 +451,7 @@ static void login_password_callback(int result, const char *error_message, rc_cl
 	}
 
 	g_OSD.RemoveProgressBar("cheevos_async_login", true, 0.1f);
+	g_loginResult = RC_OK;  // For these, we don't want the "permanence" of the login-by-token failure, this prevents LoginProblems from returning true.
 	g_isLoggingIn = false;
 }
 
@@ -420,7 +474,7 @@ void Logout() {
 	NativeSaveSecret(RA_TOKEN_SECRET_NAME, "");
 	g_Config.Save("Achievements logout");
 	g_activeChallenges.clear();
-
+	g_loginResult = RC_OK;  // Allow trying again
 	OnAchievementsLoginStateChange();
 }
 
@@ -602,7 +656,7 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 
 		char temp[512];
 		if (RC_OK == rc_client_game_get_image_url(gameInfo, temp, sizeof(temp))) {
-			Achievements::DownloadImageIfMissing(cacheId, std::move(std::string(temp)));
+			Achievements::DownloadImageIfMissing(cacheId, std::string(temp));
 		}
 		g_OSD.Show(OSDType::MESSAGE_INFO, std::string(gameInfo->title), GetGameAchievementSummary(), cacheId, 5.0f);
 		break;
@@ -627,12 +681,14 @@ struct FileContext {
 
 static BlockDevice *g_blockDevice;
 
+bool IsReadyToStart() {
+	return !g_isLoggingIn;
+}
+
 void SetGame(const Path &path, FileLoader *fileLoader) {
-	// If we are currently logging in, give it a couple of seconds. This is not ideal, but works.
 	if (g_isLoggingIn) {
-		for (int i = 0; i < 3000 / 50; i++) {
-			sleep_ms(50);
-		}
+		// IsReadyToStart should have been checked, so we shouldn't be here.
+		ERROR_LOG(ACHIEVEMENTS, "Still logging in during SetGame - shouldn't happen");
 	}
 
 	if (!g_rcClient || !IsLoggedIn()) {

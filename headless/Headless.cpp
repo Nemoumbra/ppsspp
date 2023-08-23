@@ -94,8 +94,7 @@ public:
 };
 
 // Temporary hacks around annoying linking errors.
-void NativeUpdate() { }
-void NativeRender(GraphicsContext *graphicsContext) { }
+void NativeFrame(GraphicsContext *graphicsContext) { }
 void NativeResized() { }
 
 std::string System_GetProperty(SystemProperty prop) { return ""; }
@@ -234,12 +233,12 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 
 	System_Notify(SystemNotification::BOOT_DONE);
 
-	Core_UpdateDebugStats(g_Config.bShowDebugStats || g_Config.bLogFrameDrops);
+	Core_UpdateDebugStats((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::DEBUG_STATS || g_Config.bLogFrameDrops);
 
 	PSP_BeginHostFrame();
 	Draw::DrawContext *draw = coreParameter.graphicsContext ? coreParameter.graphicsContext->GetDrawContext() : nullptr;
 	if (draw)
-		draw->BeginFrame();
+		draw->BeginFrame(Draw::DebugFlags::NONE);
 
 	bool passed = true;
 	double deadline = time_now_d() + opt.timeout;
@@ -366,8 +365,10 @@ int main(int argc, const char* argv[])
 			cpuCore = CPUCore::INTERPRETER;
 		else if (!strcmp(argv[i], "-j"))
 			cpuCore = CPUCore::JIT;
+		else if (!strcmp(argv[i], "--jit-ir"))
+			cpuCore = CPUCore::JIT_IR;
 		else if (!strcmp(argv[i], "--ir"))
-			cpuCore = CPUCore::IR_JIT;
+			cpuCore = CPUCore::IR_INTERPRETER;
 		else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--compare"))
 			testOptions.compare = true;
 		else if (!strcmp(argv[i], "--bench"))
@@ -497,20 +498,22 @@ int main(int argc, const char* argv[])
 	g_Config.iPSPModel = PSP_MODEL_SLIM;
 	g_Config.iGlobalVolume = VOLUME_FULL;
 	g_Config.iReverbVolume = VOLUME_FULL;
+	g_Config.internalDataDirectory.clear();
+
+	Path exePath = File::GetExeDirectory();
+	g_Config.flash0Directory = exePath / "assets/flash0";
 
 #if PPSSPP_PLATFORM(WINDOWS)
-	g_Config.internalDataDirectory.clear();
-	InitSysDirectories();
-#endif
-
-	Path executablePath = File::GetExeDirectory();
-#if !PPSSPP_PLATFORM(ANDROID) && !PPSSPP_PLATFORM(WINDOWS)
+	// Mount a filesystem
+	g_Config.memStickDirectory = exePath / "memstick";
+	File::CreateDir(g_Config.memStickDirectory);
+	CreateSysDirectories();
+#elif !PPSSPP_PLATFORM(ANDROID)
 	g_Config.memStickDirectory = Path(std::string(getenv("HOME"))) / ".ppsspp";
-	g_Config.flash0Directory = executablePath / "assets/flash0";
 #endif
 
 	// Try to find the flash0 directory.  Often this is from a subdirectory.
-	Path nextPath = executablePath;
+	Path nextPath = exePath;
 	for (int i = 0; i < 5; ++i) {
 		if (File::Exists(nextPath / "assets/flash0")) {
 			g_Config.flash0Directory = nextPath / "assets/flash0";

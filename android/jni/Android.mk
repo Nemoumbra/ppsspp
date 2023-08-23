@@ -50,11 +50,6 @@ NATIVE_FILES :=\
   $(SRC)/Common/GPU/OpenGL/GLQueueRunner.cpp \
   $(SRC)/Common/GPU/OpenGL/DataFormatGL.cpp
 
-EGL_FILES := \
-  $(SRC)/Common/GL/GLInterface/EGL.cpp \
-  $(SRC)/Common/GL/GLInterface/EGLAndroid.cpp \
-  $(SRC)/Common/GL/GLInterface/GLInterface.cpp
-
 VULKAN_FILES := \
   $(SRC)/Common/GPU/Vulkan/thin3d_vulkan.cpp \
   $(SRC)/Common/GPU/Vulkan/VulkanQueueRunner.cpp \
@@ -175,7 +170,6 @@ EXT_FILES := \
 
 EXEC_AND_LIB_FILES := \
   $(ARCH_FILES) \
-  $(EGL_FILES) \
   $(VULKAN_FILES) \
   $(VR_FILES) \
   $(VMA_FILES) \
@@ -296,7 +290,7 @@ include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
 LOCAL_WHOLE_STATIC_LIBRARIES += ppsspp_common
 
-ifeq ($(TARGET_ARCH_ABI),x86)
+ifeq ($(TARGET_ARCH_ABI),x86_64)
 ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/CompALU.cpp \
   $(SRC)/Core/MIPS/x86/CompBranch.cpp \
@@ -309,22 +303,15 @@ ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
   $(SRC)/Core/MIPS/x86/RegCache.cpp \
   $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
-  $(SRC)/GPU/Common/VertexDecoderX86.cpp \
-  $(SRC)/GPU/Software/DrawPixelX86.cpp \
-  $(SRC)/GPU/Software/SamplerX86.cpp
-else ifeq ($(TARGET_ARCH_ABI),x86_64)
-ARCH_FILES := \
-  $(SRC)/Core/MIPS/x86/CompALU.cpp \
-  $(SRC)/Core/MIPS/x86/CompBranch.cpp \
-  $(SRC)/Core/MIPS/x86/CompFPU.cpp \
-  $(SRC)/Core/MIPS/x86/CompLoadStore.cpp \
-  $(SRC)/Core/MIPS/x86/CompVFPU.cpp \
-  $(SRC)/Core/MIPS/x86/CompReplace.cpp \
-  $(SRC)/Core/MIPS/x86/Asm.cpp \
-  $(SRC)/Core/MIPS/x86/Jit.cpp \
-  $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
-  $(SRC)/Core/MIPS/x86/RegCache.cpp \
-  $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRAsm.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompALU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompBranch.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompFPU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompLoadStore.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompSystem.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompVec.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRJit.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRRegCache.cpp \
   $(SRC)/GPU/Common/VertexDecoderX86.cpp \
   $(SRC)/GPU/Software/DrawPixelX86.cpp \
   $(SRC)/GPU/Software/SamplerX86.cpp
@@ -390,6 +377,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/MIPSVFPUFallbacks.cpp.arm \
   $(SRC)/Core/MIPS/MIPSCodeUtils.cpp.arm \
   $(SRC)/Core/MIPS/MIPSDebugInterface.cpp \
+  $(SRC)/Core/MIPS/IR/IRAnalysis.cpp \
   $(SRC)/Core/MIPS/IR/IRFrontend.cpp \
   $(SRC)/Core/MIPS/IR/IRJit.cpp \
   $(SRC)/Core/MIPS/IR/IRCompALU.cpp \
@@ -399,6 +387,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/IR/IRCompVFPU.cpp \
   $(SRC)/Core/MIPS/IR/IRInst.cpp \
   $(SRC)/Core/MIPS/IR/IRInterpreter.cpp \
+  $(SRC)/Core/MIPS/IR/IRNativeCommon.cpp \
   $(SRC)/Core/MIPS/IR/IRPassSimplify.cpp \
   $(SRC)/Core/MIPS/IR/IRRegCache.cpp \
   $(SRC)/GPU/Math3D.cpp \
@@ -483,6 +472,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/ConfigSettings.cpp \
   $(SRC)/Core/CoreTiming.cpp \
   $(SRC)/Core/CwCheat.cpp \
+  $(SRC)/Core/FrameTiming.cpp \
   $(SRC)/Core/HDRemaster.cpp \
   $(SRC)/Core/Instance.cpp \
   $(SRC)/Core/KeyMap.cpp \
@@ -763,6 +753,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/BackgroundAudio.cpp \
   $(SRC)/UI/DiscordIntegration.cpp \
   $(SRC)/UI/ChatScreen.cpp \
+  $(SRC)/UI/DebugOverlay.cpp \
   $(SRC)/UI/DevScreens.cpp \
   $(SRC)/UI/DisplayLayoutScreen.cpp \
   $(SRC)/UI/EmuScreen.cpp \

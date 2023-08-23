@@ -49,7 +49,7 @@ class IOSGraphicsContext : public GraphicsContext {
 public:
 	IOSGraphicsContext() {
 		CheckGLExtensions();
-		draw_ = Draw::T3DCreateGLContext();
+		draw_ = Draw::T3DCreateGLContext(false);
 		renderManager_ = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 		renderManager_->SetInflightFrames(g_Config.iInflightFrames);
 		SetGPUBackend(GPUBackend::OPENGL);
@@ -63,8 +63,6 @@ public:
 		return draw_;
 	}
 
-	void SwapInterval(int interval) override {}
-	void SwapBuffers() override {}
 	void Resize() override {}
 	void Shutdown() override {}
 
@@ -238,8 +236,7 @@ extern float g_safeInsetBottom;
 
 		INFO_LOG(SYSTEM, "Emulation thread starting\n");
 		while (threadEnabled) {
-			NativeUpdate();
-			NativeRender(graphicsContext);
+			NativeFrame(graphicsContext);
 		}
 
 

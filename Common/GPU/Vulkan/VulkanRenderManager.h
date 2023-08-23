@@ -17,6 +17,7 @@
 #include "Common/System/Display.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/Data/Convert/SmallDataConvert.h"
+#include "Common/Data/Collections/FastVec.h"
 #include "Common/Math/math_util.h"
 #include "Common/GPU/DataFormat.h"
 #include "Common/GPU/MiscTypes.h"
@@ -181,13 +182,14 @@ struct CompileQueueEntry {
 
 class VulkanRenderManager {
 public:
-	VulkanRenderManager(VulkanContext *vulkan);
+	VulkanRenderManager(VulkanContext *vulkan, bool useThread, HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory);
 	~VulkanRenderManager();
 
 	// Makes sure that the GPU has caught up enough that we can start writing buffers of this frame again.
 	void BeginFrame(bool enableProfiling, bool enableLogProfiler);
-	// Can run on a different thread!
+	// These can run on a different thread!
 	void Finish();
+	void Present();
 	// Zaps queued up commands. Use if you know there's a risk you've queued up stuff that has already been deleted. Can happen during in-game shutdown.
 	void Wipe();
 
@@ -468,6 +470,9 @@ private:
 	void FlushSync();
 	void StopThread();
 
+	void PresentWaitThreadFunc();
+	void PollPresentTiming();
+
 	FrameDataShared frameDataShared_;
 
 	FrameData frameData_[VulkanContext::MAX_INFLIGHT_FRAMES];
@@ -488,6 +493,8 @@ private:
 
 	bool insideFrame_ = false;
 	bool run_ = false;
+
+	bool useRenderThread_ = true;
 
 	// This is the offset within this frame, in case of a mid-frame sync.
 	VKRStep *curRenderStep_ = nullptr;
@@ -521,6 +528,9 @@ private:
 	std::mutex compileMutex_;
 	std::vector<CompileQueueEntry> compileQueue_;
 
+	// Thread for measuring presentation delay.
+	std::thread presentWaitThread_;
+
 	// pipelines to check and possibly create at the end of the current render pass.
 	std::vector<VKRGraphicsPipeline *> pipelinesToCheck_;
 
@@ -530,4 +540,7 @@ private:
 	SimpleStat renderCPUTimeMs_;
 
 	std::function<void(InvalidationCallbackFlags)> invalidationCallback_;
+
+	uint64_t frameIdGen_ = FRAME_TIME_HISTORY_LENGTH;
+	HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory_;
 };

@@ -39,6 +39,7 @@
 #endif
 #include "Common/File/AndroidStorage.h"
 #include "Common/Data/Text/I18n.h"
+#include "Common/Data/Encoding/Utf8.h"
 #include "Common/Net/HTTPClient.h"
 #include "Common/UI/Context.h"
 #include "Common/UI/View.h"
@@ -88,6 +89,30 @@ static const char *logLevelList[] = {
 	"Verb."
 };
 
+static const char *g_debugOverlayList[] = {
+	"Off",
+	"Debug stats",
+	"Draw Frametimes Graph",
+	"Frame timing",
+#ifdef USE_PROFILER
+	"Frame profile",
+#endif
+	"Control Debug",
+	"Audio Debug",
+	"GPU Profile",
+	"GPU Allocator Viewer",
+};
+
+void AddOverlayList(UI::ViewGroup *items, ScreenManager *screenManager) {
+	using namespace UI;
+	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
+	int numOverlays = ARRAY_SIZE(g_debugOverlayList);
+	if (!(g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL)) {
+		numOverlays -= 2;  // skip the last 2.
+	}
+	items->Add(new PopupMultiChoice((int *)&g_Config.iDebugOverlay, dev->T("Debug overlay"), g_debugOverlayList, 0, numOverlays, I18NCat::DEVELOPER, screenManager));
+}
+
 void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	using namespace UI;
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
@@ -103,27 +128,21 @@ void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	items->Add(new Choice(sy->T("Developer Tools")))->OnClick.Handle(this, &DevMenuScreen::OnDeveloperTools);
 	items->Add(new Choice(dev->T("Jit Compare")))->OnClick.Handle(this, &DevMenuScreen::OnJitCompare);
 	items->Add(new Choice(dev->T("Shader Viewer")))->OnClick.Handle(this, &DevMenuScreen::OnShaderView);
-	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) {
-		items->Add(new CheckBox(&g_Config.bShowAllocatorDebug, dev->T("GPU Allocator Viewer")));
-	}
-	if (g_Config.iGPUBackend == (int)GPUBackend::VULKAN || g_Config.iGPUBackend == (int)GPUBackend::OPENGL) {
-		items->Add(new CheckBox(&g_Config.bShowGpuProfile, dev->T("GPU Profile")));
-	}
-	items->Add(new Choice(dev->T("Toggle Freeze")))->OnClick.Handle(this, &DevMenuScreen::OnFreezeFrame);
 
-	items->Add(new Choice(dev->T("Dump next frame to log")))->OnClick.Handle(this, &DevMenuScreen::OnDumpFrame);
-	items->Add(new Choice(dev->T("Toggle Audio Debug")))->OnClick.Add([](UI::EventParams &) {
-		g_Config.bShowAudioDebug = !g_Config.bShowAudioDebug;
+	AddOverlayList(items, screenManager());
+	items->Add(new Choice(dev->T("Toggle Freeze")))->OnClick.Add([](UI::EventParams &e) {
+		if (PSP_CoreParameter().frozen) {
+			PSP_CoreParameter().frozen = false;
+		} else {
+			PSP_CoreParameter().freezeNext = true;
+		}
 		return UI::EVENT_DONE;
 	});
-	items->Add(new Choice(dev->T("Toggle Control Debug")))->OnClick.Add([](UI::EventParams &) {
-		g_Config.bShowControlDebug = !g_Config.bShowControlDebug;
+
+	items->Add(new Choice(dev->T("Dump next frame to log")))->OnClick.Add([](UI::EventParams &e) {
+		gpu->DumpNextFrame();
 		return UI::EVENT_DONE;
 	});
-#ifdef USE_PROFILER
-	items->Add(new CheckBox(&g_Config.bShowFrameProfiler, dev->T("Frame Profiler"), ""));
-#endif
-	items->Add(new CheckBox(&g_Config.bDrawFrameGraph, dev->T("Draw Frametimes Graph")));
 	items->Add(new Choice(dev->T("Reset limited logging")))->OnClick.Handle(this, &DevMenuScreen::OnResetLimitedLogging);
 
 	scroll->Add(items);
@@ -168,20 +187,6 @@ UI::EventReturn DevMenuScreen::OnShaderView(UI::EventParams &e) {
 	UpdateUIState(UISTATE_PAUSEMENU);
 	if (gpu)  // Avoid crashing if chosen while the game is being loaded.
 		screenManager()->push(new ShaderListScreen());
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn DevMenuScreen::OnFreezeFrame(UI::EventParams &e) {
-	if (PSP_CoreParameter().frozen) {
-		PSP_CoreParameter().frozen = false;
-	} else {
-		PSP_CoreParameter().freezeNext = true;
-	}
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn DevMenuScreen::OnDumpFrame(UI::EventParams &e) {
-	gpu->DumpNextFrame();
 	return UI::EVENT_DONE;
 }
 
@@ -459,6 +464,11 @@ const char *GetCompilerABI() {
 #endif
 }
 
+void SystemInfoScreen::update() {
+	TabbedUIDialogScreenWithGameBackground::update();
+	g_OSD.NudgeSidebar();
+}
+
 void SystemInfoScreen::CreateTabs() {
 	using namespace Draw;
 	using namespace UI;
@@ -472,42 +482,43 @@ void SystemInfoScreen::CreateTabs() {
 
 	LinearLayout *deviceSpecs = AddTab("Device Info", si->T("Device Info"));
 
-	deviceSpecs->Add(new ItemHeader(si->T("System Information")));
-	deviceSpecs->Add(new InfoItem(si->T("System Name", "Name"), System_GetProperty(SYSPROP_NAME)));
+	CollapsibleSection *systemInfo = deviceSpecs->Add(new CollapsibleSection(si->T("System Information")));
+	systemInfo->Add(new InfoItem(si->T("System Name", "Name"), System_GetProperty(SYSPROP_NAME)));
 #if PPSSPP_PLATFORM(ANDROID)
-	deviceSpecs->Add(new InfoItem(si->T("System Version"), StringFromInt(System_GetPropertyInt(SYSPROP_SYSTEMVERSION))));
+	systemInfo->Add(new InfoItem(si->T("System Version"), StringFromInt(System_GetPropertyInt(SYSPROP_SYSTEMVERSION))));
 #endif
-	deviceSpecs->Add(new InfoItem(si->T("Lang/Region"), System_GetProperty(SYSPROP_LANGREGION)));
+	systemInfo->Add(new InfoItem(si->T("Lang/Region"), System_GetProperty(SYSPROP_LANGREGION)));
 	std::string board = System_GetProperty(SYSPROP_BOARDNAME);
 	if (!board.empty())
-		deviceSpecs->Add(new InfoItem(si->T("Board"), board));
-	deviceSpecs->Add(new InfoItem(si->T("ABI"), GetCompilerABI()));
+		systemInfo->Add(new InfoItem(si->T("Board"), board));
+	systemInfo->Add(new InfoItem(si->T("ABI"), GetCompilerABI()));
 #ifdef _WIN32
 	if (IsDebuggerPresent()) {
-		deviceSpecs->Add(new InfoItem(si->T("Debugger Present"), di->T("Yes")));
+		systemInfo->Add(new InfoItem(si->T("Debugger Present"), di->T("Yes")));
 	}
 #endif
 
-	deviceSpecs->Add(new ItemHeader(si->T("CPU Information")));
+	CollapsibleSection *cpuInfo = deviceSpecs->Add(new CollapsibleSection(si->T("CPU Information")));
 
 	// Don't bother showing the CPU name if we don't have one.
 	if (strcmp(cpu_info.brand_string, "Unknown") != 0) {
-		deviceSpecs->Add(new InfoItem(si->T("CPU Name", "Name"), cpu_info.brand_string));
+		cpuInfo->Add(new InfoItem(si->T("CPU Name", "Name"), cpu_info.brand_string));
 	}
 
 	int totalThreads = cpu_info.num_cores * cpu_info.logical_cpu_count;
 	std::string cores = StringFromFormat(si->T("%d (%d per core, %d cores)"), totalThreads, cpu_info.logical_cpu_count, cpu_info.num_cores);
-	deviceSpecs->Add(new InfoItem(si->T("Threads"), cores));
+	cpuInfo->Add(new InfoItem(si->T("Threads"), cores));
 #if PPSSPP_PLATFORM(IOS)
-	deviceSpecs->Add(new InfoItem(si->T("JIT available"), System_GetPropertyBool(SYSPROP_CAN_JIT) ? di->T("Yes") : di->T("No")));
+	cpuInfo->Add(new InfoItem(si->T("JIT available"), System_GetPropertyBool(SYSPROP_CAN_JIT) ? di->T("Yes") : di->T("No")));
 #endif
-	deviceSpecs->Add(new ItemHeader(si->T("GPU Information")));
+
+	CollapsibleSection *gpuInfo = deviceSpecs->Add(new CollapsibleSection(si->T("GPU Information")));
 
 	DrawContext *draw = screenManager()->getDrawContext();
 
 	const std::string apiNameKey = draw->GetInfoString(InfoField::APINAME);
 	const char *apiName = gr->T(apiNameKey);
-	deviceSpecs->Add(new InfoItem(si->T("3D API"), apiName));
+	gpuInfo->Add(new InfoItem(si->T("3D API"), apiName));
 
 	// TODO: Not really vendor, on most APIs it's a device name (GL calls it vendor though).
 	std::string vendorString;
@@ -516,22 +527,22 @@ void SystemInfoScreen::CreateTabs() {
 	} else {
 		vendorString = draw->GetInfoString(InfoField::VENDORSTRING);
 	}
-	deviceSpecs->Add(new InfoItem(si->T("Vendor"), vendorString));
+	gpuInfo->Add(new InfoItem(si->T("Vendor"), vendorString));
 	std::string vendor = draw->GetInfoString(InfoField::VENDOR);
 	if (vendor.size())
-		deviceSpecs->Add(new InfoItem(si->T("Vendor (detected)"), vendor));
-	deviceSpecs->Add(new InfoItem(si->T("Driver Version"), draw->GetInfoString(InfoField::DRIVER)));
+		gpuInfo->Add(new InfoItem(si->T("Vendor (detected)"), vendor));
+	gpuInfo->Add(new InfoItem(si->T("Driver Version"), draw->GetInfoString(InfoField::DRIVER)));
 #ifdef _WIN32
 	if (GetGPUBackend() != GPUBackend::VULKAN)
-		deviceSpecs->Add(new InfoItem(si->T("Driver Version"), System_GetProperty(SYSPROP_GPUDRIVER_VERSION)));
+		gpuInfo->Add(new InfoItem(si->T("Driver Version"), System_GetProperty(SYSPROP_GPUDRIVER_VERSION)));
 #if !PPSSPP_PLATFORM(UWP)
 	if (GetGPUBackend() == GPUBackend::DIRECT3D9) {
-		deviceSpecs->Add(new InfoItem(si->T("D3DCompiler Version"), StringFromFormat("%d", GetD3DCompilerVersion())));
+		gpuInfo->Add(new InfoItem(si->T("D3DCompiler Version"), StringFromFormat("%d", GetD3DCompilerVersion())));
 	}
 #endif
 #endif
 	if (GetGPUBackend() == GPUBackend::OPENGL) {
-		deviceSpecs->Add(new InfoItem(si->T("Core Context"), gl_extensions.IsCoreContext ? di->T("Active") : di->T("Inactive")));
+		gpuInfo->Add(new InfoItem(si->T("Core Context"), gl_extensions.IsCoreContext ? di->T("Active") : di->T("Inactive")));
 		int highp_int_min = gl_extensions.range[1][5][0];
 		int highp_int_max = gl_extensions.range[1][5][1];
 		int highp_float_min = gl_extensions.range[1][2][0];
@@ -539,15 +550,15 @@ void SystemInfoScreen::CreateTabs() {
 		if (highp_int_max != 0) {
 			char temp[512];
 			snprintf(temp, sizeof(temp), "Highp int range: %d-%d", highp_int_min, highp_int_max);
-			deviceSpecs->Add(new InfoItem(si->T("High precision int range"), temp));
+			gpuInfo->Add(new InfoItem(si->T("High precision int range"), temp));
 		}
 		if (highp_float_max != 0) {
 			char temp[512];
 			snprintf(temp, sizeof(temp), "Highp float range: %d-%d", highp_int_min, highp_int_max);
-			deviceSpecs->Add(new InfoItem(si->T("High precision float range"), temp));
+			gpuInfo->Add(new InfoItem(si->T("High precision float range"), temp));
 		}
 	}
-	deviceSpecs->Add(new InfoItem(si->T("Depth buffer format"), DataFormatToString(draw->GetDeviceCaps().preferredDepthBufferFormat)));
+	gpuInfo->Add(new InfoItem(si->T("Depth buffer format"), DataFormatToString(draw->GetDeviceCaps().preferredDepthBufferFormat)));
 
 	std::string texCompressionFormats;
 	// Simple non-detailed summary of supported tex compression formats.
@@ -556,50 +567,57 @@ void SystemInfoScreen::CreateTabs() {
 	if (draw->GetDataFormatSupport(Draw::DataFormat::BC1_RGBA_UNORM_BLOCK)) texCompressionFormats += "BC1-3 ";
 	if (draw->GetDataFormatSupport(Draw::DataFormat::BC4_UNORM_BLOCK)) texCompressionFormats += "BC4-5 ";
 	if (draw->GetDataFormatSupport(Draw::DataFormat::BC7_UNORM_BLOCK)) texCompressionFormats += "BC7 ";
-	deviceSpecs->Add(new InfoItem(si->T("Compressed texture formats"), texCompressionFormats));
+	gpuInfo->Add(new InfoItem(si->T("Compressed texture formats"), texCompressionFormats));
 
-	deviceSpecs->Add(new ItemHeader(si->T("OS Information")));
-	deviceSpecs->Add(new InfoItem(si->T("Memory Page Size"), StringFromFormat(si->T("%d bytes"), GetMemoryProtectPageSize())));
-	deviceSpecs->Add(new InfoItem(si->T("RW/RX exclusive"), PlatformIsWXExclusive() ? di->T("Active") : di->T("Inactive")));
+	CollapsibleSection *osInformation = deviceSpecs->Add(new CollapsibleSection(si->T("OS Information")));
+	osInformation->Add(new InfoItem(si->T("Memory Page Size"), StringFromFormat(si->T("%d bytes"), GetMemoryProtectPageSize())));
+	osInformation->Add(new InfoItem(si->T("RW/RX exclusive"), PlatformIsWXExclusive() ? di->T("Active") : di->T("Inactive")));
 #if PPSSPP_PLATFORM(ANDROID)
-	deviceSpecs->Add(new InfoItem(si->T("Sustained perf mode"), System_GetPropertyBool(SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE) ? di->T("Supported") : di->T("Unsupported")));
+	osInformation->Add(new InfoItem(si->T("Sustained perf mode"), System_GetPropertyBool(SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE) ? di->T("Supported") : di->T("Unsupported")));
 #endif
 
 	const char *build = si->T("Release");
 #ifdef _DEBUG
 	build = si->T("Debug");
 #endif
-	deviceSpecs->Add(new InfoItem(si->T("PPSSPP build"), build));
+	osInformation->Add(new InfoItem(si->T("PPSSPP build"), build));
 
-	deviceSpecs->Add(new ItemHeader(si->T("Audio Information")));
-	deviceSpecs->Add(new InfoItem(si->T("Sample rate"), StringFromFormat(si->T("%d Hz"), System_GetPropertyInt(SYSPROP_AUDIO_SAMPLE_RATE))));
+	CollapsibleSection *audioInformation = deviceSpecs->Add(new CollapsibleSection(si->T("Audio Information")));
+	audioInformation->Add(new InfoItem(si->T("Sample rate"), StringFromFormat(si->T("%d Hz"), System_GetPropertyInt(SYSPROP_AUDIO_SAMPLE_RATE))));
 	int framesPerBuffer = System_GetPropertyInt(SYSPROP_AUDIO_FRAMES_PER_BUFFER);
 	if (framesPerBuffer > 0) {
-		deviceSpecs->Add(new InfoItem(si->T("Frames per buffer"), StringFromFormat("%d", framesPerBuffer)));
+		audioInformation->Add(new InfoItem(si->T("Frames per buffer"), StringFromFormat("%d", framesPerBuffer)));
 	}
 #if PPSSPP_PLATFORM(ANDROID)
-	deviceSpecs->Add(new InfoItem(si->T("Optimal sample rate"), StringFromFormat(si->T("%d Hz"), System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_SAMPLE_RATE))));
-	deviceSpecs->Add(new InfoItem(si->T("Optimal frames per buffer"), StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_FRAMES_PER_BUFFER))));
+	audioInformation->Add(new InfoItem(si->T("Optimal sample rate"), StringFromFormat(si->T("%d Hz"), System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_SAMPLE_RATE))));
+	audioInformation->Add(new InfoItem(si->T("Optimal frames per buffer"), StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_FRAMES_PER_BUFFER))));
 #endif
 
-	deviceSpecs->Add(new ItemHeader(si->T("Display Information")));
-#if PPSSPP_PLATFORM(ANDROID)
-	deviceSpecs->Add(new InfoItem(si->T("Native Resolution"), StringFromFormat("%dx%d",
+	CollapsibleSection *displayInfo = deviceSpecs->Add(new CollapsibleSection(si->T("Display Information")));
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(UWP)
+	displayInfo->Add(new InfoItem(si->T("Native Resolution"), StringFromFormat("%dx%d",
 		System_GetPropertyInt(SYSPROP_DISPLAY_XRES),
 		System_GetPropertyInt(SYSPROP_DISPLAY_YRES))));
-	deviceSpecs->Add(new InfoItem(si->T("UI Resolution"), StringFromFormat("%dx%d (%s: %0.2f)",
+	displayInfo->Add(new InfoItem(si->T("UI Resolution"), StringFromFormat("%dx%d (%s: %0.2f)",
 		g_display.dp_xres,
 		g_display.dp_yres,
 		si->T("DPI"),
 		g_display.dpi)));
 #endif
 
-#if !PPSSPP_PLATFORM(WINDOWS)
 	// Don't show on Windows, since it's always treated as 60 there.
-	deviceSpecs->Add(new InfoItem(si->T("Refresh rate"), StringFromFormat(si->T("%0.2f Hz"), (float)System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE))));
-#endif
+	displayInfo->Add(new InfoItem(si->T("Refresh rate"), StringFromFormat(si->T("%0.2f Hz"), (float)System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE))));
+	std::string presentModes;
+	if (draw->GetDeviceCaps().presentModesSupported & Draw::PresentMode::FIFO) presentModes += "FIFO, ";
+	if (draw->GetDeviceCaps().presentModesSupported & Draw::PresentMode::IMMEDIATE) presentModes += "IMMEDIATE, ";
+	if (draw->GetDeviceCaps().presentModesSupported & Draw::PresentMode::MAILBOX) presentModes += "MAILBOX, ";
+	if (!presentModes.empty()) {
+		presentModes.pop_back();
+		presentModes.pop_back();
+	}
+	displayInfo->Add(new InfoItem(si->T("Present modes"), presentModes));
 
-	deviceSpecs->Add(new ItemHeader(si->T("Version Information")));
+	CollapsibleSection *versionInfo = deviceSpecs->Add(new CollapsibleSection(si->T("Version Information")));
 	std::string apiVersion;
 	if (GetGPUBackend() == GPUBackend::OPENGL) {
 		if (gl_extensions.IsGLES) {
@@ -612,26 +630,26 @@ void SystemInfoScreen::CreateTabs() {
 		if (apiVersion.size() > 30)
 			apiVersion.resize(30);
 	}
-	deviceSpecs->Add(new InfoItem(si->T("API Version"), apiVersion));
-	deviceSpecs->Add(new InfoItem(si->T("Shading Language"), draw->GetInfoString(InfoField::SHADELANGVERSION)));
+	versionInfo->Add(new InfoItem(si->T("API Version"), apiVersion));
+	versionInfo->Add(new InfoItem(si->T("Shading Language"), draw->GetInfoString(InfoField::SHADELANGVERSION)));
 
 #if PPSSPP_PLATFORM(ANDROID)
 	std::string moga = System_GetProperty(SYSPROP_MOGA_VERSION);
 	if (moga.empty()) {
 		moga = si->T("(none detected)");
 	}
-	deviceSpecs->Add(new InfoItem("Moga", moga));
+	versionInfo->Add(new InfoItem("Moga", moga));
 #endif
 
 	if (gstate_c.GetUseFlags()) {
 		// We're in-game, and can determine these.
 		// TODO: Call a static version of GPUCommon::CheckGPUFeatures() and derive them here directly.
 
-		deviceSpecs->Add(new ItemHeader(si->T("GPU Flags")));
+		CollapsibleSection *gpuFlags = deviceSpecs->Add(new CollapsibleSection(si->T("GPU Flags")));
 
 		for (int i = 0; i < 32; i++) {
 			if (gstate_c.Use((1 << i))) {
-				deviceSpecs->Add(new TextView(GpuUseFlagToString(i), new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+				gpuFlags->Add(new TextView(GpuUseFlagToString(i), new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 			}
 		}
 	}
@@ -754,36 +772,58 @@ void SystemInfoScreen::CreateTabs() {
 
 		VulkanContext *vk = (VulkanContext *)draw->GetNativeObject(Draw::NativeObject::CONTEXT);
 
-		gpuExtensions->Add(new ItemHeader(si->T("Vulkan Features")));
+		CollapsibleSection *vulkanFeatures = gpuExtensions->Add(new CollapsibleSection(si->T("Vulkan Features")));
 		std::vector<std::string> features = draw->GetFeatureList();
 		for (auto &feature : features) {
-			gpuExtensions->Add(new TextView(feature, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+			vulkanFeatures->Add(new TextView(feature, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
 
-		gpuExtensions->Add(new ItemHeader(si->T("Present Modes")));
+		CollapsibleSection *presentModes = gpuExtensions->Add(new CollapsibleSection(si->T("Present Modes")));
 		for (auto mode : vk->GetAvailablePresentModes()) {
 			std::string str = VulkanPresentModeToString(mode);
 			if (mode == vk->GetPresentMode()) {
 				str += std::string(" (") + di->T("Current") + ")";
 			}
-			gpuExtensions->Add(new TextView(VulkanPresentModeToString(mode), new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+			presentModes->Add(new TextView(str, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
 
-		gpuExtensions->Add(new ItemHeader(si->T("Display Color Formats")));
+		CollapsibleSection *colorFormats = gpuExtensions->Add(new CollapsibleSection(si->T("Display Color Formats")));
 		if (vk) {
 			for (auto &format : vk->SurfaceFormats()) {
 				std::string line = StringFromFormat("%s : %s", VulkanFormatToString(format.format), VulkanColorSpaceToString(format.colorSpace));
-				gpuExtensions->Add(new TextView(line,
+				colorFormats->Add(new TextView(line,
 					new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 			}
 		}
 #endif
 
-		gpuExtensions->Add(new ItemHeader(si->T("Vulkan Extensions")));
-		std::vector<std::string> extensions = draw->GetExtensionList();
+		CollapsibleSection *enabledExtensions = gpuExtensions->Add(new CollapsibleSection(std::string(si->T("Vulkan Extensions")) + " (" + di->T("Enabled") + ")"));
+		std::vector<std::string> extensions = draw->GetExtensionList(true, true);
 		std::sort(extensions.begin(), extensions.end());
 		for (auto &extension : extensions) {
-			gpuExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+			enabledExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+		}
+		// Also get instance extensions
+		enabledExtensions->Add(new ItemHeader("Instance"));
+		extensions = draw->GetExtensionList(false, true);
+		std::sort(extensions.begin(), extensions.end());
+		for (auto &extension : extensions) {
+			enabledExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+		}
+
+		CollapsibleSection *vulkanExtensions = gpuExtensions->Add(new CollapsibleSection(si->T("Vulkan Extensions")));
+		extensions = draw->GetExtensionList(true, false);
+		std::sort(extensions.begin(), extensions.end());
+		for (auto &extension : extensions) {
+			vulkanExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+		}
+
+		vulkanExtensions->Add(new ItemHeader("Instance"));
+		// Also get instance extensions
+		extensions = draw->GetExtensionList(false, false);
+		std::sort(extensions.begin(), extensions.end());
+		for (auto &extension : extensions) {
+			vulkanExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
 	}
 
@@ -802,7 +842,8 @@ void SystemInfoScreen::CreateTabs() {
 
 	internals->Add(new ItemHeader(si->T("Notification tests")));
 	internals->Add(new Choice(si->T("Error")))->OnClick.Add([&](UI::EventParams &) {
-		g_OSD.Show(OSDType::MESSAGE_ERROR, "Error");
+		std::string str = "Error " + CodepointToUTF8(0x1F41B) + CodepointToUTF8(0x1F41C) + CodepointToUTF8(0x1F914);
+		g_OSD.Show(OSDType::MESSAGE_ERROR, str);
 		return UI::EVENT_DONE;
 	});
 	internals->Add(new Choice(si->T("Warning")))->OnClick.Add([&](UI::EventParams &) {
@@ -851,6 +892,13 @@ void SystemInfoScreen::CreateTabs() {
 		g_OSD.ShowLeaderboardTracker(1, nullptr, false);
 		return UI::EVENT_DONE;
 	});
+
+	static const char *positions[] = { "Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right", "None" };
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+
+	internals->Add(new ItemHeader(ac->T("Notifications")));
+	internals->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+
 #if PPSSPP_PLATFORM(ANDROID)
 	internals->Add(new Choice(si->T("Exception")))->OnClick.Add([&](UI::EventParams &) {
 		System_Notify(SystemNotification::TEST_JAVA_EXCEPTION);
@@ -1003,7 +1051,7 @@ void JitCompareScreen::UpdateDisasm() {
 	snprintf(temp, sizeof(temp), "%i/%i", currentBlock_, blockCacheDebug->GetNumBlocks());
 	blockName_->SetText(temp);
 
-	if (currentBlock_ < 0 || currentBlock_ >= blockCacheDebug->GetNumBlocks()) {
+	if (currentBlock_ < 0 || !blockCacheDebug || currentBlock_ >= blockCacheDebug->GetNumBlocks()) {
 		leftDisasm_->Add(new TextView(dev->T("No block")));
 		rightDisasm_->Add(new TextView(dev->T("No block")));
 		blockStats_->SetText("");
@@ -1067,6 +1115,9 @@ UI::EventReturn JitCompareScreen::OnShowStats(UI::EventParams &e) {
 	}
 
 	JitBlockCacheDebugInterface *blockCache = MIPSComp::jit->GetBlockCacheDebugInterface();
+	if (!blockCache)
+		return UI::EVENT_DONE;
+
 	BlockCacheStats bcStats;
 	blockCache->ComputeStats(bcStats);
 	NOTICE_LOG(JIT, "Num blocks: %i", bcStats.numBlocks);
@@ -1172,7 +1223,7 @@ void JitCompareScreen::OnRandomBlock(int flag) {
 			currentBlock_ = rand() % numBlocks;
 			JitBlockDebugInfo b = blockCache->GetBlockDebugInfo(currentBlock_);
 			u32 mipsBytes = (u32)b.origDisasm.size() * 4;
-			for (u32 addr = b.originalAddress; addr <= b.originalAddress + mipsBytes; addr += 4) {
+			for (u32 addr = b.originalAddress; addr < b.originalAddress + mipsBytes; addr += 4) {
 				MIPSOpcode opcode = Memory::Read_Instruction(addr);
 				if (MIPSGetInfo(opcode) & flag) {
 					char temp[256];

@@ -25,18 +25,18 @@ static constexpr Size ITEM_HEIGHT = 64.f;
 static constexpr float MIN_TEXT_SCALE = 0.8f;
 static constexpr float MAX_ITEM_SIZE = 65535.0f;
 
-void MeasureBySpec(Size sz, float contentWidth, MeasureSpec spec, float *measured) {
+void MeasureBySpec(Size sz, float contentDim, MeasureSpec spec, float *measured) {
 	if (sz == WRAP_CONTENT) {
 		if (spec.type == UNSPECIFIED)
-			*measured = contentWidth;
+			*measured = contentDim;
 		else if (spec.type == AT_MOST)
-			*measured = contentWidth < spec.size ? contentWidth : spec.size;
+			*measured = contentDim < spec.size ? contentDim : spec.size;
 		else if (spec.type == EXACTLY)
 			*measured = spec.size;
 	} else if (sz == FILL_PARENT) {
 		// UNSPECIFIED may have a minimum size of the parent.  Let's use it to fill.
 		if (spec.type == UNSPECIFIED)
-			*measured = std::max(spec.size, contentWidth);
+			*measured = std::max(spec.size, contentDim);
 		else
 			*measured = spec.size;
 	} else if (spec.type == EXACTLY || (spec.type == AT_MOST && *measured > spec.size)) {
@@ -46,7 +46,7 @@ void MeasureBySpec(Size sz, float contentWidth, MeasureSpec spec, float *measure
 	}
 }
 
-void ApplyBoundBySpec(float &bound, MeasureSpec spec) {
+static void ApplyBoundBySpec(float &bound, MeasureSpec spec) {
 	switch (spec.type) {
 	case AT_MOST:
 		bound = bound < spec.size ? bound : spec.size;
@@ -122,9 +122,8 @@ void View::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
 	MeasureBySpec(layoutParams_->height, contentH, vert, &measuredHeight_);
 }
 
-// Default values
-
 void View::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+	// Default values
 	w = 10.0f;
 	h = 10.0f;
 }
@@ -607,6 +606,7 @@ CollapsibleHeader::CollapsibleHeader(bool *toggle, const std::string &text, Layo
 
 void CollapsibleHeader::Draw(UIContext &dc) {
 	Style style = dc.theme->itemStyle;
+	style.background.color = 0;
 	if (HasFocus()) style = dc.theme->itemFocusedStyle;
 	if (down_) style = dc.theme->itemDownStyle;
 	if (!IsEnabled()) style = dc.theme->itemDisabledStyle;
@@ -618,7 +618,9 @@ void CollapsibleHeader::Draw(UIContext &dc) {
 	dc.SetFontStyle(dc.theme->uiFontSmall);
 	dc.DrawText(text_.c_str(), bounds_.x + 4 + xoff, bounds_.centerY(), dc.theme->headerStyle.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
 	dc.Draw()->DrawImageCenterTexel(dc.theme->whiteImage, bounds_.x, bounds_.y2() - 2, bounds_.x2(), bounds_.y2(), dc.theme->headerStyle.fgColor);
-	dc.Draw()->DrawImageRotated(ImageID("I_ARROW"), bounds_.x + 20.0f, bounds_.y + 20.0f, 1.0f, *toggle_ ? -M_PI / 2 : M_PI);
+	if (hasSubItems_) {
+		dc.Draw()->DrawImageRotated(ImageID("I_ARROW"), bounds_.x + 20.0f, bounds_.y + 20.0f, 1.0f, *toggle_ ? -M_PI / 2 : M_PI);
+	}
 }
 
 void CollapsibleHeader::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {

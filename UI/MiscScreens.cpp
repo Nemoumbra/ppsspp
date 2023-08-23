@@ -34,6 +34,7 @@
 #include "Common/File/VFS/VFS.h"
 
 #include "Common/Data/Color/RGBAUtil.h"
+#include "Common/Data/Encoding/Utf8.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Data/Random/Rng.h"
 #include "Common/TimeUtil.h"
@@ -677,18 +678,9 @@ void NewLanguageScreen::OnCompleted(DialogResult result) {
 		iniLoadedSuccessfully = g_i18nrepo.LoadIni(g_Config.sLanguageIni, langOverridePath);
 
 	if (iniLoadedSuccessfully) {
-		// Dunno what else to do here.
-		auto &langValuesMapping = g_Config.GetLangValuesMapping();
-
-		auto iter = langValuesMapping.find(code);
-		if (iter == langValuesMapping.end()) {
-			// Fallback to English
-			g_Config.iLanguage = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
-		} else {
-			g_Config.iLanguage = iter->second.second;
-		}
 		RecreateViews();
 	} else {
+		// Failed to load the language ini. Shouldn't really happen, but let's just switch back to the old language.
 		g_Config.sLanguageIni = oldLang;
 	}
 }
@@ -803,11 +795,13 @@ void LogoScreen::render() {
 	int ppsspp_org_y = bounds.h / 2 + 130;
 	dc.DrawText("www.ppsspp.org", bounds.centerX(), ppsspp_org_y, textColor, ALIGN_CENTER);
 
-#if !PPSSPP_PLATFORM(UWP)
+#if !PPSSPP_PLATFORM(UWP) || defined(_DEBUG)
 	// Draw the graphics API, except on UWP where it's always D3D11
 	std::string apiName = screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME);
 #ifdef _DEBUG
-	apiName += ", debug build";
+	apiName += ", debug build ";
+	// Add some emoji for testing.
+	apiName += CodepointToUTF8(0x1F41B) + CodepointToUTF8(0x1F41C) + CodepointToUTF8(0x1F914);
 #endif
 	dc.DrawText(gr->T(apiName), bounds.centerX(), ppsspp_org_y + 50, textColor, ALIGN_CENTER);
 #endif

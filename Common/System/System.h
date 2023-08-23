@@ -182,6 +182,8 @@ enum SystemProperty {
 	SYSPROP_KEYBOARD_LAYOUT,
 
 	SYSPROP_SKIP_UI,
+
+	SYSPROP_USER_DOCUMENTS_DIR,
 };
 
 enum class SystemNotification {
@@ -200,6 +202,8 @@ enum class SystemNotification {
 	POLL_CONTROLLERS,
 	TOGGLE_DEBUG_CONSOLE,  // TODO: Kinda weird, just ported forward.
 	TEST_JAVA_EXCEPTION,
+	KEEP_SCREEN_AWAKE,
+	ACTIVITY,
 };
 
 std::string System_GetProperty(SystemProperty prop);

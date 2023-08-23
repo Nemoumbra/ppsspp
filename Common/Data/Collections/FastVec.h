@@ -88,7 +88,7 @@ public:
 	T &insert(T *iter) {
 		int pos = iter - data_;
 		ExtendByOne();
-		if (pos + 1 < size_) {
+		if (pos + 1 < (int)size_) {
 			memmove(data_ + pos + 1, data_ + pos, (size_ - pos) * sizeof(T));
 		}
 		return data_[pos];
@@ -154,4 +154,48 @@ private:
 #ifdef _DEBUG
 	bool capacityLocked_ = false;
 #endif
+};
+
+// Simple cyclical vector.
+template <class T, size_t size>
+class HistoryBuffer {
+public:
+	T &Add(size_t index) {
+#ifdef _DEBUG
+		_dbg_assert_((int64_t)index >= 0);
+#endif
+		if (index > maxIndex_)
+			maxIndex_ = index;
+		T &entry = data_[index % size];
+		entry = T{};
+		return entry;
+	}
+
+	const T &Back(size_t index) const {
+#ifdef _DEBUG
+		_dbg_assert_(index < maxIndex_ && index < size);
+#endif
+		return data_[(maxIndex_ - index) % size];
+	}
+
+	// Out of bounds (past size() - 1) is undefined behavior.
+	T &operator[] (const size_t index) {
+#ifdef _DEBUG
+		_dbg_assert_(index <= maxIndex_);
+#endif
+		return data_[index % size];
+	}
+	const T &operator[] (const size_t index) const {
+#ifdef _DEBUG
+		_dbg_assert_(index <= maxIndex_);
+#endif
+		return data_[index % size];
+	}
+	size_t MaxIndex() const {
+		return maxIndex_;
+	}
+
+private:
+	T data_[size]{};
+	size_t maxIndex_ = 0;
 };
