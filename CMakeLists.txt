@@ -67,6 +67,8 @@ if(CMAKE_SYSTEM_PROCESSOR)
 		set(MIPS_DEVICE ON)
 	elseif(${CMAKE_SYSTEM_PROCESSOR} MATCHES "^riscv64")
 		set(RISCV64_DEVICE ON)
+	elseif(${CMAKE_SYSTEM_PROCESSOR} MATCHES "^loongarch64")
+		set(LOONGARCH64_DEVICE ON)
 	else()
 		message("Unknown CMAKE_SYSTEM_PROCESSOR: ${CMAKE_SYSTEM_PROCESSOR}")
 	endif()
@@ -139,6 +141,7 @@ option(ARMV7 "Set to ON if targeting an ARMv7 processor" ${ARMV7_DEVICE})
 option(ARM "Set to ON if targeting an ARM processor" ${ARM_DEVICE})
 option(MIPS "Set to ON if targeting a MIPS processor" ${MIPS_DEVICE})
 option(RISCV64 "Set to ON if targeting a RISCV64 processor" ${RISCV64_DEVICE})
+option(LOONGARCH64 "Set to ON if targeting a LOONGARCH64 processor" ${LOONGARCH64_DEVICE})
 option(X86 "Set to ON if targeting an X86 processor" ${X86_DEVICE})
 option(X86_64 "Set to ON if targeting an X86_64 processor" ${X86_64_DEVICE})
 # :: Environments
@@ -318,6 +321,9 @@ endif()
 if(RISCV64)
 	message("Generating for RISCV64, ${CMAKE_BUILD_TYPE}")
 endif()
+if(LOONGARCH64)
+	message("Generating for LOONGARCH64, ${CMAKE_BUILD_TYPE}")
+endif()
 if(X86)
 	message("Generating for x86, ${CMAKE_BUILD_TYPE}")
 endif()
@@ -419,7 +425,9 @@ if(NOT MSVC)
 		endif()
 		add_definitions(-D_XOPEN_SOURCE=700)
 		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1 -D_BSD_SOURCE -D_DEFAULT_SOURCE)
-		add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
+		if(CMAKE_SYSTEM_NAME MATCHES "Linux|SunOS" OR MINGW)
+			add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
+		endif()
 		if(${CMAKE_SYSTEM_NAME} STREQUAL "NetBSD")
 			add_definitions(-D_NETBSD_SOURCE)
 		endif()
@@ -527,6 +535,14 @@ set(CommonRISCV64
 )
 source_group(RISCV64 FILES ${CommonRISCV64})
 
+set(CommonLOONGARCH64
+	${CommonJIT}
+	Common/LoongArchCPUDetect.cpp
+	Core/MIPS/fake/FakeJit.cpp
+	Core/MIPS/fake/FakeJit.h
+)
+source_group(LOONGARCH64 FILES ${CommonLOONGARCH64})
+
 if(WIN32)
 	set(CommonD3D
 		Common/GPU/D3D9/D3D9ShaderCompiler.cpp
@@ -565,6 +581,7 @@ add_library(Common STATIC
 	${CommonARM64}
 	${CommonMIPS}
 	${CommonRISCV64}
+	${CommonLOONGARCH64}
 	${CommonD3D}
 	${CommonVR}
 	Common/Serialize/Serializer.cpp
@@ -887,6 +904,8 @@ if(USE_FFMPEG)
 					set(PLATFORM_ARCH "linux/mips32")
 				elseif(RISCV64)
 					set(PLATFORM_ARCH "linux/riscv64")
+				elseif(LOONGARCH64)
+					set(PLATFORM_ARCH "linux/loongarch64")
 				elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
 					set(PLATFORM_ARCH "linux/x86_64")
 				elseif(X86)
@@ -1478,7 +1497,7 @@ if(LINUX AND NOT ANDROID)
 endif()
 
 set(ATOMIC_LIB)
-if(ANDROID OR (LINUX AND ARM_DEVICE) OR (LINUX AND RISCV64))
+if(ANDROID OR (LINUX AND ARM_DEVICE) OR (LINUX AND RISCV64) OR (LINUX AND LOONGARCH64))
 	set(ATOMIC_LIB atomic)
 endif()
 
@@ -1591,6 +1610,17 @@ list(APPEND CoreExtra
 	Core/MIPS/ARM64/Arm64RegCache.h
 	Core/MIPS/ARM64/Arm64RegCacheFPU.cpp
 	Core/MIPS/ARM64/Arm64RegCacheFPU.h
+	Core/MIPS/ARM64/Arm64IRAsm.cpp
+	Core/MIPS/ARM64/Arm64IRCompALU.cpp
+	Core/MIPS/ARM64/Arm64IRCompBranch.cpp
+	Core/MIPS/ARM64/Arm64IRCompFPU.cpp
+	Core/MIPS/ARM64/Arm64IRCompLoadStore.cpp
+	Core/MIPS/ARM64/Arm64IRCompSystem.cpp
+	Core/MIPS/ARM64/Arm64IRCompVec.cpp
+	Core/MIPS/ARM64/Arm64IRJit.cpp
+	Core/MIPS/ARM64/Arm64IRJit.h
+	Core/MIPS/ARM64/Arm64IRRegCache.cpp
+	Core/MIPS/ARM64/Arm64IRRegCache.h
 	GPU/Common/VertexDecoderArm64.cpp
 	Core/Util/DisArm64.cpp
 )

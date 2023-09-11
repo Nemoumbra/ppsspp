@@ -48,12 +48,13 @@ void ScreenManager::update() {
 		switchToNext();
 	}
 
+	if (overlayScreen_) {
+		// NOTE: This is not a full UIScreen update, to avoid double global event processing.
+		overlayScreen_->update();
+	}
 	if (stack_.size()) {
 		stack_.back().screen->update();
 	}
-
-	// NOTE: We should not update the OverlayScreen. In fact, we must never update more than one
-	// UIScreen in here, because we might end up double-processing the stuff in Root.cpp.
 
 	g_iconCache.FrameUpdate();
 }
@@ -90,8 +91,15 @@ void ScreenManager::touch(const TouchInput &touch) {
 			layer.screen->UnsyncTouch(screen->transformTouch(touch));
 		}
 	} else if (!stack_.empty()) {
-		Screen *screen = stack_.back().screen;
-		stack_.back().screen->UnsyncTouch(screen->transformTouch(touch));
+		// Let the overlay know about touch-downs, to be able to dismiss popups.
+		bool skip = false;
+		if (overlayScreen_ && (touch.flags & TOUCH_DOWN)) {
+			skip = overlayScreen_->UnsyncTouch(overlayScreen_->transformTouch(touch));
+		}
+		if (!skip) {
+			Screen *screen = stack_.back().screen;
+			stack_.back().screen->UnsyncTouch(screen->transformTouch(touch));
+		}
 	}
 }
 
@@ -178,11 +186,12 @@ void ScreenManager::render() {
 					iter++;
 				}
 				stack_.back().screen->render();
-				if (postRenderCb_) {
-					postRenderCb_(getUIContext(), postRenderUserdata_);
-				}
 				if (overlayScreen_) {
 					overlayScreen_->render();
+				}
+				if (postRenderCb_) {
+					// Really can't render anything after this! Will crash the screenshot mechanism if we do.
+					postRenderCb_(getUIContext(), postRenderUserdata_);
 				}
 				first->screen->postRender();
 				break;
@@ -191,10 +200,12 @@ void ScreenManager::render() {
 			_assert_(stack_.back().screen);
 			stack_.back().screen->preRender();
 			stack_.back().screen->render();
-			if (postRenderCb_)
-				postRenderCb_(getUIContext(), postRenderUserdata_);
 			if (overlayScreen_) {
 				overlayScreen_->render();
+			}
+			if (postRenderCb_) {
+				// Really can't render anything after this! Will crash the screenshot mechanism if we do.
+				postRenderCb_(getUIContext(), postRenderUserdata_);
 			}
 			stack_.back().screen->postRender();
 			break;
@@ -285,6 +296,7 @@ void ScreenManager::pop() {
 }
 
 void ScreenManager::RecreateAllViews() {
+	std::lock_guard<std::recursive_mutex> guard(inputLock_);
 	for (auto it = stack_.begin(); it != stack_.end(); ++it) {
 		it->screen->RecreateViews();
 	}

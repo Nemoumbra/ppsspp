@@ -159,6 +159,35 @@ bool IRNativeRegCacheBase::IsFPRMapped(IRReg fpr) {
 	return mr[fpr + 32].loc == MIPSLoc::FREG || mr[fpr + 32].loc == MIPSLoc::VREG;
 }
 
+int IRNativeRegCacheBase::GetFPRLaneCount(IRReg fpr) {
+	if (!IsFPRMapped(fpr) || mr[fpr + 32].lane > 0)
+		return 0;
+	if (mr[fpr + 32].lane == -1)
+		return 1;
+
+	IRReg base = fpr + 32 - mr[fpr + 32].lane;
+	int c = 1;
+	for (int i = 1; i < 4; ++i) {
+		if (mr[base + i].nReg != mr[base].nReg || mr[base + i].loc != mr[base].loc)
+			return c;
+		if (mr[base + i].lane != i)
+			return c;
+
+		c++;
+	}
+
+	return c;
+}
+
+int IRNativeRegCacheBase::GetFPRLane(IRReg fpr) {
+	_dbg_assert_(IsValidFPR(fpr));
+	if (mr[fpr + 32].loc == MIPSLoc::FREG || mr[fpr + 32].loc == MIPSLoc::VREG) {
+		int l = mr[fpr + 32].lane;
+		return l == -1 ? 0 : l;
+	}
+	return -1;
+}
+
 bool IRNativeRegCacheBase::IsGPRMappedAsPointer(IRReg gpr) {
 	_dbg_assert_(IsValidGPR(gpr));
 	if (mr[gpr].loc == MIPSLoc::REG) {
@@ -367,12 +396,58 @@ IRNativeReg IRNativeRegCacheBase::FindFreeReg(MIPSLoc type, MIPSMap flags) const
 	for (int i = 0; i < allocCount; i++) {
 		IRNativeReg nreg = IRNativeReg(allocOrder[i] - base);
 
-		if (nr[nreg].mipsReg == IRREG_INVALID) {
+		if (nr[nreg].mipsReg == IRREG_INVALID && nr[nreg].tempLockIRIndex < irIndex_) {
 			return nreg;
 		}
 	}
 
 	return -1;
+}
+
+bool IRNativeRegCacheBase::IsGPRClobbered(IRReg gpr) const {
+	_dbg_assert_(IsValidGPR(gpr));
+	return IsRegClobbered(MIPSLoc::REG, MIPSMap::INIT, gpr);
+}
+
+bool IRNativeRegCacheBase::IsFPRClobbered(IRReg fpr) const {
+	_dbg_assert_(IsValidFPR(fpr));
+	return IsRegClobbered(MIPSLoc::FREG, MIPSMap::INIT, fpr + 32);
+}
+
+IRUsage IRNativeRegCacheBase::GetNextRegUsage(const IRSituation &info, MIPSLoc type, IRReg r) const {
+	if (type == MIPSLoc::REG)
+		return IRNextGPRUsage(r, info);
+	else if (type == MIPSLoc::FREG || type == MIPSLoc::VREG)
+		return IRNextFPRUsage(r - 32, info);
+	_assert_msg_(false, "Unknown spill allocation type");
+	return IRUsage::UNKNOWN;
+}
+
+bool IRNativeRegCacheBase::IsRegClobbered(MIPSLoc type, MIPSMap flags, IRReg r) const {
+	static const int UNUSED_LOOKAHEAD_OPS = 30;
+
+	IRSituation info;
+	info.lookaheadCount = UNUSED_LOOKAHEAD_OPS;
+	// We look starting one ahead, unlike spilling.  We want to know if it clobbers later.
+	info.currentIndex = irIndex_ + 1;
+	info.instructions = irBlock_->GetInstructions();
+	info.numInstructions = irBlock_->GetNumInstructions();
+
+	// Make sure we're on the first one if this is multi-lane.
+	IRReg first = r;
+	if (mr[r].lane != -1)
+		first -= mr[r].lane;
+
+	IRUsage usage = GetNextRegUsage(info, type, first);
+	if (usage == IRUsage::CLOBBERED) {
+		// If multiple mips regs use this native reg (i.e. vector, HI/LO), check each.
+		bool canClobber = true;
+		for (IRReg m = first + 1; mr[m].nReg == mr[first].nReg && m < IRREG_INVALID && canClobber; ++m)
+			canClobber = GetNextRegUsage(info, type, m) == IRUsage::CLOBBERED;
+
+		return canClobber;
+	}
+	return false;
 }
 
 IRNativeReg IRNativeRegCacheBase::FindBestToSpill(MIPSLoc type, MIPSMap flags, bool unusedOnly, bool *clobbered) const {
@@ -387,15 +462,6 @@ IRNativeReg IRNativeRegCacheBase::FindBestToSpill(MIPSLoc type, MIPSMap flags, b
 	info.instructions = irBlock_->GetInstructions();
 	info.numInstructions = irBlock_->GetNumInstructions();
 
-	auto getUsage = [type, &info](IRReg mipsReg) {
-		if (type == MIPSLoc::REG)
-			return IRNextGPRUsage(mipsReg, info);
-		else if (type == MIPSLoc::FREG || type == MIPSLoc::VREG)
-			return IRNextFPRUsage(mipsReg - 32, info);
-		_assert_msg_(false, "Unknown spill allocation type");
-		return IRUsage::UNKNOWN;
-	};
-
 	*clobbered = false;
 	for (int i = 0; i < allocCount; i++) {
 		IRNativeReg nreg = IRNativeReg(allocOrder[i] - base);
@@ -406,7 +472,7 @@ IRNativeReg IRNativeRegCacheBase::FindBestToSpill(MIPSLoc type, MIPSMap flags, b
 
 		// As it's in alloc-order, we know it's not static so we don't need to check for that.
 		IRReg mipsReg = nr[nreg].mipsReg;
-		IRUsage usage = getUsage(mipsReg);
+		IRUsage usage = GetNextRegUsage(info, type, mipsReg);
 
 		// Awesome, a clobbered reg.  Let's use it?
 		if (usage == IRUsage::CLOBBERED) {
@@ -414,7 +480,7 @@ IRNativeReg IRNativeRegCacheBase::FindBestToSpill(MIPSLoc type, MIPSMap flags, b
 			// Note: mipsReg points to the lowest numbered IRReg.
 			bool canClobber = true;
 			for (IRReg m = mipsReg + 1; mr[m].nReg == nreg && m < IRREG_INVALID && canClobber; ++m)
-				canClobber = getUsage(mipsReg) == IRUsage::CLOBBERED;
+				canClobber = GetNextRegUsage(info, type, m) == IRUsage::CLOBBERED;
 
 			// Okay, if all can be clobbered, we're good to go.
 			if (canClobber) {
@@ -698,6 +764,10 @@ void IRNativeRegCacheBase::ApplyMapping(const Mapping *mapping, int count) {
 		}
 	}
 
+	auto isNoinit = [](MIPSMap f) {
+		return (f & MIPSMap::NOINIT) == MIPSMap::NOINIT;
+	};
+
 	auto mapRegs = [&](int i) {
 		MIPSLoc type = MIPSLoc::MEM;
 		switch (mapping[i].type) {
@@ -714,24 +784,40 @@ void IRNativeRegCacheBase::ApplyMapping(const Mapping *mapping, int count) {
 			return;
 		}
 
-		if (config_.mapFPUSIMD || mapping[i].type == 'G') {
-			MapNativeReg(type, mapping[i].reg, mapping[i].lanes, mapping[i].flags);
+		bool mapSIMD = config_.mapFPUSIMD || mapping[i].type == 'G';
+		MIPSMap flags = mapping[i].flags;
+		for (int j = 0; j < count; ++j) {
+			if (mapping[j].type == mapping[i].type && mapping[j].reg == mapping[i].reg && i != j) {
+				_assert_msg_(!mapSIMD || mapping[j].lanes == mapping[i].lanes, "Lane aliasing not supported yet");
+
+				if (!isNoinit(mapping[j].flags) && isNoinit(flags)) {
+					flags = (flags & MIPSMap::BACKEND_MASK) | MIPSMap::DIRTY;
+				}
+			}
+		}
+
+		if (mapSIMD) {
+			MapNativeReg(type, mapping[i].reg, mapping[i].lanes, flags);
 			return;
 		}
 
 		for (int j = 0; j < mapping[i].lanes; ++j)
-			MapNativeReg(type, mapping[i].reg + j, 1, mapping[i].flags);
+			MapNativeReg(type, mapping[i].reg + j, 1, flags);
+	};
+	auto mapFilteredRegs = [&](auto pred) {
+		for (int i = 0; i < count; ++i) {
+			if (pred(mapping[i].flags))
+				mapRegs(i);
+		}
 	};
 
-	// Do two passes: first any without NOINIT, then NOINIT.
-	for (int i = 0; i < count; ++i) {
-		if ((mapping[i].flags & MIPSMap::NOINIT) != MIPSMap::NOINIT)
-			mapRegs(i);
-	}
-	for (int i = 0; i < count; ++i) {
-		if ((mapping[i].flags & MIPSMap::NOINIT) == MIPSMap::NOINIT)
-			mapRegs(i);
-	}
+	// Do two passes: with backend special flags, and without.
+	mapFilteredRegs([](MIPSMap flags) {
+		return (flags & MIPSMap::BACKEND_MASK) != MIPSMap::INIT;
+	});
+	mapFilteredRegs([](MIPSMap flags) {
+		return (flags & MIPSMap::BACKEND_MASK) == MIPSMap::INIT;
+	});
 }
 
 void IRNativeRegCacheBase::CleanupMapping(const Mapping *mapping, int count) {
@@ -889,7 +975,8 @@ void IRNativeRegCacheBase::MapNativeReg(MIPSLoc type, IRNativeReg nreg, IRReg fi
 				oldlanes++;
 
 			// We may need to flush if it goes outside or we're initing.
-			bool mismatch = oldlanes != lanes || mreg.lane != (lanes == 1 ? -1 : i);
+			int oldlane = mreg.lane == -1 ? 0 : mreg.lane;
+			bool mismatch = oldlanes != lanes || oldlane != i;
 			if (mismatch) {
 				_assert_msg_(!mreg.isStatic, "Cannot MapNativeReg a static reg mismatch");
 				if ((flags & MIPSMap::NOINIT) != MIPSMap::NOINIT) {
@@ -900,10 +987,37 @@ void IRNativeRegCacheBase::MapNativeReg(MIPSLoc type, IRNativeReg nreg, IRReg fi
 					FlushNativeReg(mreg.nReg);
 				} else if (oldlanes != 1) {
 					// Even if we don't care about the current contents, we can't discard outside.
-					bool extendsBefore = mreg.lane > i;
-					bool extendsAfter = i + oldlanes - mreg.lane > lanes;
-					if (extendsBefore || extendsAfter)
-						FlushNativeReg(mreg.nReg);
+					bool extendsBefore = oldlane > i;
+					bool extendsAfter = i + oldlanes - oldlane > lanes;
+					if (extendsBefore || extendsAfter) {
+						// Usually, this is 4->1.  Check for clobber.
+						bool clobbered = false;
+						if (lanes == 1) {
+							IRSituation info;
+							info.lookaheadCount = 16;
+							info.currentIndex = irIndex_;
+							info.instructions = irBlock_->GetInstructions();
+							info.numInstructions = irBlock_->GetNumInstructions();
+
+							IRReg basefpr = first - oldlane - 32;
+							clobbered = true;
+							for (int l = 0; l < oldlanes; ++l) {
+								// Ignore the one we're modifying.
+								if (l == oldlane)
+									continue;
+
+								if (IRNextFPRUsage(basefpr + l, info) != IRUsage::CLOBBERED) {
+									clobbered = false;
+									break;
+								}
+							}
+						}
+
+						if (clobbered)
+							DiscardNativeReg(mreg.nReg);
+						else
+							FlushNativeReg(mreg.nReg);
+					}
 				}
 			}
 
@@ -982,9 +1096,14 @@ void IRNativeRegCacheBase::MapNativeReg(MIPSLoc type, IRNativeReg nreg, IRReg fi
 			case MIPSLoc::REG_AS_PTR:
 				_assert_msg_(lanes == 1, "Should have flushed before getting here");
 				_assert_msg_(type == MIPSLoc::REG, "Should have flushed this reg already");
+#ifndef MASKED_PSP_MEMORY
 				AdjustNativeRegAsPtr(nreg, false);
+#endif
 				for (int i = 0; i < lanes; ++i)
 					mr[first + i].loc = type;
+#ifdef MASKED_PSP_MEMORY
+				LoadNativeReg(nreg, first, lanes);
+#endif
 				break;
 
 			case MIPSLoc::REG:

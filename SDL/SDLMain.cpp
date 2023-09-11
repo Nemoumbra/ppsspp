@@ -325,6 +325,31 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 		g_windowState.update = true;
 		return true;
 	}
+	case SystemRequestType::SHOW_FILE_IN_FOLDER:
+	{
+#if PPSSPP_PLATFORM(WINDOWS)
+		SFGAOF flags;
+		PIDLIST_ABSOLUTE pidl = nullptr;
+		HRESULT hr = SHParseDisplayName(ConvertUTF8ToWString(ReplaceAll(path, "/", "\\")).c_str(), nullptr, &pidl, 0, &flags);
+		if (pidl) {
+			if (SUCCEEDED(hr))
+				SHOpenFolderAndSelectItems(pidl, 0, NULL, 0);
+			CoTaskMemFree(pidl);
+		}
+#elif PPSSPP_PLATFORM(MAC)
+		OSXShowInFinder(param1.c_str());
+#elif (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
+		pid_t pid = fork();
+		if (pid < 0)
+			return true;
+
+		if (pid == 0) {
+			execlp("xdg-open", "xdg-open", param1.c_str(), nullptr);
+			exit(1);
+		}
+#endif /* PPSSPP_PLATFORM(WINDOWS) */
+		return true;
+	}
 	default:
 		return false;
 	}
@@ -332,30 +357,6 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 
 void System_AskForPermission(SystemPermission permission) {}
 PermissionStatus System_GetPermissionStatus(SystemPermission permission) { return PERMISSION_STATUS_GRANTED; }
-
-void System_ShowFileInFolder(const char *path) {
-#if PPSSPP_PLATFORM(WINDOWS)
-	SFGAOF flags;
-	PIDLIST_ABSOLUTE pidl = nullptr;
-	HRESULT hr = SHParseDisplayName(ConvertUTF8ToWString(ReplaceAll(path, "/", "\\")).c_str(), nullptr, &pidl, 0, &flags);
-	if (pidl) {
-		if (SUCCEEDED(hr))
-			SHOpenFolderAndSelectItems(pidl, 0, NULL, 0);
-		CoTaskMemFree(pidl);
-	}
-#elif PPSSPP_PLATFORM(MAC)
-	OSXShowInFinder(path);
-#elif (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
-	pid_t pid = fork();
-	if (pid < 0)
-		return;
-
-	if (pid == 0) {
-		execlp("xdg-open", "xdg-open", path, nullptr);
-		exit(1);
-	}
-#endif /* PPSSPP_PLATFORM(WINDOWS) */
-}
 
 void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 	switch (urlType) {
@@ -546,6 +547,12 @@ float System_GetPropertyFloat(SystemProperty prop) {
 
 bool System_GetPropertyBool(SystemProperty prop) {
 	switch (prop) {
+	case SYSPROP_CAN_SHOW_FILE:
+#if PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(MAC) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
+		return true;
+#else
+		return false;
+#endif
 	case SYSPROP_HAS_OPEN_DIRECTORY:
 #if PPSSPP_PLATFORM(WINDOWS)
 		return true;
@@ -557,6 +564,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 #if PPSSPP_PLATFORM(SWITCH)
 	case SYSPROP_HAS_TEXT_INPUT_DIALOG:
 		return __nx_applet_type == AppletType_Application || __nx_applet_type != AppletType_SystemApplication;
+	case SYSPROP_HAS_KEYBOARD:
+		return true;
 #endif
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
@@ -566,11 +575,11 @@ bool System_GetPropertyBool(SystemProperty prop) {
 #endif
 	case SYSPROP_CAN_JIT:
 		return true;
-	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
+	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR: 
 		return true;  // FileUtil.cpp: OpenFileInEditor
 #ifndef HTTPS_NOT_AVAILABLE
 	case SYSPROP_SUPPORTS_HTTPS:
-		return true;
+		return !g_Config.bDisableHTTPS;
 #endif
 #if PPSSPP_PLATFORM(MAC)
 	case SYSPROP_HAS_FOLDER_BROWSER:
@@ -715,17 +724,16 @@ struct InputStateTracker {
 			float scaleFactor_x = g_display.dpi_scale_x * 0.1 * g_Config.fMouseSensitivity;
 			float scaleFactor_y = g_display.dpi_scale_y * 0.1 * g_Config.fMouseSensitivity;
 
-			AxisInput axisX, axisY;
-			axisX.axisId = JOYSTICK_AXIS_MOUSE_REL_X;
-			axisX.deviceId = DEVICE_ID_MOUSE;
-			axisX.value = std::max(-1.0f, std::min(1.0f, mouseDeltaX * scaleFactor_x));
-			axisY.axisId = JOYSTICK_AXIS_MOUSE_REL_Y;
-			axisY.deviceId = DEVICE_ID_MOUSE;
-			axisY.value = std::max(-1.0f, std::min(1.0f, mouseDeltaY * scaleFactor_y));
+			AxisInput axis[2];
+			axis[0].axisId = JOYSTICK_AXIS_MOUSE_REL_X;
+			axis[0].deviceId = DEVICE_ID_MOUSE;
+			axis[0].value = std::max(-1.0f, std::min(1.0f, mouseDeltaX * scaleFactor_x));
+			axis[1].axisId = JOYSTICK_AXIS_MOUSE_REL_Y;
+			axis[1].deviceId = DEVICE_ID_MOUSE;
+			axis[1].value = std::max(-1.0f, std::min(1.0f, mouseDeltaY * scaleFactor_y));
 
 			if (GetUIState() == UISTATE_INGAME || g_Config.bMapMouse) {
-				NativeAxis(axisX);
-				NativeAxis(axisY);
+				NativeAxis(axis, 2);
 			}
 			mouseDeltaX *= g_Config.fMouseSmoothing;
 			mouseDeltaY *= g_Config.fMouseSmoothing;
@@ -855,6 +863,28 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 				g_rebootEmuThread = true;
 			}
 #endif
+			// Convenience subset of what
+			// "Enable standard shortcut keys"
+			// does on Windows.
+			if(g_Config.bSystemControls) {
+				bool ctrl = bool(event.key.keysym.mod & KMOD_CTRL);
+				if (ctrl && (k == SDLK_w))
+				{
+					if (Core_IsStepping())
+						Core_EnableStepping(false);
+					Core_Stop();
+					System_PostUIMessage("stop", "");
+					// NOTE: Unlike Windows version, this
+					// does not need Core_WaitInactive();
+					// since SDL does not have a separate
+					// UI thread.
+				}
+				if (ctrl && (k == SDLK_b))
+				{
+					System_PostUIMessage("reset", "");
+					Core_EnableStepping(false);
+				}
+			}
 			break;
 		}
 	case SDL_KEYUP:

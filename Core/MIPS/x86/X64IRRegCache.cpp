@@ -50,12 +50,11 @@ const int *X64IRRegCache::GetAllocationOrder(MIPSLoc type, MIPSMap flags, int &c
 		base = RAX;
 
 		static const int allocationOrder[] = {
-			// On x64, RCX and RDX are the first args.  CallProtectedFunction() assumes they're not regcached.
 #if PPSSPP_ARCH(AMD64)
 #ifdef _WIN32
-			RSI, RDI, R8, R9, R10, R11, R12, R13,
+			RSI, RDI, R8, R9, R10, R11, R12, R13, RDX, RCX,
 #else
-			RBP, R8, R9, R10, R11, R12, R13,
+			RBP, R8, R9, R10, R11, R12, R13, RDX, RCX,
 #endif
 			// Intentionally last.
 			R15,
@@ -64,8 +63,20 @@ const int *X64IRRegCache::GetAllocationOrder(MIPSLoc type, MIPSMap flags, int &c
 #endif
 		};
 
+		if ((flags & X64Map::MASK) == X64Map::SHIFT) {
+			// It's a single option for shifts.
+			static const int shiftReg[] = { ECX };
+			count = 1;
+			return shiftReg;
+		}
+		if ((flags & X64Map::MASK) == X64Map::HIGH_DATA) {
+			// It's a single option for shifts.
+			static const int shiftReg[] = { EDX };
+			count = 1;
+			return shiftReg;
+		}
 #if PPSSPP_ARCH(X86)
-		if ((flags & X64Map::LOW_SUBREG) == X64Map::LOW_SUBREG) {
+		if ((flags & X64Map::MASK) == X64Map::LOW_SUBREG) {
 			static const int lowSubRegAllocationOrder[] = {
 				EDX, EBX, ECX,
 			};
@@ -91,6 +102,13 @@ const int *X64IRRegCache::GetAllocationOrder(MIPSLoc type, MIPSMap flags, int &c
 		XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, XMM0,
 #endif
 		};
+
+		if ((flags & X64Map::MASK) == X64Map::XMM0) {
+			// Certain cases require this reg.
+			static const int blendReg[] = { XMM0 };
+			count = 1;
+			return blendReg;
+		}
 
 		count = ARRAY_SIZE(allocationOrder);
 		return allocationOrder;
@@ -133,7 +151,19 @@ X64Reg X64IRRegCache::TryMapTempImm(IRReg r, X64Map flags) {
 	_dbg_assert_(IsValidGPR(r));
 
 	auto canUseReg = [flags](X64Reg r) {
-		return (flags & X64Map::LOW_SUBREG) != X64Map::LOW_SUBREG || HasLowSubregister(r);
+		switch (flags & X64Map::MASK) {
+		case X64Map::NONE:
+			return true;
+		case X64Map::LOW_SUBREG:
+			return HasLowSubregister(r);
+		case X64Map::SHIFT:
+			return r == RCX;
+		case X64Map::HIGH_DATA:
+			return r == RCX;
+		default:
+			_assert_msg_(false, "Unexpected flags");
+		}
+		return false;
 	};
 
 	// If already mapped, no need for a temporary.
@@ -156,23 +186,92 @@ X64Reg X64IRRegCache::TryMapTempImm(IRReg r, X64Map flags) {
 	return INVALID_REG;
 }
 
-X64Reg X64IRRegCache::GetAndLockTempR() {
-	X64Reg reg = FromNativeReg(AllocateReg(MIPSLoc::REG, MIPSMap::INIT));
-	if (reg != INVALID_REG) {
+X64Reg X64IRRegCache::GetAndLockTempGPR() {
+	IRNativeReg reg = AllocateReg(MIPSLoc::REG, MIPSMap::INIT);
+	if (reg != -1) {
 		nr[reg].tempLockIRIndex = irIndex_;
 	}
-	return reg;
+	return FromNativeReg(reg);
 }
 
-X64Reg X64IRRegCache::MapWithFPRTemp(IRInst &inst) {
+X64Reg X64IRRegCache::GetAndLockTempFPR() {
+	IRNativeReg reg = AllocateReg(MIPSLoc::FREG, MIPSMap::INIT);
+	if (reg != -1) {
+		nr[reg].tempLockIRIndex = irIndex_;
+	}
+	return FromNativeReg(reg);
+}
+
+void X64IRRegCache::ReserveAndLockXGPR(Gen::X64Reg r) {
+	IRNativeReg nreg = GPRToNativeReg(r);
+	if (nr[nreg].mipsReg != -1)
+		FlushNativeReg(nreg);
+	nr[r].tempLockIRIndex = irIndex_;
+}
+
+X64Reg X64IRRegCache::MapWithFPRTemp(const IRInst &inst) {
 	return FromNativeReg(MapWithTemp(inst, MIPSLoc::FREG));
+}
+
+void X64IRRegCache::MapWithFlags(IRInst inst, X64Map destFlags, X64Map src1Flags, X64Map src2Flags) {
+	Mapping mapping[3];
+	MappingFromInst(inst, mapping);
+
+	mapping[0].flags = mapping[0].flags | destFlags;
+	mapping[1].flags = mapping[1].flags | src1Flags;
+	mapping[2].flags = mapping[2].flags | src2Flags;
+
+	auto flushReg = [&](IRNativeReg nreg) {
+		for (int i = 0; i < 3; ++i) {
+			if (mapping[i].reg == nr[nreg].mipsReg && (mapping[i].flags & MIPSMap::NOINIT) == MIPSMap::NOINIT) {
+				DiscardNativeReg(nreg);
+				return;
+			}
+		}
+
+		FlushNativeReg(nreg);
+	};
+
+	// If there are any special rules, we might need to spill.
+	for (int i = 0; i < 3; ++i) {
+		switch (mapping[i].flags & X64Map::MASK) {
+		case X64Map::SHIFT:
+			if (nr[RCX].mipsReg != mapping[i].reg)
+				flushReg(RCX);
+			break;
+
+		case X64Map::HIGH_DATA:
+			if (nr[RDX].mipsReg != mapping[i].reg)
+				flushReg(RDX);
+			break;
+
+		case X64Map::XMM0:
+			if (nr[XMMToNativeReg(XMM0)].mipsReg != mapping[i].reg)
+				flushReg(XMMToNativeReg(XMM0));
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	ApplyMapping(mapping, 3);
+	CleanupMapping(mapping, 3);
 }
 
 X64Reg X64IRRegCache::MapGPR(IRReg mipsReg, MIPSMap mapFlags) {
 	_dbg_assert_(IsValidGPR(mipsReg));
 
-	// Okay, not mapped, so we need to allocate an RV register.
+	// Okay, not mapped, so we need to allocate an x64 register.
 	IRNativeReg nreg = MapNativeReg(MIPSLoc::REG, mipsReg, 1, mapFlags);
+	return FromNativeReg(nreg);
+}
+
+X64Reg X64IRRegCache::MapGPR2(IRReg mipsReg, MIPSMap mapFlags) {
+	_dbg_assert_(IsValidGPR(mipsReg) && IsValidGPR(mipsReg + 1));
+
+	// Okay, not mapped, so we need to allocate an x64 register.
+	IRNativeReg nreg = MapNativeReg(MIPSLoc::REG, mipsReg, 2, mapFlags);
 	return FromNativeReg(nreg);
 }
 
@@ -211,7 +310,6 @@ void X64IRRegCache::AdjustNativeRegAsPtr(IRNativeReg nreg, bool state) {
 		emit_->AND(PTRBITS, ::R(r), Imm32(Memory::MEMVIEW32_MASK));
 		emit_->ADD(PTRBITS, ::R(r), ImmPtr(Memory::base));
 #else
-		// Clear the top bits to be safe.
 		emit_->ADD(PTRBITS, ::R(r), ::R(MEMBASEREG));
 #endif
 	} else {
@@ -228,7 +326,6 @@ void X64IRRegCache::LoadNativeReg(IRNativeReg nreg, IRReg first, int lanes) {
 	X64Reg r = FromNativeReg(nreg);
 	_dbg_assert_(first != MIPS_REG_ZERO);
 	if (nreg < NUM_X_REGS) {
-		// Multilane not yet supported.
 		_assert_(lanes == 1 || (lanes == 2 && first == IRREG_LO));
 		if (lanes == 1)
 			emit_->MOV(32, ::R(r), MDisp(CTXREG, -128 + GetMipsRegOffset(first)));
@@ -256,7 +353,6 @@ void X64IRRegCache::StoreNativeReg(IRNativeReg nreg, IRReg first, int lanes) {
 	X64Reg r = FromNativeReg(nreg);
 	_dbg_assert_(first != MIPS_REG_ZERO);
 	if (nreg < NUM_X_REGS) {
-		// Multilane not yet supported.
 		_assert_(lanes == 1 || (lanes == 2 && first == IRREG_LO));
 		_assert_(mr[first].loc == MIPSLoc::REG || mr[first].loc == MIPSLoc::REG_IMM);
 		if (lanes == 1)
@@ -336,9 +432,9 @@ X64Reg X64IRRegCache::RXPtr(IRReg mipsReg) {
 	if (mr[mipsReg].loc == MIPSLoc::REG_AS_PTR) {
 		return FromNativeReg(mr[mipsReg].nReg);
 	} else if (mr[mipsReg].loc == MIPSLoc::REG || mr[mipsReg].loc == MIPSLoc::REG_IMM) {
-		int rv = mr[mipsReg].nReg;
-		_dbg_assert_(nr[rv].pointerified);
-		if (nr[rv].pointerified) {
+		int r = mr[mipsReg].nReg;
+		_dbg_assert_(nr[r].pointerified);
+		if (nr[r].pointerified) {
 			return FromNativeReg(mr[mipsReg].nReg);
 		} else {
 			ERROR_LOG(JIT, "Tried to use a non-pointer register as a pointer");

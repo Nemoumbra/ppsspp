@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <utility>
 
@@ -16,7 +17,7 @@
 // even be directly JIT-ed, but the gains will probably be tiny over our older direct
 // MIPS->target JITs.
 
-enum class IROp : u8 {
+enum class IROp : uint8_t {
 	Nop,
 
 	SetConst,
@@ -252,6 +253,13 @@ enum class Vec4Init {
 	Set_0001,
 };
 
+enum class IRRoundMode : uint8_t {
+	RINT_0 = 0,
+	CAST_1 = 1,
+	CEIL_2 = 2,
+	FLOOR_3 = 3,
+};
+
 // Hm, unused
 inline IRComparison Invert(IRComparison comp) {
 	switch (comp) {
@@ -326,6 +334,8 @@ enum IRFlags {
 	IRFLAG_SRC3DST = 0x0002,
 	// Exit instruction (maybe conditional.)
 	IRFLAG_EXIT = 0x0004,
+	// Instruction like Interpret which may read anything, but not an exit.
+	IRFLAG_BARRIER = 0x0008,
 };
 
 struct IRMeta {
@@ -394,6 +404,7 @@ struct IROptions {
 	bool unalignedLoadStore;
 	bool unalignedLoadStoreVec4;
 	bool preferVec4;
+	bool preferVec4Dot;
 };
 
 const IRMeta *GetIRMeta(IROp op);

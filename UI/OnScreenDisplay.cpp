@@ -11,6 +11,7 @@
 #include "Common/UI/IconCache.h"
 #include "UI/RetroAchievementScreens.h"
 #include "UI/DebugOverlay.h"
+#include "UI/Root.h"
 
 #include "Common/UI/Context.h"
 #include "Common/System/OSD.h"
@@ -71,22 +72,27 @@ static void MeasureNotice(const UIContext &dc, NoticeLevel level, const std::str
 		*height += 5.0f + height2;
 	}
 
-	float iconSize = 0.0f;
-
-	if (!iconName.empty()) {
+	float iconW = 0.0f;
+	float iconH = 0.0f;
+	if (!iconName.empty() && !startsWith(iconName, "I_")) {  // Check for atlas image. Bit hacky, but we choose prefixes for icon IDs anyway in a way that this is safe.
 		// Normal entry but with a cached icon.
 		int iconWidth, iconHeight;
 		if (g_iconCache.GetDimensions(iconName, &iconWidth, &iconHeight)) {
 			*width += 5.0f + iconWidth;
-			iconSize = iconWidth + 5.0f;
+			iconW = iconWidth;
+			iconH = iconHeight;
 		}
-	} else if (!GetOSDIcon(level).isInvalid()) {
-		// Atlas icon.
-		iconSize = g_atlasIconSize + 5.0f;
+	} else {
+		ImageID iconID = iconName.empty() ? GetOSDIcon(level) : ImageID(iconName.c_str());
+		if (iconID.isValid()) {
+			dc.Draw()->GetAtlas()->measureImage(iconID, &iconW, &iconH);
+		}
 	}
 
-	*width += iconSize + 12.0f;
-	*height = std::max(*height, iconSize + 5.0f);
+	iconW += 5.0f;
+
+	*width += iconW + 12.0f;
+	*height = std::max(*height, iconH + 5.0f);
 }
 
 // Align only matters here for the ASCII-only flag.
@@ -109,29 +115,38 @@ static void RenderNotice(UIContext &dc, Bounds bounds, float height1, NoticeLeve
 	dc.DrawRectDropShadow(bounds, 12.0f, 0.7f * alpha);
 	dc.FillRect(background, bounds);
 
-	ImageID iconID = GetOSDIcon(level);
-
-	float iconSize = 0.0f;
-	if (!iconName.empty()) {
+	float iconW = 0.0f;
+	float iconH = 0.0f;
+	if (!iconName.empty() && !startsWith(iconName, "I_")) {
 		dc.Flush();
 		// Normal entry but with a cached icon.
 		Draw::Texture *texture = g_iconCache.BindIconTexture(&dc, iconName);
 		if (texture) {
-			iconSize = texture->Width();
-			dc.Draw()->DrawTexRect(Bounds(bounds.x + 2.5f, bounds.y + 2.5f, iconSize, iconSize), 0.0f, 0.0f, 1.0f, 1.0f, foreGround);
+			iconW = texture->Width();
+			iconH = texture->Height();
+			dc.Draw()->DrawTexRect(Bounds(bounds.x + 2.5f, bounds.y + 2.5f, iconW, iconH), 0.0f, 0.0f, 1.0f, 1.0f, foreGround);
 			dc.Flush();
 			dc.RebindTexture();
 		}
 		dc.Begin();
-	} else if (iconID.isValid()) {
-		// Atlas icon.
-		dc.DrawImageVGradient(iconID, foreGround, foreGround, Bounds(bounds.x + 2.5f, bounds.y + 2.5f, g_atlasIconSize, g_atlasIconSize));
-		iconSize = g_atlasIconSize;
+	} else {
+		ImageID iconID = iconName.empty() ? GetOSDIcon(level) : ImageID(iconName.c_str());
+		if (iconID.isValid()) {
+			// Atlas icon.
+			dc.Draw()->GetAtlas()->measureImage(iconID, &iconW, &iconH);
+			Bounds iconBounds = Bounds(bounds.x + 2.5f, bounds.y + 2.5f, iconW, iconH);
+			if (!iconName.empty()) {
+				// If it's not a preset OSD icon, give it some background to blend in. The RA icon for example
+				// easily melts into the orange of warnings otherwise.
+				dc.FillRect(UI::Drawable(0x50000000), iconBounds.Expand(2.0f));
+			}
+			dc.DrawImageVGradient(iconID, foreGround, foreGround, Bounds(bounds.x + 2.5f, bounds.y + 2.5f, iconW, iconH));
+		}
 	}
 
 	// Make room
-	bounds.x += iconSize + 5.0f;
-	bounds.w -= iconSize + 5.0f;
+	bounds.x += iconW + 5.0f;
+	bounds.w -= iconW + 5.0f;
 
 	dc.DrawTextShadowRect(text.c_str(), bounds.Inset(0.0f, 1.0f, 0.0f, 0.0f), foreGround, (align & FLAG_DYNAMIC_ASCII));
 
@@ -353,6 +368,8 @@ void OnScreenMessagesView::Draw(UIContext &dc) {
 		edges[(size_t)pos].maxWidth = std::max(edges[(size_t)pos].maxWidth, measuredEntry.w);
 	}
 
+	std::vector<ClickZone> dismissZones;
+
 	// Now, perform layout for all 8 edges.
 	for (size_t i = 0; i < (size_t)ScreenEdgePosition::VALUE_COUNT; i++) {
 		if (edges[i].height == 0.0f) {
@@ -430,13 +447,30 @@ void OnScreenMessagesView::Draw(UIContext &dc) {
 
 				float alpha = Clamp((float)(entry.endTime - now) * 4.0f, 0.0f, 1.0f);
 				RenderOSDEntry(dc, entry, b, measuredEntry.h1, measuredEntry.align, alpha);
+
+				switch (entry.type) {
+				case OSDType::MESSAGE_INFO:
+				case OSDType::MESSAGE_SUCCESS:
+				case OSDType::MESSAGE_WARNING:
+				case OSDType::MESSAGE_ERROR:
+				case OSDType::MESSAGE_ERROR_DUMP:
+				case OSDType::MESSAGE_FILE_LINK:
+				case OSDType::ACHIEVEMENT_UNLOCKED:
+					// Save the location of the popup, for easy dismissal.
+					dismissZones.push_back(ClickZone{ (int)j, b });
+					break;
+				}
 				break;
 			}
 			}
 
+
 			y += (measuredEntry.h + 4.0f) * measuredEntry.alpha;
 		}
 	}
+
+	std::lock_guard<std::mutex> lock(clickMutex_);
+	clickZones_ = dismissZones;
 }
 
 std::string OnScreenMessagesView::DescribeText() const {
@@ -451,10 +485,34 @@ std::string OnScreenMessagesView::DescribeText() const {
 	return ss.str();
 }
 
+// Asynchronous!
+bool OnScreenMessagesView::Dismiss(float x, float y) {
+	bool dismissed = false;
+	std::lock_guard<std::mutex> lock(clickMutex_);
+	double now = time_now_d();
+	for (auto &zone : clickZones_) {
+		if (zone.bounds.Contains(x, y)) {
+			g_OSD.DismissEntry(zone.index, now);
+			dismissed = true;
+		}
+	}
+	return dismissed;
+}
+
+bool OSDOverlayScreen::UnsyncTouch(const TouchInput &touch) {
+	// Don't really need to forward.
+	// UIScreen::UnsyncTouch(touch);
+	if ((touch.flags & TOUCH_DOWN) && osmView_) {
+		return osmView_->Dismiss(touch.x, touch.y);
+	} else {
+		return false;
+	}
+}
+
 void OSDOverlayScreen::CreateViews() {
 	root_ = new UI::AnchorLayout();
 	root_->SetTag("OSDOverlayScreen");
-	root_->Add(new OnScreenMessagesView(new UI::AnchorLayoutParams(0.0f, 0.0f, 0.0f, 0.0f)));
+	osmView_ = root_->Add(new OnScreenMessagesView(new UI::AnchorLayoutParams(0.0f, 0.0f, 0.0f, 0.0f)));
 }
 
 void OSDOverlayScreen::render() {
@@ -467,6 +525,17 @@ void OSDOverlayScreen::render() {
 		UIContext *uiContext = screenManager()->getUIContext();
 		DrawDebugOverlay(uiContext, uiContext->GetLayoutBounds(), debugOverlay);
 	}
+}
+
+void OSDOverlayScreen::update() {
+	// Partial version of UIScreen::update() but doesn't do event processing to avoid duplicate event processing.
+	bool vertical = UseVerticalLayout();
+	if (vertical != lastVertical_) {
+		RecreateViews();
+		lastVertical_ = vertical;
+	}
+
+	DoRecreateViews();
 }
 
 void NoticeView::GetContentDimensionsBySpec(const UIContext &dc, UI::MeasureSpec horiz, UI::MeasureSpec vert, float &w, float &h) const {

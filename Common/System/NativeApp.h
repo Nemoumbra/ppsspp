@@ -54,7 +54,7 @@ bool NativeIsRestarting();
 // input latency - assuming your main loop is architected properly (NativeFrame called from a different thread than input event handling).
 void NativeTouch(const TouchInput &touch);
 bool NativeKey(const KeyInput &key);
-void NativeAxis(const AxisInput &axis);
+void NativeAxis(const AxisInput *axis, size_t count);
 
 // Called when it's process a frame, including rendering. If the device can keep up, this
 // will be called sixty times per second. Main thread.
@@ -80,5 +80,7 @@ void NativeShutdown();
 
 void PostLoadConfig();
 
-void NativeSaveSecret(const char *nameOfSecret, const std::string &data);
+// Returns false on failure. Shouldn't really happen, though.
+bool NativeSaveSecret(const char *nameOfSecret, const std::string &data);
+// On failure, returns an empty string. Good enough since any real secret is non-empty.
 std::string NativeLoadSecret(const char *nameOfSecret);

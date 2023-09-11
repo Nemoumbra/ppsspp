@@ -63,6 +63,7 @@
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/MIPS/JitCommon/JitState.h"
+#include "GPU/Debugger/Record.h"
 #include "GPU/GPUInterface.h"
 #include "GPU/GPUState.h"
 #include "UI/MiscScreens.h"
@@ -139,11 +140,27 @@ void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 		return UI::EVENT_DONE;
 	});
 
-	items->Add(new Choice(dev->T("Dump next frame to log")))->OnClick.Add([](UI::EventParams &e) {
-		gpu->DumpNextFrame();
+	items->Add(new Choice(dev->T("Reset limited logging")))->OnClick.Handle(this, &DevMenuScreen::OnResetLimitedLogging);
+
+	items->Add(new Choice(dev->T("Create frame dump")))->OnClick.Add([](UI::EventParams &e) {
+		GPURecord::RecordNextFrame([](const Path &dumpPath) {
+			NOTICE_LOG(SYSTEM, "Frame dump created at '%s'", dumpPath.c_str());
+			if (System_GetPropertyBool(SYSPROP_CAN_SHOW_FILE)) {
+				System_ShowFileInFolder(dumpPath);
+			} else {
+				g_OSD.Show(OSDType::MESSAGE_SUCCESS, dumpPath.ToVisualString(), 7.0f);
+			}
+		});
 		return UI::EVENT_DONE;
 	});
-	items->Add(new Choice(dev->T("Reset limited logging")))->OnClick.Handle(this, &DevMenuScreen::OnResetLimitedLogging);
+
+	// This one is not very useful these days, and only really on desktop. Hide it on other platforms.
+	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_DESKTOP) {
+		items->Add(new Choice(dev->T("Dump next frame to log")))->OnClick.Add([](UI::EventParams &e) {
+			gpu->DumpNextFrame();
+			return UI::EVENT_DONE;
+		});
+	}
 
 	scroll->Add(items);
 	parent->Add(scroll);
@@ -207,12 +224,12 @@ void LogScreen::UpdateLog() {
 		TextView *v = vert_->Add(new TextView(ring->TextAt(i), FLAG_DYNAMIC_ASCII, false));
 		uint32_t color = 0xFFFFFF;
 		switch (ring->LevelAt(i)) {
-		case LogTypes::LDEBUG: color = 0xE0E0E0; break;
-		case LogTypes::LWARNING: color = 0x50FFFF; break;
-		case LogTypes::LERROR: color = 0x5050FF; break;
-		case LogTypes::LNOTICE: color = 0x30FF30; break;
-		case LogTypes::LINFO: color = 0xFFFFFF; break;
-		case LogTypes::LVERBOSE: color = 0xC0C0C0; break;
+		case LogLevel::LDEBUG: color = 0xE0E0E0; break;
+		case LogLevel::LWARNING: color = 0x50FFFF; break;
+		case LogLevel::LERROR: color = 0x5050FF; break;
+		case LogLevel::LNOTICE: color = 0x30FF30; break;
+		case LogLevel::LINFO: color = 0xFFFFFF; break;
+		case LogLevel::LVERBOSE: color = 0xC0C0C0; break;
 		}
 		v->SetTextColor(0xFF000000 | color);
 	}
@@ -291,7 +308,7 @@ void LogConfigScreen::CreateViews() {
 	GridLayout *grid = vert->Add(new GridLayoutList(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 
 	for (int i = 0; i < LogManager::GetNumChannels(); i++) {
-		LogTypes::LOG_TYPE type = (LogTypes::LOG_TYPE)i;
+		LogType type = (LogType)i;
 		LogChannel *chan = logMan->GetLogChannel(type);
 		LinearLayout *row = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(cellSize - 50, WRAP_CONTENT));
 		row->SetSpacing(0);
@@ -304,7 +321,7 @@ void LogConfigScreen::CreateViews() {
 UI::EventReturn LogConfigScreen::OnToggleAll(UI::EventParams &e) {
 	LogManager *logMan = LogManager::GetInstance();
 	for (int i = 0; i < LogManager::GetNumChannels(); i++) {
-		LogChannel *chan = logMan->GetLogChannel((LogTypes::LOG_TYPE)i);
+		LogChannel *chan = logMan->GetLogChannel((LogType)i);
 		chan->enabled = !chan->enabled;
 	}
 	return UI::EVENT_DONE;
@@ -313,7 +330,7 @@ UI::EventReturn LogConfigScreen::OnToggleAll(UI::EventParams &e) {
 UI::EventReturn LogConfigScreen::OnEnableAll(UI::EventParams &e) {
 	LogManager *logMan = LogManager::GetInstance();
 	for (int i = 0; i < LogManager::GetNumChannels(); i++) {
-		LogChannel *chan = logMan->GetLogChannel((LogTypes::LOG_TYPE)i);
+		LogChannel *chan = logMan->GetLogChannel((LogType)i);
 		chan->enabled = true;
 	}
 	return UI::EVENT_DONE;
@@ -322,7 +339,7 @@ UI::EventReturn LogConfigScreen::OnEnableAll(UI::EventParams &e) {
 UI::EventReturn LogConfigScreen::OnDisableAll(UI::EventParams &e) {
 	LogManager *logMan = LogManager::GetInstance();
 	for (int i = 0; i < LogManager::GetNumChannels(); i++) {
-		LogChannel *chan = logMan->GetLogChannel((LogTypes::LOG_TYPE)i);
+		LogChannel *chan = logMan->GetLogChannel((LogType)i);
 		chan->enabled = false;
 	}
 	return UI::EVENT_DONE;
@@ -360,10 +377,10 @@ void LogLevelScreen::OnCompleted(DialogResult result) {
 	LogManager *logMan = LogManager::GetInstance();
 	
 	for (int i = 0; i < LogManager::GetNumChannels(); ++i) {
-		LogTypes::LOG_TYPE type = (LogTypes::LOG_TYPE)i;
+		LogType type = (LogType)i;
 		LogChannel *chan = logMan->GetLogChannel(type);
 		if (chan->enabled)
-			chan->level = (LogTypes::LOG_LEVELS)(selected + 1);
+			chan->level = (LogLevel)(selected + 1);
 	}
 }
 
@@ -475,6 +492,7 @@ void SystemInfoScreen::CreateTabs() {
 
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto si = GetI18NCategory(I18NCat::SYSINFO);
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
 	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 
 	TabHolder *tabHolder = new TabHolder(ORIENT_VERTICAL, 225, new AnchorLayoutParams(10, 0, 10, 0, false));
@@ -548,13 +566,13 @@ void SystemInfoScreen::CreateTabs() {
 		int highp_float_min = gl_extensions.range[1][2][0];
 		int highp_float_max = gl_extensions.range[1][2][1];
 		if (highp_int_max != 0) {
-			char temp[512];
-			snprintf(temp, sizeof(temp), "Highp int range: %d-%d", highp_int_min, highp_int_max);
+			char temp[128];
+			snprintf(temp, sizeof(temp), "%d-%d", highp_int_min, highp_int_max);
 			gpuInfo->Add(new InfoItem(si->T("High precision int range"), temp));
 		}
 		if (highp_float_max != 0) {
-			char temp[512];
-			snprintf(temp, sizeof(temp), "Highp float range: %d-%d", highp_int_min, highp_int_max);
+			char temp[128];
+			snprintf(temp, sizeof(temp), "%d-%d", highp_int_min, highp_int_max);
 			gpuInfo->Add(new InfoItem(si->T("High precision float range"), temp));
 		}
 	}
@@ -595,15 +613,28 @@ void SystemInfoScreen::CreateTabs() {
 
 	CollapsibleSection *displayInfo = deviceSpecs->Add(new CollapsibleSection(si->T("Display Information")));
 #if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(UWP)
-	displayInfo->Add(new InfoItem(si->T("Native Resolution"), StringFromFormat("%dx%d",
+	displayInfo->Add(new InfoItem(si->T("Native resolution"), StringFromFormat("%dx%d",
 		System_GetPropertyInt(SYSPROP_DISPLAY_XRES),
 		System_GetPropertyInt(SYSPROP_DISPLAY_YRES))));
-	displayInfo->Add(new InfoItem(si->T("UI Resolution"), StringFromFormat("%dx%d (%s: %0.2f)",
+#endif
+	displayInfo->Add(new InfoItem(si->T("UI resolution"), StringFromFormat("%dx%d (%s: %0.2f)",
 		g_display.dp_xres,
 		g_display.dp_yres,
 		si->T("DPI"),
 		g_display.dpi)));
-#endif
+	displayInfo->Add(new InfoItem(si->T("Pixel resolution"), StringFromFormat("%dx%d",
+		g_display.pixel_xres,
+		g_display.pixel_yres)));
+
+	const float insets[4] = {
+		System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT),
+		System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP),
+		System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_RIGHT),
+		System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM),
+	};
+	if (insets[0] != 0.0f || insets[1] != 0.0f || insets[2] != 0.0f || insets[3] != 0.0f) {
+		displayInfo->Add(new InfoItem(si->T("Screen notch insets"), StringFromFormat("%0.1f %0.1f %0.1f %0.1f", insets[0], insets[1], insets[2], insets[3])));
+	}
 
 	// Don't show on Windows, since it's always treated as 60 there.
 	displayInfo->Add(new InfoItem(si->T("Refresh rate"), StringFromFormat(si->T("%0.2f Hz"), (float)System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE))));
@@ -827,7 +858,19 @@ void SystemInfoScreen::CreateTabs() {
 		}
 	}
 
+#ifdef _DEBUG
 	LinearLayout *internals = AddTab("DevSystemInfoInternals", si->T("Internals"));
+	CreateInternalsTab(internals);
+#endif
+}
+
+void SystemInfoScreen::CreateInternalsTab(UI::ViewGroup *internals) {
+	using namespace UI;
+
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto si = GetI18NCategory(I18NCat::SYSINFO);
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	internals->Add(new ItemHeader(si->T("Icon cache")));
 	IconCacheStats iconStats = g_iconCache.GetStats();
@@ -856,6 +899,10 @@ void SystemInfoScreen::CreateTabs() {
 	});
 	internals->Add(new Choice(si->T("Success")))->OnClick.Add([&](UI::EventParams &) {
 		g_OSD.Show(OSDType::MESSAGE_SUCCESS, "Success");
+		return UI::EVENT_DONE;
+	});
+	internals->Add(new Choice(sy->T("RetroAchievements")))->OnClick.Add([&](UI::EventParams &) {
+		g_OSD.Show(OSDType::MESSAGE_WARNING, "RetroAchievements warning", "", "I_RETROACHIEVEMENTS_LOGO");
 		return UI::EVENT_DONE;
 	});
 	internals->Add(new ItemHeader(si->T("Progress tests")));
@@ -894,7 +941,6 @@ void SystemInfoScreen::CreateTabs() {
 	});
 
 	static const char *positions[] = { "Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right", "None" };
-	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	internals->Add(new ItemHeader(ac->T("Notifications")));
 	internals->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);

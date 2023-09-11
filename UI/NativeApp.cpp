@@ -129,6 +129,7 @@
 #endif
 #if PPSSPP_PLATFORM(UWP)
 #include <dwrite_3.h>
+#include "UWP/UWPHelpers/InputHelpers.h"
 #endif
 #if PPSSPP_PLATFORM(ANDROID)
 #include "android/jni/app-android.h"
@@ -152,7 +153,7 @@
 
 #include <Core/HLE/Plugins.h>
 
-void HandleGlobalMessage(const std::string &msg, const std::string &value);
+bool HandleGlobalMessage(const std::string &msg, const std::string &value);
 
 ScreenManager *g_screenManager;
 std::string config_filename;
@@ -188,18 +189,18 @@ public:
 	void Log(const LogMessage &message) override {
 		// Log with simplified headers as Android already provides timestamp etc.
 		switch (message.level) {
-		case LogTypes::LVERBOSE:
-		case LogTypes::LDEBUG:
-		case LogTypes::LINFO:
+		case LogLevel::LVERBOSE:
+		case LogLevel::LDEBUG:
+		case LogLevel::LINFO:
 			printf("INFO [%s] %s", message.log, message.msg.c_str());
 			break;
-		case LogTypes::LERROR:
+		case LogLevel::LERROR:
 			printf("ERR  [%s] %s", message.log, message.msg.c_str());
 			break;
-		case LogTypes::LWARNING:
+		case LogLevel::LWARNING:
 			printf("WARN [%s] %s", message.log, message.msg.c_str());
 			break;
-		case LogTypes::LNOTICE:
+		case LogLevel::LNOTICE:
 		default:
 			printf("NOTE [%s] !!! %s", message.log, message.msg.c_str());
 			break;
@@ -305,7 +306,7 @@ void PostLoadConfig() {
 	else
 		g_i18nrepo.LoadIni(g_Config.sLanguageIni, langOverridePath);
 
-#if !PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
+#if !PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(UWP)
 	CreateSysDirectories();
 #endif
 }
@@ -567,9 +568,9 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	boot_filename.clear();
 
 	// Parse command line
-	LogTypes::LOG_LEVELS logLevel = LogTypes::LINFO;
+	LogLevel logLevel = LogLevel::LINFO;
 	bool forceLogLevel = false;
-	const auto setLogLevel = [&logLevel, &forceLogLevel](LogTypes::LOG_LEVELS level) {
+	const auto setLogLevel = [&logLevel, &forceLogLevel](LogLevel level) {
 		logLevel = level;
 		forceLogLevel = true;
 	};
@@ -587,12 +588,12 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 			case 'd':
 				// Enable debug logging
 				// Note that you must also change the max log level in Log.h.
-				setLogLevel(LogTypes::LDEBUG);
+				setLogLevel(LogLevel::LDEBUG);
 				break;
 			case 'v':
 				// Enable verbose logging
 				// Note that you must also change the max log level in Log.h.
-				setLogLevel(LogTypes::LVERBOSE);
+				setLogLevel(LogLevel::LVERBOSE);
 				break;
 			case 'j':
 				g_Config.iCpuCore = (int)CPUCore::JIT;
@@ -612,7 +613,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 				break;
 			case '-':
 				if (!strncmp(argv[i], "--loglevel=", strlen("--loglevel=")) && strlen(argv[i]) > strlen("--loglevel="))
-					setLogLevel(static_cast<LogTypes::LOG_LEVELS>(std::atoi(argv[i] + strlen("--loglevel="))));
+					setLogLevel(static_cast<LogLevel>(std::atoi(argv[i] + strlen("--loglevel="))));
 				if (!strncmp(argv[i], "--log=", strlen("--log=")) && strlen(argv[i]) > strlen("--log="))
 					fileToLog = argv[i] + strlen("--log=");
 				if (!strncmp(argv[i], "--state=", strlen("--state=")) && strlen(argv[i]) > strlen("--state="))
@@ -821,7 +822,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	restarting = false;
 }
 
-void RenderOverlays(UIContext *dc, void *userdata);
+void CallbackPostRender(UIContext *dc, void *userdata);
 bool CreateGlobalPipelines();
 
 bool NativeInitGraphics(GraphicsContext *graphicsContext) {
@@ -860,7 +861,7 @@ bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 
 	g_screenManager->setUIContext(uiContext);
 	g_screenManager->setDrawContext(g_draw);
-	g_screenManager->setPostRenderCallback(&RenderOverlays, nullptr);
+	g_screenManager->setPostRenderCallback(&CallbackPostRender, nullptr);
 	g_screenManager->deviceRestored();
 
 #ifdef _WIN32
@@ -884,6 +885,8 @@ bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 	g_gameInfoCache = new GameInfoCache();
 
 	if (gpu) {
+		PSP_CoreParameter().pixelWidth = g_display.pixel_xres;
+		PSP_CoreParameter().pixelHeight = g_display.pixel_yres;
 		gpu->DeviceRestore(g_draw);
 	}
 
@@ -993,9 +996,7 @@ void NativeShutdownGraphics() {
 	INFO_LOG(SYSTEM, "NativeShutdownGraphics done");
 }
 
-void TakeScreenshot() {
-	g_TakeScreenshot = false;
-
+static void TakeScreenshot() {
 	Path path = GetSysDirectory(DIRECTORY_SCREENSHOT);
 	if (!File::Exists(path)) {
 		File::CreateDir(path);
@@ -1027,9 +1028,10 @@ void TakeScreenshot() {
 	}
 }
 
-void RenderOverlays(UIContext *dc, void *userdata) {
+void CallbackPostRender(UIContext *dc, void *userdata) {
 	if (g_TakeScreenshot) {
 		TakeScreenshot();
+		g_TakeScreenshot = false;
 	}
 }
 
@@ -1076,7 +1078,9 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 	}
 
 	for (const auto &item : toProcess) {
-		HandleGlobalMessage(item.msg, item.value);
+		if (HandleGlobalMessage(item.msg, item.value)) {
+			INFO_LOG(SYSTEM, "Handled global message: %s / %s", item.msg.c_str(), item.value.c_str());
+		}
 		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
 	}
 
@@ -1181,28 +1185,32 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 	}
 }
 
-void HandleGlobalMessage(const std::string &msg, const std::string &value) {
+bool HandleGlobalMessage(const std::string &msg, const std::string &value) {
 	if (msg == "savestate_displayslot") {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
 		std::string msg = StringFromFormat("%s: %d", sy->T("Savestate Slot"), SaveState::GetCurrentSlot() + 1);
 		// Show for the same duration as the preview.
 		g_OSD.Show(OSDType::MESSAGE_INFO, msg, 2.0f, "savestate_slot");
+		return true;
 	}
 	else if (msg == "gpu_displayResized") {
 		if (gpu) {
 			gpu->NotifyDisplayResized();
 		}
+		return true;
 	}
 	else if (msg == "gpu_renderResized") {
 		if (gpu) {
 			gpu->NotifyRenderResized();
 		}
+		return true;
 	}
 	else if (msg == "gpu_configChanged") {
 		if (gpu) {
 			gpu->NotifyConfigChanged();
 		}
 		Reporting::UpdateConfig();
+		return true;
 	}
 	else if (msg == "core_powerSaving") {
 		if (value != "false") {
@@ -1214,6 +1222,7 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 #endif
 		}
 		Core_SetPowerSaving(value != "false");
+		return true;
 	}
 	else if (msg == "permission_granted" && value == "storage") {
 		CreateSysDirectories();
@@ -1227,9 +1236,13 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		g_Config.Reload();
 		PostLoadConfig();
 		g_Config.iGPUBackend = gpuBackend;
+		return true;
 	} else if (msg == "app_resumed" || msg == "got_focus") {
 		// Assume that the user may have modified things.
 		MemoryStick_NotifyWrite();
+		return true;
+	} else {
+		return false;
 	}
 }
 
@@ -1269,6 +1282,14 @@ bool NativeKey(const KeyInput &key) {
 		return false;
 	}
 
+#if PPSSPP_PLATFORM(UWP)
+	// Ignore if key sent from OnKeyDown/OnKeyUp/XInput while text edit active 
+	// it's already handled by `OnCharacterReceived`
+	if (IgnoreInput(key.keyCode) && !(key.flags & KEY_CHAR)) {
+		return false;
+	}
+#endif
+
 	// INFO_LOG(SYSTEM, "Key code: %i flags: %i", key.keyCode, key.flags);
 #if !defined(MOBILE_DEVICE)
 	if (g_Config.bPauseExitsEmulator) {
@@ -1298,7 +1319,7 @@ bool NativeKey(const KeyInput &key) {
 	return retval;
 }
 
-void NativeAxis(const AxisInput &axis) {
+static void ProcessOneAxisEvent(const AxisInput &axis) {
 	// VR actions
 	if (IsVREnabled() && !UpdateVRAxis(axis)) {
 		return;
@@ -1309,28 +1330,31 @@ void NativeAxis(const AxisInput &axis) {
 		return;
 	}
 
-	using namespace TiltEventProcessor;
-
 	// only do special handling of tilt events if tilt is enabled.
 	HLEPlugins::PluginDataAxis[axis.axisId] = axis.value;
 	g_screenManager->axis(axis);
+}
 
-	if (g_Config.iTiltInputType == TILT_NULL) {
-		// if tilt events are disabled, don't do anything special.
-		return;
-	}
-
+void NativeAxis(const AxisInput *axes, size_t count) {
 	// figure out what the current tilt orientation is by checking the axis event
 	// This is static, since we need to remember where we last were (in terms of orientation)
 	static float tiltX;
 	static float tiltY;
 	static float tiltZ;
 
-	switch (axis.axisId) {
-		case JOYSTICK_AXIS_ACCELEROMETER_X: tiltX = axis.value; break;
-		case JOYSTICK_AXIS_ACCELEROMETER_Y: tiltY = axis.value; break;
-		case JOYSTICK_AXIS_ACCELEROMETER_Z: tiltZ = axis.value; break;
+	for (size_t i = 0; i < count; i++) {
+		ProcessOneAxisEvent(axes[i]);
+		switch (axes[i].axisId) {
+		case JOYSTICK_AXIS_ACCELEROMETER_X: tiltX = axes[i].value; break;
+		case JOYSTICK_AXIS_ACCELEROMETER_Y: tiltY = axes[i].value; break;
+		case JOYSTICK_AXIS_ACCELEROMETER_Z: tiltZ = axes[i].value; break;
 		default: break;
+		}
+	}
+
+	if (g_Config.iTiltInputType == TILT_NULL) {
+		// if tilt events are disabled, don't do anything special.
+		return;
 	}
 
 	// create the base coordinate tilt system from the calibration data.
@@ -1350,7 +1374,7 @@ void NativeAxis(const AxisInput &axis) {
 	// see [http://developer.android.com/guide/topics/sensors/sensors_overview.html] for details
 	bool landscape = g_display.dp_yres < g_display.dp_xres;
 	// now transform out current tilt to the calibrated coordinate system
-	ProcessTilt(landscape, tiltBaseAngleY, tiltX, tiltY, tiltZ,
+	TiltEventProcessor::ProcessTilt(landscape, tiltBaseAngleY, tiltX, tiltY, tiltZ,
 		g_Config.bInvertTiltX, g_Config.bInvertTiltY,
 		xSensitivity, ySensitivity);
 }
@@ -1441,18 +1465,21 @@ static Path GetSecretPath(const char *nameOfSecret) {
 }
 
 // name should be simple alphanumerics to avoid problems on Windows.
-void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {
+bool NativeSaveSecret(const char *nameOfSecret, const std::string &data) {
 	Path path = GetSecretPath(nameOfSecret);
 	if (!File::WriteDataToFile(false, data.data(), (unsigned int)data.size(), path)) {
 		WARN_LOG(SYSTEM, "Failed to write secret '%s' to path '%s'", nameOfSecret, path.c_str());
+		return false;
 	}
+	return true;
 }
 
+// On failure, returns an empty string. Good enough since any real secret is non-empty.
 std::string NativeLoadSecret(const char *nameOfSecret) {
 	Path path = GetSecretPath(nameOfSecret);
 	std::string data;
 	if (!File::ReadFileToString(false, path, data)) {
-		WARN_LOG(SYSTEM, "Failed to read secret '%s' from path '%s'", nameOfSecret, path.c_str());
+		data.clear();  // just to be sure.
 	}
 	return data;
 }

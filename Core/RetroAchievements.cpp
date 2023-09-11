@@ -79,10 +79,16 @@ bool g_isIdentifying = false;
 bool g_isLoggingIn = false;
 int g_loginResult;
 
+double g_lastLoginAttemptTime;
+
 // rc_client implementation
 static rc_client_t *g_rcClient;
+static const std::string g_RAImageID = "I_RETROACHIEVEMENTS_LOGO";
+constexpr double LOGIN_ATTEMPT_INTERVAL_S = 10.0;
 
 #define PSP_MEMORY_OFFSET 0x08000000
+
+static void TryLoginByToken(bool isInitialAttempt);
 
 rc_client_t *GetClient() {
 	return g_rcClient;
@@ -124,7 +130,7 @@ bool WarnUserIfChallengeModeActive(const char *message) {
 		showMessage = ac->T("This feature is not available in Challenge Mode");
 	}
 
-	g_OSD.Show(OSDType::MESSAGE_WARNING, showMessage, 3.0f);
+	g_OSD.Show(OSDType::MESSAGE_WARNING, showMessage, "", g_RAImageID, 3.0f);
 	return true;
 }
 
@@ -296,7 +302,6 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		// If a progress indicator is already visible, it should be updated with the new icon and text, and the two second timer should be restarted.
 		g_OSD.ShowAchievementProgress(event->achievement->id, true);
 		break;
-		/*
 	case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
 		INFO_LOG(ACHIEVEMENTS, "Progress indicator update: %s, progress: '%s' (%f)", event->achievement->title, event->achievement->measured_progress, event->achievement->measured_percent);
 		g_OSD.ShowAchievementProgress(event->achievement->id, true);
@@ -309,7 +314,6 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		// If a progress indicator is already visible, it should be updated with the new icon and text, and the two second timer should be restarted.
 		g_OSD.ShowAchievementProgress(0, false);
 		break;
-		*/
 	case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
 		INFO_LOG(ACHIEVEMENTS, "Leaderboard tracker show: '%s' (id %d)", event->leaderboard_tracker->display, event->leaderboard_tracker->id);
 		// A leaderboard_tracker has become active. The handler should show the tracker text on screen.
@@ -335,7 +339,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		break;
 	case RC_CLIENT_EVENT_SERVER_ERROR:
 		ERROR_LOG(ACHIEVEMENTS, "Server error: %s: %s", event->server_error->api, event->server_error->error_message);
-		g_OSD.Show(OSDType::MESSAGE_ERROR, "Server error");
+		g_OSD.Show(OSDType::MESSAGE_ERROR, "Server error", "", g_RAImageID);
 		break;
 	default:
 		WARN_LOG(ACHIEVEMENTS, "Unhandled rc_client event %d, ignoring", event->type);
@@ -344,15 +348,24 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 }
 
 static void login_token_callback(int result, const char *error_message, rc_client_t *client, void *userdata) {
+	bool isInitialAttempt = userdata != nullptr;
 	switch (result) {
 	case RC_OK:
+	{
 		INFO_LOG(ACHIEVEMENTS, "Successful login by token.");
 		OnAchievementsLoginStateChange();
+		if (!isInitialAttempt) {
+			auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+			g_OSD.Show(OSDType::MESSAGE_SUCCESS, ac->T("Reconnected to RetroAchievements."), "", g_RAImageID);
+		}
 		break;
+	}
 	case RC_NO_RESPONSE:
 	{
-		auto di = GetI18NCategory(I18NCat::DIALOG);
-		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to connect to server, check your internet connection."));
+		if (isInitialAttempt) {
+			auto di = GetI18NCategory(I18NCat::DIALOG);
+			g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to connect to server, check your internet connection."), "", g_RAImageID);
+		}
 		break;
 	}
 	case RC_API_FAILURE:
@@ -361,9 +374,11 @@ static void login_token_callback(int result, const char *error_message, rc_clien
 	case RC_INVALID_JSON:
 	default:
 	{
-		auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 		ERROR_LOG(ACHIEVEMENTS, "Callback: Failure logging in via token: %d, %s", result, error_message);
-		g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Failed logging in to RetroAchievements"));
+		if (isInitialAttempt) {
+			auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+			g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Failed logging in to RetroAchievements"), "", g_RAImageID);
+		}
 		OnAchievementsLoginStateChange();
 		break;
 	}
@@ -396,7 +411,7 @@ void Initialize() {
 
 	rc_client_set_event_handler(g_rcClient, event_handler_callback);
 
-	TryLoginByToken();
+	TryLoginByToken(true);
 }
 
 bool HasToken() {
@@ -408,14 +423,16 @@ bool LoginProblems(std::string *errorString) {
 	return g_loginResult != RC_OK;
 }
 
-void TryLoginByToken() {
+static void TryLoginByToken(bool isInitialAttempt) {
+	if (g_Config.sAchievementsUserName.empty()) {
+		// Don't even look for a token - without a username we can't login.
+		return;
+	}
 	std::string api_token = NativeLoadSecret(RA_TOKEN_SECRET_NAME);
 	if (!api_token.empty()) {
 		g_isLoggingIn = true;
-		rc_client_begin_login_with_token(g_rcClient, g_Config.sAchievementsUserName.c_str(), api_token.c_str(), &login_token_callback, nullptr);
+		rc_client_begin_login_with_token(g_rcClient, g_Config.sAchievementsUserName.c_str(), api_token.c_str(), &login_token_callback, (void *)isInitialAttempt);
 	}
-
-	INFO_LOG(ACHIEVEMENTS, "Achievements initialized.");
 }
 
 static void login_password_callback(int result, const char *error_message, rc_client_t *client, void *userdata) {
@@ -428,13 +445,13 @@ static void login_password_callback(int result, const char *error_message, rc_cl
 		g_Config.sAchievementsUserName = user->username;
 		NativeSaveSecret(RA_TOKEN_SECRET_NAME, std::string(user->token));
 		OnAchievementsLoginStateChange();
-		g_OSD.Show(OSDType::MESSAGE_SUCCESS, di->T("Logged in!"));
+		g_OSD.Show(OSDType::MESSAGE_SUCCESS, di->T("Logged in!"), "", g_RAImageID);
 		break;
 	}
 	case RC_NO_RESPONSE:
 	{
 		auto di = GetI18NCategory(I18NCat::DIALOG);
-		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to connect to server, check your internet connection."));
+		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to connect to server, check your internet connection."), "", g_RAImageID);
 		break;
 	}
 	case RC_INVALID_STATE:
@@ -444,7 +461,7 @@ static void login_password_callback(int result, const char *error_message, rc_cl
 	default:
 	{
 		ERROR_LOG(ACHIEVEMENTS, "Failure logging in via password: %d, %s", result, error_message);
-		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to log in, check your username and password."));
+		g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Failed to log in, check your username and password."), "", g_RAImageID);
 		OnAchievementsLoginStateChange();
 		break;
 	}
@@ -513,6 +530,27 @@ void FrameUpdate() {
 
 void Idle() {
 	rc_client_idle(g_rcClient);
+
+	double now = time_now_d();
+
+	// If failed to log in, occasionally try again while the user is at the menu.
+	// Do not try if if in-game, that could get confusing.
+	if (g_Config.bAchievementsEnable && GetUIState() == UISTATE_MENU && now > g_lastLoginAttemptTime + LOGIN_ATTEMPT_INTERVAL_S) {
+		g_lastLoginAttemptTime = now;
+		if (g_rcClient && IsLoggedIn()) {
+			return;  // All good.
+		}
+		if (g_Config.sAchievementsUserName.empty() || g_isLoggingIn || !HasToken()) {
+			// Didn't try to login yet or is in the process of logging in. Also OK.
+			return;
+		}
+
+		// In this situation, there's a token, but we're not logged in. Probably disrupted internet connection
+		// during startup.
+		// Let's make an attempt.
+		INFO_LOG(ACHIEVEMENTS, "Retrying login..");
+		TryLoginByToken(false);
+	}
 }
 
 void DoState(PointerWrap &p) {
@@ -522,7 +560,7 @@ void DoState(PointerWrap &p) {
 		// Reset the runtime.
 		if (HasAchievementsOrLeaderboards()) {
 			auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
-			g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Save state loaded without achievement data"), 5.0f);
+			g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Save state loaded without achievement data"), "", g_RAImageID, 5.0f, "");
 		}
 		rc_client_reset(g_rcClient);
 		return;
@@ -581,7 +619,7 @@ void DoState(PointerWrap &p) {
 	} else {
 		if (IsActive()) {
 			auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
-			g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Save state loaded without achievement data"), 5.0f);
+			g_OSD.Show(OSDType::MESSAGE_WARNING, ac->T("Save state loaded without achievement data"), "", g_RAImageID, 5.0f);
 		}
 		rc_client_reset(g_rcClient);
 	}
@@ -640,6 +678,12 @@ std::string GetGameAchievementSummary() {
 	return summaryString;
 }
 
+// Can happen two ways.
+void ShowNotLoggedInMessage() {
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+	g_OSD.Show(OSDType::MESSAGE_ERROR, ac->T("Failed to connect to RetroAchievements. Achievements will not unlock."), "", g_RAImageID, 6.0f);
+}
+
 void identify_and_load_callback(int result, const char *error_message, rc_client_t *client, void *userdata) {
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
@@ -663,11 +707,16 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 	}
 	case RC_NO_GAME_LOADED:
 		// The current game does not support achievements.
-		g_OSD.Show(OSDType::MESSAGE_INFO, ac->T("RetroAchievements are not available for this game"), 3.0f);
+		g_OSD.Show(OSDType::MESSAGE_INFO, ac->T("RetroAchievements are not available for this game"), "", g_RAImageID, 3.0f);
+		break;
+	case RC_NO_RESPONSE:
+		// We lost the internet connection at some point and can't report achievements.
+		ShowNotLoggedInMessage();
 		break;
 	default:
 		// Other various errors.
 		ERROR_LOG(ACHIEVEMENTS, "Failed to identify/load game: %d (%s)", result, error_message);
+		g_OSD.Show(OSDType::MESSAGE_ERROR, ac->T("Failed to identify game. Achievements will not unlock."), "", g_RAImageID,  6.0f);
 		break;
 	}
 
@@ -685,13 +734,29 @@ bool IsReadyToStart() {
 	return !g_isLoggingIn;
 }
 
-void SetGame(const Path &path, FileLoader *fileLoader) {
+void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoader) {
+	switch (fileType) {
+	case IdentifiedFileType::PSP_ISO:
+	case IdentifiedFileType::PSP_ISO_NP:
+		// These file types are OK.
+		break;
+	default:
+		// Other file types are not yet supported.
+		// TODO: Should we show an OSD popup here?
+		WARN_LOG(ACHIEVEMENTS, "File type of '%s' is not yet compatible with RetroAchievements", path.c_str());
+		return;
+	}
+
 	if (g_isLoggingIn) {
-		// IsReadyToStart should have been checked, so we shouldn't be here.
+		// IsReadyToStart should have been checked the same frame, so we shouldn't be here.
+		// Maybe there's a race condition possible, but don't think so.
 		ERROR_LOG(ACHIEVEMENTS, "Still logging in during SetGame - shouldn't happen");
 	}
 
 	if (!g_rcClient || !IsLoggedIn()) {
+		if (g_Config.bAchievementsEnable && HasToken()) {
+			ShowNotLoggedInMessage();
+		}
 		// Nothing to do.
 		return;
 	}

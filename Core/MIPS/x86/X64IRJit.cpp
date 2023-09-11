@@ -29,9 +29,10 @@ namespace MIPSComp {
 using namespace Gen;
 using namespace X64IRJitConstants;
 
-// This should be enough for exits and invalidations.
-static constexpr int MIN_BLOCK_NORMAL_LEN = 16;
-static constexpr int MIN_BLOCK_EXIT_LEN = 16;
+// Invalidations just need a MOV and JMP.
+static constexpr int MIN_BLOCK_NORMAL_LEN = 10;
+// As long as we can fit a JMP, we should be fine.
+static constexpr int MIN_BLOCK_EXIT_LEN = 5;
 
 X64JitBackend::X64JitBackend(JitOptions &jitopt, IRBlockCache &blocks)
 	: IRNativeBackend(blocks), jo(jitopt), regs_(&jo) {
@@ -63,8 +64,11 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 		wroteCheckedOffset = true;
 
 		// TODO: See if we can get flags to always have the downcount compare.
-		//CMP(32, R(DOWNCOUNTREG), Imm32(0));
-		CMP(32, MDisp(CTXREG, downcountOffset), Imm32(0));
+		if (jo.downcountInRegister) {
+			TEST(32, R(DOWNCOUNTREG), R(DOWNCOUNTREG));
+		} else {
+			CMP(32, MDisp(CTXREG, downcountOffset), Imm32(0));
+		}
 		FixupBranch normalEntry = J_CC(CC_NS);
 		MOV(32, R(SCRATCH1), Imm32(startPC));
 		JMP(outerLoopPCInSCRATCH1_, true);
@@ -106,7 +110,7 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 
 	int len = (int)GetOffset(GetCodePointer()) - block->GetTargetOffset();
 	if (len < MIN_BLOCK_NORMAL_LEN) {
-		// We need at least 16 bytes to invalidate blocks with, but larger doesn't need to align.
+		// We need at least 10 bytes to invalidate blocks with.
 		ReserveCodeSpace(MIN_BLOCK_NORMAL_LEN - len);
 	}
 
@@ -116,8 +120,11 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 	}
 
 	if (jo.enableBlocklink && jo.useBackJump) {
-		//CMP(32, R(DOWNCOUNTREG), Imm32(0));
-		CMP(32, MDisp(CTXREG, downcountOffset), Imm32(0));
+		if (jo.downcountInRegister) {
+			TEST(32, R(DOWNCOUNTREG), R(DOWNCOUNTREG));
+		} else {
+			CMP(32, MDisp(CTXREG, downcountOffset), Imm32(0));
+		}
 		J_CC(CC_NS, blockStart, true);
 
 		MOV(32, R(SCRATCH1), Imm32(startPC));
@@ -159,8 +166,6 @@ void X64JitBackend::WriteConstExit(uint32_t pc) {
 
 	int exitStart = (int)GetOffset(GetCodePointer());
 	if (block_num >= 0 && jo.enableBlocklink && nativeBlock && nativeBlock->checkedOffset != 0) {
-		// Don't bother recording, we don't ever overwrite to "unlink".
-		// Instead, we would mark the target block to jump to the dispatcher.
 		JMP(GetBasePtr() + nativeBlock->checkedOffset, true);
 	} else {
 		MOV(32, R(SCRATCH1), Imm32(pc));
@@ -192,6 +197,7 @@ void X64JitBackend::OverwriteExit(int srcOffset, int len, int block_num) {
 		XEmitter emitter(writable);
 		emitter.JMP(GetBasePtr() + nativeBlock->checkedOffset, true);
 		int bytesWritten = (int)(emitter.GetWritableCodePtr() - writable);
+		_dbg_assert_(bytesWritten <= MIN_BLOCK_EXIT_LEN);
 		if (bytesWritten < len)
 			emitter.ReserveCodeSpace(len - bytesWritten);
 
@@ -242,9 +248,12 @@ void X64JitBackend::FlushAll() {
 }
 
 bool X64JitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
-	// Used in disassembly viewer.
+	// Used in disassembly viewer and profiling tools.
+	// Don't use spaces; profilers get confused or truncate them.
 	if (ptr == dispatcherPCInSCRATCH1_) {
-		name = "dispatcher (PC in SCRATCH1)";
+		name = "dispatcherPCInSCRATCH1";
+	} else if (ptr == outerLoopPCInSCRATCH1_) {
+		name = "outerLoopPCInSCRATCH1";
 	} else if (ptr == dispatcherNoCheck_) {
 		name = "dispatcherNoCheck";
 	} else if (ptr == saveStaticRegisters_) {
@@ -255,6 +264,8 @@ bool X64JitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 		name = "restoreRoundingMode";
 	} else if (ptr == applyRoundingMode_) {
 		name = "applyRoundingMode";
+	} else if (ptr >= GetBasePtr() && ptr < GetBasePtr() + jitStartOffset_) {
+		name = "fixedCode";
 	} else {
 		return IRNativeBackend::DescribeCodePtr(ptr, name);
 	}
@@ -312,18 +323,24 @@ void X64JitBackend::MovToPC(X64Reg r) {
 void X64JitBackend::SaveStaticRegisters() {
 	if (jo.useStaticAlloc) {
 		//CALL(saveStaticRegisters_);
-	} else {
+	} else if (jo.downcountInRegister) {
 		// Inline the single operation
-		//MOV(32, MDisp(CTXREG, downcountOffset), R(DOWNCOUNTREG));
+		MOV(32, MDisp(CTXREG, downcountOffset), R(DOWNCOUNTREG));
 	}
 }
 
 void X64JitBackend::LoadStaticRegisters() {
 	if (jo.useStaticAlloc) {
 		//CALL(loadStaticRegisters_);
-	} else {
-		//MOV(32, R(DOWNCOUNTREG), MDisp(CTXREG, downcountOffset));
+	} else if (jo.downcountInRegister) {
+		MOV(32, R(DOWNCOUNTREG), MDisp(CTXREG, downcountOffset));
 	}
+}
+
+void X64JitBackend::EmitConst4x32(const void **c, uint32_t v) {
+	*c = AlignCode16();
+	for (int i = 0; i < 4; ++i)
+		Write32(v);
 }
 
 } // namespace MIPSComp

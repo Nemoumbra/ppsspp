@@ -319,7 +319,10 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 			max_res_temp = 4;  // At least allow 2x
 		int max_res = std::min(max_res_temp, (int)ARRAY_SIZE(deviceResolutions));
 		UI::PopupMultiChoice *hwscale = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iAndroidHwScale, gr->T("Display Resolution (HW scaler)"), deviceResolutions, 0, max_res, I18NCat::GRAPHICS, screenManager()));
-		hwscale->OnChoice.Handle(this, &GameSettingsScreen::OnHwScaleChange);  // To refresh the display mode
+		hwscale->OnChoice.Add([](UI::EventParams &) {
+			System_RecreateActivity();
+			return UI::EVENT_DONE;
+		});
 	}
 #endif
 
@@ -642,8 +645,10 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 	controlsSettings->Add(new Choice(co->T("Control Mapping")))->OnClick.Handle(this, &GameSettingsScreen::OnControlMapping);
 	controlsSettings->Add(new Choice(co->T("Calibrate Analog Stick")))->OnClick.Handle(this, &GameSettingsScreen::OnCalibrateAnalogs);
 
-#if defined(USING_WIN_UI)
+#if defined(USING_WIN_UI) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
 	controlsSettings->Add(new CheckBox(&g_Config.bSystemControls, co->T("Enable standard shortcut keys")));
+#endif
+#if defined(USING_WIN_UI)
 	controlsSettings->Add(new CheckBox(&g_Config.bGamepadOnlyFocused, co->T("Ignore gamepads when not focused")));
 #endif
 
@@ -685,6 +690,10 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 		CheckBox *hideStickBackground = controlsSettings->Add(new CheckBox(&g_Config.bHideStickBackground, co->T("Hide touch analog stick background circle")));
 		hideStickBackground->SetEnabledPtr(&g_Config.bShowTouchControls);
 
+		// Sticky D-pad.
+		CheckBox *stickyDpad = controlsSettings->Add(new CheckBox(&g_Config.bStickyTouchDPad, co->T("Sticky D-Pad (easier sweeping movements)")));
+		stickyDpad->SetEnabledPtr(&g_Config.bShowTouchControls);
+
 		// Re-centers itself to the touch location on touch-down.
 		CheckBox *floatingAnalog = controlsSettings->Add(new CheckBox(&g_Config.bAutoCenterTouchAnalog, co->T("Auto-centering analog stick")));
 		floatingAnalog->SetEnabledPtr(&g_Config.bShowTouchControls);
@@ -721,7 +730,7 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 			settingInfo_->Show(co->T("AnalogLimiter Tip", "When the analog limiter button is pressed"), e.v);
 			return UI::EVENT_CONTINUE;
 		});
-		controlsSettings->Add(new PopupSliderChoice(&g_Config.iRapidFireInterval, 1, 10, 5, "Rapid fire interval", screenManager(), "frames"));
+		controlsSettings->Add(new PopupSliderChoice(&g_Config.iRapidFireInterval, 1, 10, 5, co->T("Rapid fire interval"), screenManager(), "frames"));
 #if defined(USING_WIN_UI) || defined(SDL)
 		controlsSettings->Add(new ItemHeader(co->T("Mouse", "Mouse settings")));
 		CheckBox *mouseControl = controlsSettings->Add(new CheckBox(&g_Config.bMouseControl, co->T("Use Mouse Control")));
@@ -885,11 +894,30 @@ void GameSettingsScreen::CreateToolsSettings(UI::ViewGroup *tools) {
 	auto ri = GetI18NCategory(I18NCat::REMOTEISO);
 
 	tools->Add(new ItemHeader(ms->T("Tools")));
+
+	auto retro = tools->Add(new Choice(sy->T("RetroAchievements")));
+	retro->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
+		screenManager()->push(new RetroAchievementsSettingsScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	retro->SetIcon(ImageID("I_RETROACHIEVEMENTS_LOGO"));
 	// These were moved here so use the wrong translation objects, to avoid having to change all inis... This isn't a sustainable situation :P
-	tools->Add(new Choice(sa->T("Savedata Manager")))->OnClick.Handle(this, &GameSettingsScreen::OnSavedataManager);
-	tools->Add(new Choice(dev->T("System Information")))->OnClick.Handle(this, &GameSettingsScreen::OnSysInfo);
-	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Handle(this, &GameSettingsScreen::OnDeveloperTools);
-	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Handle(this, &GameSettingsScreen::OnRemoteISO);
+	tools->Add(new Choice(sa->T("Savedata Manager")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new SavedataScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(dev->T("System Information")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new SystemInfoScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new DeveloperToolsScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new RemoteISOScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
 }
 
 void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
@@ -900,15 +928,6 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	auto vr = GetI18NCategory(I18NCat::VR);
 	auto th = GetI18NCategory(I18NCat::THEMES);
 	auto psps = GetI18NCategory(I18NCat::PSPSETTINGS);  // TODO: Should move more into this section.
-
-	systemSettings->Add(new ItemHeader(sy->T("RetroAchievements")));
-	auto retro = systemSettings->Add(new Choice(sy->T("RetroAchievements")));
-
-	retro->OnClick.Add([&](UI::EventParams &) -> UI::EventReturn {
-		screenManager()->push(new RetroAchievementsSettingsScreen(gamePath_));
-		return UI::EVENT_DONE;
-	});
-	retro->SetIcon(ImageID("I_RETROACHIEVEMENTS_LOGO"));
 
 	systemSettings->Add(new ItemHeader(sy->T("UI")));
 
@@ -977,7 +996,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 
 	if (System_GetPropertyBool(SYSPROP_HAS_OPEN_DIRECTORY)) {
 		systemSettings->Add(new Choice(sy->T("Show Memory Stick folder")))->OnClick.Add([](UI::EventParams &p) {
-			System_ShowFileInFolder(File::ResolvePath(g_Config.memStickDirectory.ToString()).c_str());
+			System_ShowFileInFolder(g_Config.memStickDirectory);
 			return UI::EVENT_DONE;
 		});
 	}
@@ -1333,11 +1352,6 @@ UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-UI::EventReturn GameSettingsScreen::OnHwScaleChange(UI::EventParams &e) {
-	System_RecreateActivity();
-	return UI::EVENT_DONE;
-}
-
 void GameSettingsScreen::onFinish(DialogResult result) {
 	Reporting::Enable(enableReports_, "report.ppsspp.org");
 	Reporting::UpdateConfig();
@@ -1578,16 +1592,6 @@ UI::EventReturn GameSettingsScreen::OnTextureShaderChange(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-UI::EventReturn GameSettingsScreen::OnDeveloperTools(UI::EventParams &e) {
-	screenManager()->push(new DeveloperToolsScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnRemoteISO(UI::EventParams &e) {
-	screenManager()->push(new RemoteISOScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
-
 UI::EventReturn GameSettingsScreen::OnControlMapping(UI::EventParams &e) {
 	screenManager()->push(new ControlMappingScreen(gamePath_));
 	return UI::EVENT_DONE;
@@ -1607,17 +1611,6 @@ UI::EventReturn GameSettingsScreen::OnTiltCustomize(UI::EventParams &e) {
 	screenManager()->push(new TiltAnalogSettingsScreen(gamePath_));
 	return UI::EVENT_DONE;
 };
-
-UI::EventReturn GameSettingsScreen::OnSavedataManager(UI::EventParams &e) {
-	auto saveData = new SavedataScreen(gamePath_);
-	screenManager()->push(saveData);
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnSysInfo(UI::EventParams &e) {
-	screenManager()->push(new SystemInfoScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
 
 void DeveloperToolsScreen::CreateViews() {
 	using namespace UI;
@@ -2149,6 +2142,10 @@ void GestureMappingScreen::CreateViews() {
 
 	vert->Add(new ItemHeader(co->T("Double tap")));
 	vert->Add(new PopupMultiChoice(&g_Config.iDoubleTapGesture, mc->T("Double tap button"), gestureButton, 0, ARRAY_SIZE(gestureButton), I18NCat::MAPPABLECONTROLS, screenManager()))->SetEnabledPtr(&g_Config.bGestureControlEnabled);
+
+	vert->Add(new ItemHeader(co->T("Analog Stick")));
+	vert->Add(new CheckBox(&g_Config.bAnalogGesture, co->T("Enable analog stick gesture")));
+	vert->Add(new PopupSliderChoiceFloat(&g_Config.fAnalogGestureSensibility, 0.01f, 5.0f, 1.0f, co->T("Sensitivity"), 0.01f, screenManager(), "x"))->SetEnabledPtr(&g_Config.bAnalogGesture);
 }
 
 RestoreSettingsScreen::RestoreSettingsScreen(const char *title)

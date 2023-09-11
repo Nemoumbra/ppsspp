@@ -92,6 +92,8 @@ public:
 	bool bPreloadFunctions;
 	uint32_t uJitDisableFlags;
 
+	bool bDisableHTTPS;
+
 	bool bSeparateSASThread;
 	int iIOTimingMethod;
 	int iLockedCPUSpeed;
@@ -296,6 +298,8 @@ public:
 	float fSwipeSensitivity;
 	float fSwipeSmoothing;
 	int iDoubleTapGesture;
+	bool bAnalogGesture;
+	float fAnalogGestureSensibility;
 
 	// Disable diagonals
 	bool bDisableDpadDiagonals;
@@ -311,6 +315,9 @@ public:
 
 	// Floating analog stick (recenters on thumb on press).
 	bool bAutoCenterTouchAnalog;
+
+	// Sticky D-pad (can't glide off it)
+	bool bStickyTouchDPad;
 
 	//space between PSP buttons
 	//the PSP button's center (triangle, circle, square, cross)

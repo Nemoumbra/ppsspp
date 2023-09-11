@@ -46,7 +46,7 @@ public:
 	virtual bool key(const KeyInput &key);
 	virtual void axis(const AxisInput &axis);
 
-	void UnsyncTouch(const TouchInput &touch) override;
+	bool UnsyncTouch(const TouchInput &touch) override;
 	bool UnsyncKey(const KeyInput &key) override;
 	void UnsyncAxis(const AxisInput &axis) override;
 
@@ -73,12 +73,13 @@ protected:
 	bool ignoreInsets_ = false;
 	bool ignoreInput_ = false;
 
-private:
+protected:
 	void DoRecreateViews();
 
 	bool recreateViews_ = true;
 	bool lastVertical_;
 
+private:
 	std::mutex eventQueueLock_;
 	std::deque<QueuedEvent> eventQueue_;
 };

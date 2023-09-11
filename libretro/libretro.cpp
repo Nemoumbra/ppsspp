@@ -239,22 +239,22 @@ class PrintfLogger : public LogListener
       {
          switch (message.level)
          {
-            case LogTypes::LVERBOSE:
-            case LogTypes::LDEBUG:
+            case LogLevel::LVERBOSE:
+            case LogLevel::LDEBUG:
                log_(RETRO_LOG_DEBUG, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
 
-            case LogTypes::LERROR:
+            case LogLevel::LERROR:
                log_(RETRO_LOG_ERROR, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
-            case LogTypes::LNOTICE:
-            case LogTypes::LWARNING:
+            case LogLevel::LNOTICE:
+            case LogLevel::LWARNING:
                log_(RETRO_LOG_WARN, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
-            case LogTypes::LINFO:
+            case LogLevel::LINFO:
             default:
                log_(RETRO_LOG_INFO, "[%s] %s",
                      message.log, message.msg.c_str());
@@ -1081,7 +1081,7 @@ void retro_init(void)
       logman->RemoveListener(logman->GetDebuggerListener());
       logman->ChangeFileLog(nullptr);
       logman->AddListener(printfLogger);
-      logman->SetAllLogLevels(LogTypes::LINFO);
+      logman->SetAllLogLevels(LogLevel::LINFO);
    }
 
    g_Config.Load("", "");
@@ -1753,7 +1753,7 @@ void System_InputBoxGetString(const std::string &title, const std::string &defau
 #endif
 
 // TODO: To avoid having to define these here, these should probably be turned into system "requests".
-void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {}
+bool NativeSaveSecret(const char *nameOfSecret, const std::string &data) { return false; }
 std::string NativeLoadSecret(const char *nameOfSecret) {
    return "";
 }

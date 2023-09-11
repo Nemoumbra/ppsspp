@@ -22,6 +22,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/MIPS/IR/IRAnalysis.h"
 #include "Core/MIPS/IR/IRInst.h"
 
 
@@ -79,6 +80,8 @@ enum class MIPSMap : uint8_t {
 	INIT = 0,
 	DIRTY = 1,
 	NOINIT = 2 | DIRTY,
+
+	BACKEND_MASK = 0xF0,
 };
 static inline MIPSMap operator |(const MIPSMap &lhs, const MIPSMap &rhs) {
 	return MIPSMap((uint8_t)lhs | (uint8_t)rhs);
@@ -161,6 +164,8 @@ public:
 	bool IsFPRMapped(IRReg fpr);
 	bool IsGPRMappedAsPointer(IRReg gpr);
 	bool IsGPRMappedAsStaticPointer(IRReg gpr);
+	int GetFPRLane(IRReg fpr);
+	int GetFPRLaneCount(IRReg fpr);
 
 	bool IsGPRImm(IRReg gpr);
 	bool IsGPR2Imm(IRReg base);
@@ -178,6 +183,9 @@ public:
 
 	void MarkGPRDirty(IRReg gpr, bool andNormalized32 = false);
 	void MarkGPRAsPointerDirty(IRReg gpr);
+
+	bool IsGPRClobbered(IRReg gpr) const;
+	bool IsFPRClobbered(IRReg gpr) const;
 
 	struct Mapping {
 		char type = '?';
@@ -229,6 +237,9 @@ protected:
 	void SetSpillLockIRIndex(IRReg reg, IRReg reg2, IRReg reg3, IRReg reg4, int offset, int index);
 	void SetSpillLockIRIndex(IRReg reg, int index);
 	int GetMipsRegOffset(IRReg r);
+
+	bool IsRegClobbered(MIPSLoc type, MIPSMap flags, IRReg r) const;
+	IRUsage GetNextRegUsage(const IRSituation &info, MIPSLoc type, IRReg r) const;
 
 	bool IsValidGPR(IRReg r) const;
 	bool IsValidGPRNoZero(IRReg r) const;

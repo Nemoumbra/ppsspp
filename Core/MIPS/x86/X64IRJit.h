@@ -29,6 +29,19 @@
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/MIPS/x86/X64IRRegCache.h"
 
+#if PPSSPP_PLATFORM(WINDOWS) && (defined(_MSC_VER) || defined(__clang__) || defined(__INTEL_COMPILER))
+#define X64JIT_XMM_CALL __vectorcall
+#define X64JIT_USE_XMM_CALL 1
+#elif PPSSPP_ARCH(AMD64)
+// SystemV ABI supports XMM registers.
+#define X64JIT_XMM_CALL
+#define X64JIT_USE_XMM_CALL 1
+#else
+// GCC on x86 doesn't support vectorcall.
+#define X64JIT_XMM_CALL
+#define X64JIT_USE_XMM_CALL 0
+#endif
+
 namespace MIPSComp {
 
 class X64JitBackend : public Gen::XCodeBlock, public IRNativeBackend {
@@ -106,7 +119,12 @@ private:
 	void CompIR_VecStore(IRInst inst) override;
 	void CompIR_ValidateAddress(IRInst inst) override;
 
+	void EmitConst4x32(const void **c, uint32_t v);
+	void EmitFPUConstants();
+	void EmitVecConstants();
+
 	Gen::OpArg PrepareSrc1Address(IRInst inst);
+	void CopyVec4ToFPRLane0(Gen::X64Reg dest, Gen::X64Reg src, int lane);
 
 	JitOptions &jo;
 	X64IRRegCache regs_;
@@ -122,6 +140,22 @@ private:
 	const u8 *saveStaticRegisters_ = nullptr;
 	const u8 *loadStaticRegisters_ = nullptr;
 
+	typedef struct { float f[4]; } Float4Constant;
+	struct Constants {
+		const void *noSignMask;
+		const void *signBitAll;
+		const void *positiveInfinity;
+		const void *positiveOnes;
+		const void *negativeOnes;
+		const void *qNAN;
+		const float *mulTableVi2f;
+		const double *mulTableVf2i;
+		const double *minIntAsDouble;
+		const double *maxIntAsDouble;
+		const Float4Constant *vec4InitValues;
+	};
+	Constants constants;
+
 	int jitStartOffset_ = 0;
 	int compilingBlockNum_ = -1;
 	int logBlocks_ = 0;
@@ -130,12 +164,12 @@ private:
 class X64IRJit : public IRNativeJit {
 public:
 	X64IRJit(MIPSState *mipsState)
-		: IRNativeJit(mipsState), rvBackend_(jo, blocks_) {
-		Init(rvBackend_);
+		: IRNativeJit(mipsState), x64Backend_(jo, blocks_) {
+		Init(x64Backend_);
 	}
 
 private:
-	X64JitBackend rvBackend_;
+	X64JitBackend x64Backend_;
 };
 
 } // namespace MIPSComp

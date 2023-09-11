@@ -175,9 +175,6 @@
     <ClCompile Include="..\..\Core\MIPS\x86\CompVFPU.cpp">
       <Filter>MIPS\x86</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\Core\MIPS\x86\IRToX86.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\Core\MIPS\x86\Jit.cpp">
       <Filter>MIPS\x86</Filter>
     </ClCompile>
@@ -786,6 +783,33 @@
     <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64RegCacheFPU.cpp">
       <Filter>MIPS\ARM64</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRAsm.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompALU.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+     <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompBranch.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompFPU.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompLoadStore.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompSystem.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompVec.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRJit.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRRegCache.cpp">
+      <Filter>MIPS\ARM64</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Core\HW\BufferQueue.cpp">
       <Filter>HW</Filter>
     </ClCompile>
@@ -1213,9 +1237,6 @@
     </ClInclude>
     <ClInclude Include="..\..\Core\MIPS\JitCommon\JitState.h">
       <Filter>MIPS\JitCommon</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\Core\MIPS\x86\IRToX86.h">
-      <Filter>MIPS\x86</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\MIPS\x86\Jit.h">
       <Filter>MIPS\x86</Filter>
@@ -1796,6 +1817,12 @@
       <Filter>MIPS\ARM64</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\MIPS\ARM64\Arm64RegCacheFPU.h">
+      <Filter>MIPS\ARM64</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\MIPS\ARM64\Arm64IRJit.h">
+      <Filter>MIPS\ARM64</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\MIPS\ARM64\Arm64IRRegCache.h">
       <Filter>MIPS\ARM64</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\HW\Camera.h">

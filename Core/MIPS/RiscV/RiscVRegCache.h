@@ -44,14 +44,14 @@ public:
 	void Init(RiscVGen::RiscVEmitter *emitter);
 
 	// May fail and return INVALID_REG if it needs flushing.
-	RiscVGen::RiscVReg TryMapTempImm(IRReg);
+	RiscVGen::RiscVReg TryMapTempImm(IRReg reg);
 
 	// Returns an RV register containing the requested MIPS register.
 	RiscVGen::RiscVReg MapGPR(IRReg reg, MIPSMap mapFlags = MIPSMap::INIT);
 	RiscVGen::RiscVReg MapGPRAsPointer(IRReg reg);
 	RiscVGen::RiscVReg MapFPR(IRReg reg, MIPSMap mapFlags = MIPSMap::INIT);
 
-	RiscVGen::RiscVReg MapWithFPRTemp(IRInst &inst);
+	RiscVGen::RiscVReg MapWithFPRTemp(const IRInst &inst);
 
 	bool IsNormalized32(IRReg reg);
 
@@ -60,7 +60,7 @@ public:
 
 	void FlushBeforeCall();
 
-	RiscVGen::RiscVReg GetAndLockTempR();
+	RiscVGen::RiscVReg GetAndLockTempGPR();
 
 	RiscVGen::RiscVReg R(IRReg preg); // Returns a cached register, while checking that it's NOT mapped as a pointer
 	RiscVGen::RiscVReg RPtr(IRReg preg); // Returns a cached register, if it has been mapped as a pointer

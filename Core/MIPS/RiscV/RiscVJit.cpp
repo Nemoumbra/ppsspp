@@ -21,6 +21,9 @@
 #include "Core/MIPS/RiscV/RiscVJit.h"
 #include "Core/MIPS/RiscV/RiscVRegCache.h"
 
+#include <algorithm>
+// for std::min
+
 namespace MIPSComp {
 
 using namespace RiscVGen;
@@ -55,6 +58,8 @@ static void NoBlockExits() {
 bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 	if (GetSpaceLeft() < 0x800)
 		return false;
+
+	BeginWrite(std::min(GetSpaceLeft(), (size_t)block->GetNumInstructions() * 32));
 
 	u32 startPC = block->GetOriginalStart();
 	bool wroteCheckedOffset = false;
@@ -151,6 +156,7 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 		}
 	}
 
+	EndWrite();
 	FlushIcache();
 	compilingBlockNum_ = -1;
 
@@ -163,8 +169,6 @@ void RiscVJitBackend::WriteConstExit(uint32_t pc) {
 
 	int exitStart = (int)GetOffset(GetCodePointer());
 	if (block_num >= 0 && jo.enableBlocklink && nativeBlock && nativeBlock->checkedOffset != 0) {
-		// Don't bother recording, we don't ever overwrite to "unlink".
-		// Instead, we would mark the target block to jump to the dispatcher.
 		QuickJ(SCRATCH1, GetBasePtr() + nativeBlock->checkedOffset);
 	} else {
 		LI(SCRATCH1, pc);
@@ -252,8 +256,11 @@ void RiscVJitBackend::FlushAll() {
 
 bool RiscVJitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 	// Used in disassembly viewer.
+	// Don't use spaces; profilers get confused or truncate them.
 	if (ptr == dispatcherPCInSCRATCH1_) {
-		name = "dispatcher (PC in SCRATCH1)";
+		name = "dispatcherPCInSCRATCH1";
+	} else if (ptr == outerLoopPCInSCRATCH1_) {
+		name = "outerLoopPCInSCRATCH1";
 	} else if (ptr == dispatcherNoCheck_) {
 		name = "dispatcherNoCheck";
 	} else if (ptr == saveStaticRegisters_) {
@@ -262,6 +269,8 @@ bool RiscVJitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 		name = "loadStaticRegisters";
 	} else if (ptr == applyRoundingMode_) {
 		name = "applyRoundingMode";
+	} else if (ptr >= GetBasePtr() && ptr < GetBasePtr() + jitStartOffset_) {
+		name = "fixedCode";
 	} else {
 		return IRNativeBackend::DescribeCodePtr(ptr, name);
 	}

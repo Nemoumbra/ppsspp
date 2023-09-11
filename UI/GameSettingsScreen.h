@@ -83,8 +83,6 @@ private:
 	UI::EventReturn OnAutoFrameskip(UI::EventParams &e);
 	UI::EventReturn OnTextureShader(UI::EventParams &e);
 	UI::EventReturn OnTextureShaderChange(UI::EventParams &e);
-	UI::EventReturn OnDeveloperTools(UI::EventParams &e);
-	UI::EventReturn OnRemoteISO(UI::EventParams &e);
 	UI::EventReturn OnChangeQuickChat0(UI::EventParams &e);
 	UI::EventReturn OnChangeQuickChat1(UI::EventParams &e);
 	UI::EventReturn OnChangeQuickChat2(UI::EventParams &e);
@@ -96,7 +94,6 @@ private:
 	UI::EventReturn OnFullscreenChange(UI::EventParams &e);
 	UI::EventReturn OnFullscreenMultiChange(UI::EventParams &e);
 	UI::EventReturn OnResolutionChange(UI::EventParams &e);
-	UI::EventReturn OnHwScaleChange(UI::EventParams &e);
 	UI::EventReturn OnRestoreDefaultSettings(UI::EventParams &e);
 	UI::EventReturn OnRenderingBackend(UI::EventParams &e);
 	UI::EventReturn OnRenderingDevice(UI::EventParams &e);
@@ -115,9 +112,6 @@ private:
 	UI::EventReturn OnSustainedPerformanceModeChange(UI::EventParams &e);
 
 	UI::EventReturn OnAdhocGuides(UI::EventParams &e);
-
-	UI::EventReturn OnSavedataManager(UI::EventParams &e);
-	UI::EventReturn OnSysInfo(UI::EventParams &e);
 
 	// Temporaries to convert setting types, cache enabled, etc.
 	int iAlternateSpeedPercent1_ = 0;

@@ -97,15 +97,6 @@
 // GL_UNSIGNED_BYTE/RGBA:  AAAAAAAABBBBBBBBGGGGGGGGRRRRRRRR  (match)
 // These are Data::Format:: B4G4R4A4_PACK16, B5G6R6_PACK16, B5G5R5A1_PACK16, R8G8B8A8
 
-// Allow the extra bits from the remasters for the purposes of this.
-inline int dimWidth(u16 dim) {
-	return 1 << (dim & 0xFF);
-}
-
-inline int dimHeight(u16 dim) {
-	return 1 << ((dim >> 8) & 0xFF);
-}
-
 TextureCacheCommon::TextureCacheCommon(Draw::DrawContext *draw, Draw2D *draw2D)
 	: draw_(draw), draw2D_(draw2D), replacer_(draw) {
 	decimationCounter_ = TEXCACHE_DECIMATION_INTERVAL;
@@ -199,10 +190,6 @@ SamplerCacheKey TextureCacheCommon::GetSamplingParams(int maxLevel, const TexCac
 
 	// If mip level is forced to zero, disable mipmapping.
 	bool noMip = maxLevel == 0 || (!autoMip && lodBias <= 0.0f);
-	if (IsFakeMipmapChange()) {
-		noMip = noMip || !autoMip;
-	}
-
 	if (noMip) {
 		// Enforce no mip filtering, for safety.
 		key.mipEnable = false;
@@ -581,7 +568,6 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 
 			if (rehash) {
 				// Update in case any of these changed.
-				entry->sizeInRAM = (textureBitsPerPixel[texFormat] * bufw * h / 2) / 8;
 				entry->bufw = bufw;
 				entry->cluthash = cluthash;
 			}
@@ -675,9 +661,6 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 	entry->maxLevel = maxLevel;
 	entry->status &= ~TexCacheEntry::STATUS_BGRA;
 
-	// This would overestimate the size in many cases so we underestimate instead
-	// to avoid excessive clearing caused by cache invalidations.
-	entry->sizeInRAM = (textureBitsPerPixel[texFormat] * bufw * h / 2) / 8;
 	entry->bufw = bufw;
 
 	entry->cluthash = cluthash;
@@ -1114,8 +1097,8 @@ bool TextureCacheCommon::MatchFramebuffer(
 				return true;
 			}
 		} else {
-			WARN_LOG_ONCE(diffFormat2, G3D, "Ignoring possible texturing from framebuffer with incompatible format %s != %s at %08x (+%dx%d)",
-				GeTextureFormatToString(entry.format), GeBufferFormatToString(fb_format), fb_address, matchInfo->xOffset, matchInfo->yOffset);
+			WARN_LOG_ONCE(diffFormat2, G3D, "Ignoring possible texturing from framebuffer at %08x with incompatible format %s != %s (+%dx%d)",
+				fb_address, GeTextureFormatToString(entry.format), GeBufferFormatToString(fb_format), matchInfo->xOffset, matchInfo->yOffset);
 			return false;
 		}
 	}
@@ -1355,19 +1338,24 @@ void TextureCacheCommon::LoadClut(u32 clutAddr, u32 loadBytes) {
 				// the framebuffer with the smallest offset. This is yet another framebuffer matching
 				// loop with its own rules, eventually we'll probably want to do something
 				// more systematic.
+				bool okAge = !PSP_CoreParameter().compat.flags().LoadCLUTFromCurrentFrameOnly || framebuffer->last_frame_render == gpuStats.numFlips;  // Here we can try heuristics.
 				if (matchRange && !inMargin && offset < (int)clutRenderOffset_) {
-					WARN_LOG_N_TIMES(clutfb, 5, G3D, "Detected LoadCLUT(%d bytes) from framebuffer %08x (%s), byte offset %d, pixel offset %d",
-						loadBytes, fb_address, GeBufferFormatToString(framebuffer->fb_format), offset, offset / fb_bpp);
-					framebuffer->last_frame_clut = gpuStats.numFlips;
-					// Also mark used so it's not decimated.
-					framebuffer->last_frame_used = gpuStats.numFlips;
-					framebuffer->usageFlags |= FB_USAGE_CLUT;
-					bestClutAddress = framebuffer->fb_address;
-					clutRenderOffset_ = (u32)offset;
-					chosenFramebuffer = framebuffer;
-					if (offset == 0) {
-						// Not gonna find a better match according to the smallest-offset rule, so we'll go with this one.
-						break;
+					if (okAge) {
+						WARN_LOG_N_TIMES(clutfb, 5, G3D, "Detected LoadCLUT(%d bytes) from framebuffer %08x (%s), last render %d frames ago, byte offset %d, pixel offset %d",
+							loadBytes, fb_address, GeBufferFormatToString(framebuffer->fb_format), gpuStats.numFlips - framebuffer->last_frame_render, offset, offset / fb_bpp);
+						framebuffer->last_frame_clut = gpuStats.numFlips;
+						// Also mark used so it's not decimated.
+						framebuffer->last_frame_used = gpuStats.numFlips;
+						framebuffer->usageFlags |= FB_USAGE_CLUT;
+						bestClutAddress = framebuffer->fb_address;
+						clutRenderOffset_ = (u32)offset;
+						chosenFramebuffer = framebuffer;
+						if (offset == 0) {
+							// Not gonna find a better match according to the smallest-offset rule, so we'll go with this one.
+							break;
+						}
+					} else {
+						WARN_LOG(G3D, "Ignoring CLUT load from %d frames old buffer at %08x", gpuStats.numFlips - framebuffer->last_frame_render, fb_address);
 					}
 				}
 			}
@@ -2652,7 +2640,8 @@ void TextureCacheCommon::Invalidate(u32 addr, int size, GPUInvalidationType type
 	for (TexCache::iterator iter = cache_.lower_bound(startKey), end = cache_.upper_bound(endKey); iter != end; ++iter) {
 		auto &entry = iter->second;
 		u32 texAddr = entry->addr;
-		u32 texEnd = entry->addr + entry->sizeInRAM;
+		// Intentional underestimate here.
+		u32 texEnd = entry->addr + entry->SizeInRAM() / 2;
 
 		// Quick check for overlap. Yes the check is right.
 		if (addr < texEnd && addr_end > texAddr) {
@@ -2764,21 +2753,30 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 		plan.scaleFactor = plan.scaleFactor > 4 ? 4 : (plan.scaleFactor > 2 ? 2 : 1);
 	}
 
-	bool isFakeMipmapChange = IsFakeMipmapChange();
-
+	bool isFakeMipmapChange = false;
 	if (plan.badMipSizes) {
+		isFakeMipmapChange = IsFakeMipmapChange();
+
 		// Check for pure 3D texture.
 		int tw = gstate.getTextureWidth(0);
 		int th = gstate.getTextureHeight(0);
 		bool pure3D = true;
-		if (!isFakeMipmapChange) {
-			for (int i = 0; i < plan.levelsToLoad; i++) {
-				if (gstate.getTextureWidth(i) != gstate.getTextureWidth(0) || gstate.getTextureHeight(i) != gstate.getTextureHeight(0)) {
-					pure3D = false;
-					break;
-				}
+		for (int i = 0; i < plan.levelsToLoad; i++) {
+			if (gstate.getTextureWidth(i) != gstate.getTextureWidth(0) || gstate.getTextureHeight(i) != gstate.getTextureHeight(0)) {
+				pure3D = false;
+				break;
 			}
-		} else {
+		}
+
+		// Check early for the degenerate case from Tactics Ogre.
+		if (pure3D && plan.levelsToLoad == 2 && gstate.getTextureAddress(0) == gstate.getTextureAddress(1)) {
+			// Simply treat it as a regular 2D texture, no fake mipmaps or anything.
+			// levelsToLoad/Create gets set to 1 on the way out from the surrounding if.
+			isFakeMipmapChange = false;
+			pure3D = false;
+		} else if (isFakeMipmapChange) {
+			// We don't want to create a volume texture, if this is a "fake mipmap change".
+			// In practice due to the compat flag, the only time we end up here is in JP Tactics Ogre.
 			pure3D = false;
 		}
 
@@ -2803,7 +2801,7 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 	plan.w = gstate.getTextureWidth(0);
 	plan.h = gstate.getTextureHeight(0);
 
-	bool isPPGETexture = entry->addr > 0x05000000 && entry->addr < PSP_GetKernelMemoryEnd();
+	bool isPPGETexture = entry->addr >= PSP_GetKernelMemoryBase() && entry->addr < PSP_GetKernelMemoryEnd();
 
 	// Don't scale the PPGe texture.
 	if (isPPGETexture) {
@@ -2906,6 +2904,13 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 	if (isFakeMipmapChange) {
 		// NOTE: Since the level is not part of the cache key, we assume it never changes.
 		plan.baseLevelSrc = std::max(0, gstate.getTexLevelOffset16() / 16);
+		// Tactics Ogre: If this is an odd level and it has the same texture address the below even level,
+		// let's just say it's the even level for the purposes of replacement.
+		// I assume this is done to avoid blending between levels accidentally?
+		// The Japanese version of Tactics Ogre uses multiple of these "double" levels to fit more characters.
+		if ((plan.baseLevelSrc & 1) && gstate.getTextureAddress(plan.baseLevelSrc) == gstate.getTextureAddress(plan.baseLevelSrc & ~1)) {
+			plan.baseLevelSrc &= ~1;
+		}
 		plan.levelsToCreate = 1;
 		plan.levelsToLoad = 1;
 		// Make sure we already decided not to do a 3D texture above.
@@ -2913,9 +2918,10 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 	}
 
 	if (plan.isVideo || plan.depth != 1 || plan.decodeToClut8) {
+		plan.levelsToLoad = 1;
 		plan.maxPossibleLevels = 1;
 	} else {
-		plan.maxPossibleLevels = log2i(std::min(plan.createW, plan.createH)) + 1;
+		plan.maxPossibleLevels = log2i(std::max(plan.createW, plan.createH)) + 1;
 	}
 
 	if (plan.levelsToCreate == 1) {

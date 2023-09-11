@@ -403,7 +403,6 @@ std::map<std::string, std::string> Section::ToMap() const
 	return outMap;
 }
 
-
 bool Section::Delete(const char *key)
 {
 	std::string* line = GetLine(key, 0, 0);

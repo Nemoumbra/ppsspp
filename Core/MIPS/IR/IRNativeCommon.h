@@ -15,6 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#pragma once
+
 #include <unordered_map>
 #include "Core/MIPS/IR/IRJit.h"
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
@@ -58,6 +60,8 @@ public:
 	virtual void ClearAllBlocks() = 0;
 	virtual void InvalidateBlock(IRBlock *block, int block_num) = 0;
 	void FinalizeBlock(IRBlock *block, int block_num, const JitOptions &jo);
+
+	virtual void UpdateFCR31(MIPSState *mipsState) {}
 
 	const IRNativeHooks &GetNativeHooks() const {
 		return hooks_;
@@ -167,6 +171,8 @@ public:
 	bool IsAtDispatchFetch(const u8 *ptr) const override;
 	const u8 *GetDispatcher() const override;
 	const u8 *GetCrashHandler() const override;
+
+	void UpdateFCR31() override;
 
 	JitBlockCacheDebugInterface *GetBlockCacheDebugInterface() override;
 

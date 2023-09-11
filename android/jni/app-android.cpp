@@ -148,8 +148,8 @@ static int deviceType;
 // Should only be used for display detection during startup (for config defaults etc)
 // This is the ACTUAL display size, not the hardware scaled display size.
 // Exposed so it can be displayed on the touchscreen test.
-int display_xres;
-int display_yres;
+static int display_xres;
+static int display_yres;
 static int display_dpi_x;
 static int display_dpi_y;
 static int backbuffer_format;	// Android PixelFormat enum
@@ -202,10 +202,10 @@ int utimensat(int fd, const char *path, const struct timespec times[2]) {
 void AndroidLogger::Log(const LogMessage &message) {
 	int mode;
 	switch (message.level) {
-	case LogTypes::LWARNING:
+	case LogLevel::LWARNING:
 		mode = ANDROID_LOG_WARN;
 		break;
-	case LogTypes::LERROR:
+	case LogLevel::LERROR:
 		mode = ANDROID_LOG_ERROR;
 		break;
 	default:
@@ -252,7 +252,7 @@ void Android_AttachThreadToJNI() {
 	JNIEnv *env;
 	int status = gJvm->GetEnv((void **)&env, JNI_VERSION_1_6);
 	if (status < 0) {
-		INFO_LOG(SYSTEM, "Attaching thread '%s' (not already attached) to JNI.", GetCurrentThreadName());
+		DEBUG_LOG(SYSTEM, "Attaching thread '%s' (not already attached) to JNI.", GetCurrentThreadName());
 		JavaVMAttachArgs args{};
 		args.version = JNI_VERSION_1_6;
 		args.name = GetCurrentThreadName();
@@ -269,7 +269,7 @@ void Android_AttachThreadToJNI() {
 
 void Android_DetachThreadFromJNI() {
 	if (gJvm->DetachCurrentThread() == JNI_OK) {
-		INFO_LOG(SYSTEM, "Detached thread from JNI: '%s'", GetCurrentThreadName());
+		DEBUG_LOG(SYSTEM, "Detached thread from JNI: '%s'", GetCurrentThreadName());
 	} else {
 		WARN_LOG(SYSTEM, "Failed to detach thread '%s' from JNI - never attached?", GetCurrentThreadName());
 	}
@@ -389,10 +389,6 @@ void System_Vibrate(int length_ms) {
 	char temp[32];
 	snprintf(temp, sizeof(temp), "%d", length_ms);
 	PushCommand("vibrate", temp);
-}
-
-void System_ShowFileInFolder(const char *path) {
-	// Unsupported
 }
 
 void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
@@ -537,7 +533,7 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return deviceType != DEVICE_TYPE_VR;
 #ifndef HTTPS_NOT_AVAILABLE
 	case SYSPROP_SUPPORTS_HTTPS:
-		return true;
+		return !g_Config.bDisableHTTPS;
 #endif
 	default:
 		return false;
@@ -1214,6 +1210,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jin
 	return NativeKey(keyInput);
 }
 
+// TODO: Make a batched interface, since we get these in batches on the Android side.
 extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 		JNIEnv *env, jclass, jint deviceId, jint axisId, jfloat value) {
 	if (!renderer_inited)
@@ -1223,7 +1220,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 	axis.deviceId = (InputDeviceID)deviceId;
 	axis.axisId = (InputAxis)axisId;
 	axis.value = value;
-	NativeAxis(axis);
+	NativeAxis(&axis, 1);
 }
 
 extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
@@ -1238,20 +1235,17 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_accelerometer(JNIEnv *,
 	if (!renderer_inited)
 		return;
 
-	AxisInput axis;
-	axis.deviceId = DEVICE_ID_ACCELEROMETER;
-
-	axis.axisId = JOYSTICK_AXIS_ACCELEROMETER_X;
-	axis.value = x;
-	NativeAxis(axis);
-
-	axis.axisId = JOYSTICK_AXIS_ACCELEROMETER_Y;
-	axis.value = y;
-	NativeAxis(axis);
-
-	axis.axisId = JOYSTICK_AXIS_ACCELEROMETER_Z;
-	axis.value = z;
-	NativeAxis(axis);
+	AxisInput axis[3];
+	for (int i = 0; i < 3; i++) {
+		axis[i].deviceId = DEVICE_ID_ACCELEROMETER;
+	}
+	axis[0].axisId = JOYSTICK_AXIS_ACCELEROMETER_X;
+	axis[0].value = x;
+	axis[1].axisId = JOYSTICK_AXIS_ACCELEROMETER_Y;
+	axis[1].value = y;
+	axis[2].axisId = JOYSTICK_AXIS_ACCELEROMETER_Z;
+	axis[2].value = z;
+	NativeAxis(axis, 3);
 }
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNIEnv *env, jclass, jstring message, jstring param) {

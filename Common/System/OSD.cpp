@@ -1,4 +1,6 @@
 #include <cstring>
+#include <algorithm>
+// for std::min
 
 #include "Common/System/OSD.h"
 #include "Common/TimeUtil.h"
@@ -39,6 +41,13 @@ float OnScreenDisplay::SidebarAlpha() const {
 	return saturatef(1.0f - ((float)timeSinceNudge - 0.1f) * 4.0f);
 }
 
+void OnScreenDisplay::DismissEntry(size_t index, double now) {
+	std::lock_guard<std::mutex> guard(mutex_);
+	if (index < entries_.size() && entries_[index].type != OSDType::ACHIEVEMENT_CHALLENGE_INDICATOR) {
+		entries_[index].endTime = std::min(now + FadeoutTime(), entries_[index].endTime);
+	}
+}
+
 void OnScreenDisplay::Show(OSDType type, const std::string &text, const std::string &text2, const std::string &icon, float duration_s, const char *id) {
 	// Automatic duration based on type.
 	if (duration_s <= 0.0f) {
@@ -49,6 +58,9 @@ void OnScreenDisplay::Show(OSDType type, const std::string &text, const std::str
 			break;
 		case OSDType::MESSAGE_FILE_LINK:
 			duration_s = 5.0f;
+			break;
+		case OSDType::MESSAGE_INFO:
+			duration_s = 3.0f;
 			break;
 		case OSDType::MESSAGE_SUCCESS:
 			duration_s = 2.0f;
@@ -91,6 +103,11 @@ void OnScreenDisplay::Show(OSDType type, const std::string &text, const std::str
 	entries_.insert(entries_.begin(), msg);
 }
 
+void OnScreenDisplay::ShowOnOff(const std::string &message, bool on, float duration_s) {
+	// TODO: translate "on" and "off"? Or just get rid of this whole thing?
+	Show(OSDType::MESSAGE_INFO, message + ": " + (on ? "on" : "off"), duration_s);
+}
+
 void OnScreenDisplay::ShowAchievementUnlocked(int achievementID) {
 	double now = time_now_d();
 
@@ -118,7 +135,7 @@ void OnScreenDisplay::ShowAchievementProgress(int achievementID, bool show) {
 			}
 			// Else update it.
 			entry.numericID = achievementID;
-			entry.endTime = now + 2.0f; // forever_s;
+			entry.endTime = now + forever_s;
 			return;
 		}
 	}
@@ -133,7 +150,7 @@ void OnScreenDisplay::ShowAchievementProgress(int achievementID, bool show) {
 	entry.numericID = achievementID;
 	entry.type = OSDType::ACHIEVEMENT_PROGRESS;
 	entry.startTime = now;
-	entry.endTime = now + 2.0f; // forever_s;
+	entry.endTime = now + forever_s;
 	entries_.insert(entries_.begin(), entry);
 }
 
@@ -201,16 +218,10 @@ void OnScreenDisplay::ShowLeaderboardTracker(int leaderboardTrackerID, const cha
 
 void OnScreenDisplay::ShowLeaderboardStartEnd(const std::string &title, const std::string &description, bool started) {
 	g_OSD.Show(OSDType::LEADERBOARD_STARTED_FAILED, title, description, 3.0f);
-
 }
 
 void OnScreenDisplay::ShowLeaderboardSubmitted(const std::string &title, const std::string &value) {
-	g_OSD.Show(OSDType::MESSAGE_SUCCESS, title, value, 3.0f);
-}
-
-void OnScreenDisplay::ShowOnOff(const std::string &message, bool on, float duration_s) {
-	// TODO: translate "on" and "off"? Or just get rid of this whole thing?
-	Show(OSDType::MESSAGE_INFO, message + ": " + (on ? "on" : "off"), duration_s);
+	g_OSD.Show(OSDType::LEADERBOARD_SUBMITTED, title, value, 3.0f);
 }
 
 void OnScreenDisplay::SetProgressBar(std::string id, std::string &&message, float minValue, float maxValue, float progress, float delay) {

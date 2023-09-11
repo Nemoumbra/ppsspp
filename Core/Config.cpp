@@ -183,6 +183,7 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("DiscordPresence", &g_Config.bDiscordPresence, true, CfgFlag::DEFAULT),  // Or maybe it makes sense to have it per-game? Race conditions abound...
 	ConfigSetting("UISound", &g_Config.bUISound, false, CfgFlag::DEFAULT),
 
+	ConfigSetting("DisableHTTPS", &g_Config.bDisableHTTPS, false, CfgFlag::DONT_SAVE),
 	ConfigSetting("AutoLoadSaveState", &g_Config.iAutoLoadSaveState, 0, CfgFlag::PER_GAME),
 	ConfigSetting("EnableCheats", &g_Config.bEnableCheats, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("CwCheatRefreshRate", &g_Config.iCwCheatRefreshRate, 77, CfgFlag::PER_GAME),
@@ -803,6 +804,9 @@ static const ConfigSetting controlSettings[] = {
 
 	ConfigSetting("SystemControls", &g_Config.bSystemControls, true, CfgFlag::DEFAULT),
 	ConfigSetting("RapidFileInterval", &g_Config.iRapidFireInterval, 5, CfgFlag::DEFAULT),
+
+	ConfigSetting("AnalogGesture", &g_Config.bAnalogGesture, false, CfgFlag::PER_GAME),
+	ConfigSetting("AnalogGestureSensibility", &g_Config.fAnalogGestureSensibility, 1.0f, CfgFlag::PER_GAME),
 };
 
 static const ConfigSetting networkSettings[] = {
@@ -839,7 +843,7 @@ static const ConfigSetting systemParamSettings[] = {
 	ConfigSetting("ButtonPreference", &g_Config.iButtonPreference, PSP_SYSTEMPARAM_BUTTON_CROSS, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("LockParentalLevel", &g_Config.iLockParentalLevel, 0, CfgFlag::PER_GAME),
 	ConfigSetting("WlanAdhocChannel", &g_Config.iWlanAdhocChannel, PSP_SYSTEMPARAM_ADHOC_CHANNEL_AUTOMATIC, CfgFlag::PER_GAME),
-#if defined(USING_WIN_UI) || defined(USING_QT_UI) || PPSSPP_PLATFORM(ANDROID)
+#if defined(USING_WIN_UI) || defined(USING_QT_UI) || PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(SWITCH)
 	ConfigSetting("BypassOSKWithKeyboard", &g_Config.bBypassOSKWithKeyboard, false, CfgFlag::PER_GAME),
 #endif
 	ConfigSetting("WlanPowerSave", &g_Config.bWlanPowerSave, (bool) PSP_SYSTEMPARAM_WLAN_POWERSAVE_OFF, CfgFlag::PER_GAME),

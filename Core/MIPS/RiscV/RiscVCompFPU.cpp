@@ -115,7 +115,7 @@ void RiscVJitBackend::CompIR_FCondAssign(IRInst inst) {
 			MAX(SCRATCH1, SCRATCH1, SCRATCH2);
 		SetJumpTarget(skipSwapCompare);
 	} else {
-		RiscVReg isSrc1LowerReg = regs_.GetAndLockTempR();
+		RiscVReg isSrc1LowerReg = regs_.GetAndLockTempGPR();
 		SLT(isSrc1LowerReg, SCRATCH1, SCRATCH2);
 		// Flip the flag (to reverse the min/max) based on if both were negative.
 		XOR(isSrc1LowerReg, isSrc1LowerReg, R_RA);
@@ -233,30 +233,29 @@ void RiscVJitBackend::CompIR_FCvt(IRInst inst) {
 		break;
 
 	case IROp::FCvtScaledWS:
-		if (cpu_info.RiscV_D) {
-			Round rm = Round::NEAREST_EVEN;
-			switch (inst.src2 >> 6) {
-			case 0: rm = Round::NEAREST_EVEN; break;
-			case 1: rm = Round::TOZERO; break;
-			case 2: rm = Round::UP; break;
-			case 3: rm = Round::DOWN; break;
-			}
-
-			tempReg = regs_.MapWithFPRTemp(inst);
-			// Prepare the double src1 and the multiplier.
-			FCVT(FConv::D, FConv::S, regs_.F(inst.dest), regs_.F(inst.src1));
-			LI(SCRATCH1, 1UL << (inst.src2 & 0x1F));
-			FCVT(FConv::D, FConv::WU, tempReg, SCRATCH1, rm);
-
-			FMUL(64, regs_.F(inst.dest), regs_.F(inst.dest), tempReg, rm);
-			// NAN and clamping should all be correct.
-			FCVT(FConv::W, FConv::D, SCRATCH1, regs_.F(inst.dest), rm);
-			// TODO: Could combine with a transfer, often is one...
-			FMV(FMv::W, FMv::X, regs_.F(inst.dest), SCRATCH1);
-		} else {
-			CompIR_Generic(inst);
+	{
+		Round rm = Round::NEAREST_EVEN;
+		switch (inst.src2 >> 6) {
+		case 0: rm = Round::NEAREST_EVEN; break;
+		case 1: rm = Round::TOZERO; break;
+		case 2: rm = Round::UP; break;
+		case 3: rm = Round::DOWN; break;
+		default:
+			_assert_msg_(false, "Invalid rounding mode for FCvtScaledWS");
 		}
+
+		tempReg = regs_.MapWithFPRTemp(inst);
+		// Prepare the multiplier.
+		LI(SCRATCH1, 1UL << (inst.src2 & 0x1F));
+		FCVT(FConv::S, FConv::WU, tempReg, SCRATCH1, rm);
+
+		FMUL(32, regs_.F(inst.dest), regs_.F(inst.src1), tempReg, rm);
+		// NAN and clamping should all be correct.
+		FCVT(FConv::W, FConv::S, SCRATCH1, regs_.F(inst.dest), rm);
+		// TODO: Could combine with a transfer, often is one...
+		FMV(FMv::W, FMv::X, regs_.F(inst.dest), SCRATCH1);
 		break;
+	}
 
 	case IROp::FCvtScaledSW:
 		// TODO: This is probably proceeded by a GPR transfer, might be ideal to combine.
@@ -405,6 +404,9 @@ void RiscVJitBackend::CompIR_FCompare(IRInst inst) {
 			SEQZ(regs_.R(IRREG_FPCOND), regs_.R(IRREG_FPCOND));
 			regs_.MarkGPRDirty(IRREG_FPCOND, true);
 			break;
+
+		default:
+			_assert_msg_(false, "Unexpected IRFpCompareMode %d", inst.dest);
 		}
 		break;
 
@@ -439,17 +441,8 @@ void RiscVJitBackend::CompIR_FCompare(IRInst inst) {
 			break;
 		case VC_NE:
 			regs_.Map(inst);
-			// We could almost negate FEQ, except NAN != NAN.
-			// Anything != NAN is false and NAN != NAN is within that, so we only check one side.
-			FCLASS(32, SCRATCH2, regs_.F(inst.src2));
-			// NAN is 0x100 or 0x200.
-			ANDI(SCRATCH2, SCRATCH2, 0x300);
-			SNEZ(SCRATCH2, SCRATCH2);
-
 			FEQ(32, SCRATCH1, regs_.F(inst.src1), regs_.F(inst.src2));
 			SEQZ(SCRATCH1, SCRATCH1);
-			// Just OR in whether that side was a NAN so it's always not equal.
-			OR(SCRATCH1, SCRATCH1, SCRATCH2);
 			break;
 		case VC_LT:
 			regs_.Map(inst);
@@ -578,9 +571,10 @@ void RiscVJitBackend::CompIR_FSpecial(IRInst inst) {
 #error Currently hard float is required.
 #endif
 
-	auto callFuncF_F = [&](float (*func)(float)){
+	auto callFuncF_F = [&](float (*func)(float)) {
 		regs_.FlushBeforeCall();
 		// It might be in a non-volatile register.
+		// TODO: May have to handle a transfer if SIMD here.
 		if (regs_.IsFPRMapped(inst.src1)) {
 			FMV(32, F10, regs_.F(inst.src1));
 		} else {

@@ -55,8 +55,9 @@ struct FrameDataShared {
 	// For synchronous readbacks.
 	VkFence readbackFence = VK_NULL_HANDLE;
 	bool useMultiThreading;
+	bool measurePresentTime;
 
-	void Init(VulkanContext *vulkan, bool useMultiThreading);
+	void Init(VulkanContext *vulkan, bool useMultiThreading, bool measurePresentTime);
 	void Destroy(VulkanContext *vulkan);
 };
 
@@ -98,13 +99,13 @@ struct FrameData {
 
 	// Frames need unique IDs to wait for present on, let's keep them here.
 	// Also used for indexing into the frame timing history buffer.
-	uint64_t frameId;
+	uint64_t frameId = 0;
 
 	// Profiling.
 	QueueProfileContext profile{};
 
 	// Async readback cache.
-	DenseHashMap<ReadbackKey, CachedReadback*, nullptr> readbacks_;
+	DenseHashMap<ReadbackKey, CachedReadback *> readbacks_;
 
 	FrameData() : readbacks_(8) {}
 

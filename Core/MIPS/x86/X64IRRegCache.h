@@ -30,9 +30,12 @@ namespace X64IRJitConstants {
 #if PPSSPP_ARCH(AMD64)
 const Gen::X64Reg MEMBASEREG = Gen::RBX;
 const Gen::X64Reg CTXREG = Gen::R14;
+// Note: this is actually offset from the base.
 const Gen::X64Reg JITBASEREG = Gen::R15;
+const Gen::X64Reg DOWNCOUNTREG = Gen::R15;
 #else
 const Gen::X64Reg CTXREG = Gen::EBP;
+const Gen::X64Reg DOWNCOUNTREG = Gen::INVALID_REG;
 #endif
 const Gen::X64Reg SCRATCH1 = Gen::EAX;
 
@@ -40,10 +43,19 @@ static constexpr auto downcountOffset = offsetof(MIPSState, downcount) - 128;
 static constexpr auto tempOffset = offsetof(MIPSState, temp) - 128;
 static constexpr auto fcr31Offset = offsetof(MIPSState, fcr31) - 128;
 static constexpr auto pcOffset = offsetof(MIPSState, pc) - 128;
+static constexpr auto mxcsrTempOffset = offsetof(MIPSState, mxcsrTemp) - 128;
 
 enum class X64Map : uint8_t {
 	NONE = 0,
+	// On 32-bit: EAX, EBX, ECX, EDX
 	LOW_SUBREG = 0x10,
+	// EDX/RDX for DIV/MUL/similar.
+	HIGH_DATA = 0x20,
+	// ECX/RCX only, for shifts.
+	SHIFT = 0x30,
+	// XMM0 for BLENDVPS, funcs.
+	XMM0 = 0x40,
+	MASK = 0xF0,
 };
 static inline MIPSMap operator |(const MIPSMap &lhs, const X64Map &rhs) {
 	return MIPSMap((uint8_t)lhs | (uint8_t)rhs);
@@ -67,19 +79,24 @@ public:
 	void Init(Gen::XEmitter *emitter);
 
 	// May fail and return INVALID_REG if it needs flushing.
-	Gen::X64Reg TryMapTempImm(IRReg, X64IRJitConstants::X64Map flags = X64IRJitConstants::X64Map::NONE);
+	Gen::X64Reg TryMapTempImm(IRReg reg, X64IRJitConstants::X64Map flags = X64IRJitConstants::X64Map::NONE);
 
-	// Returns an RV register containing the requested MIPS register.
+	// Returns an X64 register containing the requested MIPS register.
 	Gen::X64Reg MapGPR(IRReg reg, MIPSMap mapFlags = MIPSMap::INIT);
+	Gen::X64Reg MapGPR2(IRReg reg, MIPSMap mapFlags = MIPSMap::INIT);
 	Gen::X64Reg MapGPRAsPointer(IRReg reg);
 	Gen::X64Reg MapFPR(IRReg reg, MIPSMap mapFlags = MIPSMap::INIT);
 	Gen::X64Reg MapVec4(IRReg first, MIPSMap mapFlags = MIPSMap::INIT);
 
-	Gen::X64Reg MapWithFPRTemp(IRInst &inst);
+	Gen::X64Reg MapWithFPRTemp(const IRInst &inst);
+
+	void MapWithFlags(IRInst inst, X64IRJitConstants::X64Map destFlags, X64IRJitConstants::X64Map src1Flags = X64IRJitConstants::X64Map::NONE, X64IRJitConstants::X64Map src2Flags = X64IRJitConstants::X64Map::NONE);
 
 	void FlushBeforeCall();
 
-	Gen::X64Reg GetAndLockTempR();
+	Gen::X64Reg GetAndLockTempGPR();
+	Gen::X64Reg GetAndLockTempFPR();
+	void ReserveAndLockXGPR(Gen::X64Reg r);
 
 	Gen::OpArg R(IRReg preg);
 	Gen::OpArg RPtr(IRReg preg);
