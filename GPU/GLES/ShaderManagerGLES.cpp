@@ -76,6 +76,7 @@ LinkedShader::LinkedShader(GLRenderManager *render, VShaderID VSID, Shader *vs, 
 		: render_(render), useHWTransform_(useHWTransform) {
 	PROFILE_THIS_SCOPE("shaderlink");
 
+	_assert_(render);
 	_assert_(vs);
 	_assert_(fs);
 
@@ -715,7 +716,7 @@ void ShaderManagerGLES::Clear() {
 	linkedShaderCache_.clear();
 	fsCache_.Clear();
 	vsCache_.Clear();
-	DirtyShader();
+	DirtyLastShader();
 }
 
 void ShaderManagerGLES::ClearShaders() {
@@ -734,20 +735,18 @@ void ShaderManagerGLES::DeviceRestore(Draw::DrawContext *draw) {
 	draw_ = draw;
 }
 
-void ShaderManagerGLES::DirtyShader() {
+void ShaderManagerGLES::DirtyLastShader() {
 	// Forget the last shader ID
 	lastFSID_.set_invalid();
 	lastVSID_.set_invalid();
-	DirtyLastShader();
 	gstate_c.Dirty(DIRTY_ALL_UNIFORMS | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE);
 	shaderSwitchDirtyUniforms_ = 0;
-}
-
-void ShaderManagerGLES::DirtyLastShader() {
 	lastShader_ = nullptr;
 	lastVShaderSame_ = false;
 }
 
+// Can only fail by failing to generate the code (bad FSID).
+// Any actual failures driver-side happens later in the render manager.
 Shader *ShaderManagerGLES::CompileFragmentShader(FShaderID FSID) {
 	uint64_t uniformMask;
 	std::string errorString;
@@ -762,6 +761,8 @@ Shader *ShaderManagerGLES::CompileFragmentShader(FShaderID FSID) {
 	return new Shader(render_, codeBuffer_, desc, params);
 }
 
+// Can only fail by failing to generate the code (bad VSID).
+// Any actual failures driver-side happens later in the render manager.
 Shader *ShaderManagerGLES::CompileVertexShader(VShaderID VSID) {
 	bool useHWTransform = VSID.Bit(VS_BIT_USE_HW_TRANSFORM);
 	uint32_t attrMask;
@@ -802,13 +803,12 @@ Shader *ShaderManagerGLES::ApplyVertexShader(bool useHWTransform, bool useHWTess
 
 	// Vertex shader not in cache. Let's compile it.
 	vs = CompileVertexShader(*VSID);
-	if (!vs || vs->Failed()) {
+	if (!vs) {
 		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 		ERROR_LOG(G3D, "Vertex shader generation failed, falling back to software transform");
 		if (!g_Config.bHideSlowWarnings) {
 			g_OSD.Show(OSDType::MESSAGE_ERROR, gr->T("hardware transform error - falling back to software"), 2.5f);
 		}
-		delete vs;
 
 		// TODO: Look for existing shader with the appropriate ID, use that instead of generating a new one - however, need to make sure
 		// that that shader ID is not used when computing the linked shader ID below, because then IDs won't match
@@ -821,7 +821,6 @@ Shader *ShaderManagerGLES::ApplyVertexShader(bool useHWTransform, bool useHWTess
 	}
 
 	vsCache_.Insert(*VSID, vs);
-	diskCacheDirty_ = true;
 	return vs;
 }
 
@@ -860,7 +859,6 @@ LinkedShader *ShaderManagerGLES::ApplyFragmentShader(VShaderID VSID, Shader *vs,
 			// Still insert it so we don't end up spamming generation.
 		}
 		fsCache_.Insert(FSID, fs);
-		diskCacheDirty_ = true;
 	}
 
 	// Okay, we have both shaders. Let's see if there's a linked one.
@@ -983,7 +981,7 @@ enum class CacheDetectFlags {
 };
 
 #define CACHE_HEADER_MAGIC 0x83277592
-#define CACHE_VERSION 32
+#define CACHE_VERSION 33
 
 struct CacheHeader {
 	uint32_t magic;
@@ -1012,6 +1010,31 @@ bool ShaderManagerGLES::LoadCacheFlags(File::IOFile &f, DrawEngineGLES *drawEngi
 }
 
 bool ShaderManagerGLES::LoadCache(File::IOFile &f) {
+	// TODO: Get rid of this struct.
+	struct {
+		std::vector<VShaderID> vert;
+		std::vector<FShaderID> frag;
+		std::vector<std::pair<VShaderID, FShaderID>> link;
+
+		size_t vertPos = 0;
+		size_t fragPos = 0;
+		size_t linkPos = 0;
+		double start;
+
+		void Clear() {
+			vert.clear();
+			frag.clear();
+			link.clear();
+			vertPos = 0;
+			fragPos = 0;
+			linkPos = 0;
+		}
+
+		bool Done() {
+			return vertPos >= vert.size() && fragPos >= frag.size() && linkPos >= link.size();
+		}
+	} diskCachePending_;
+
 	u64 sz = f.GetSize();
 	f.Seek(0, SEEK_SET);
 	CacheHeader header;
@@ -1066,12 +1089,6 @@ bool ShaderManagerGLES::LoadCache(File::IOFile &f) {
 		diskCachePending_.link.emplace_back(vsid, fsid);
 	}
 
-	// Actual compilation happens in ContinuePrecompile(), called by GPU_GLES's IsReady.
-	diskCacheDirty_ = false;
-	return true;
-}
-
-bool ShaderManagerGLES::ContinuePrecompile(float sliceTime) {
 	auto &pending = diskCachePending_;
 	if (pending.Done()) {
 		return true;
@@ -1080,15 +1097,8 @@ bool ShaderManagerGLES::ContinuePrecompile(float sliceTime) {
 	PSP_SetLoading("Compiling shaders...");
 
 	double start = time_now_d();
-	// Let's try to keep it under sliceTime if possible.
-	double end = start + sliceTime;
 
 	for (size_t &i = pending.vertPos; i < pending.vert.size(); i++) {
-		if (time_now_d() >= end) {
-			// We'll finish later.
-			return false;
-		}
-
 		const VShaderID &id = pending.vert[i];
 		if (!vsCache_.ContainsKey(id)) {
 			if (id.Bit(VS_BIT_IS_THROUGH) && id.Bit(VS_BIT_USE_HW_TRANSFORM)) {
@@ -1099,7 +1109,7 @@ bool ShaderManagerGLES::ContinuePrecompile(float sliceTime) {
 			}
 
 			Shader *vs = CompileVertexShader(id);
-			if (!vs || vs->Failed()) {
+			if (!vs) {
 				// Give up on using the cache, just bail. We can't safely create the fallback shaders here
 				// without trying to deduce the vertType from the VSID.
 				ERROR_LOG(G3D, "Failed to compile a vertex shader loading from cache. Skipping rest of shader cache.");
@@ -1114,25 +1124,24 @@ bool ShaderManagerGLES::ContinuePrecompile(float sliceTime) {
 	}
 
 	for (size_t &i = pending.fragPos; i < pending.frag.size(); i++) {
-		if (time_now_d() >= end) {
-			// We'll finish later.
-			return false;
-		}
-
 		const FShaderID &id = pending.frag[i];
 		if (!fsCache_.ContainsKey(id)) {
-			fsCache_.Insert(id, CompileFragmentShader(id));
+			Shader *fs = CompileFragmentShader(id);
+			if (!fs) {
+				// Give up on using the cache - something went wrong.
+				// We'll still keep the shaders we generated so far around.
+				ERROR_LOG(G3D, "Failed to compile a fragment shader loading from cache. Skipping rest of shader cache.");
+				delete fs;
+				pending.Clear();
+				return false;
+			}
+			fsCache_.Insert(id, fs);
 		} else {
 			WARN_LOG(G3D, "Duplicate fragment shader found in GL shader cache, ignoring");
 		}
 	}
 
 	for (size_t &i = pending.linkPos; i < pending.link.size(); i++) {
-		if (time_now_d() >= end) {
-			// We'll finish later.
-			return false;
-		}
-
 		const VShaderID &vsid = pending.link[i].first;
 		const FShaderID &fsid = pending.link[i].second;
 		Shader *vs = nullptr;
@@ -1155,14 +1164,7 @@ bool ShaderManagerGLES::ContinuePrecompile(float sliceTime) {
 	return true;
 }
 
-void ShaderManagerGLES::CancelPrecompile() {
-	diskCachePending_.Clear();
-}
-
 void ShaderManagerGLES::SaveCache(const Path &filename, DrawEngineGLES *drawEngine) {
-	if (!diskCacheDirty_) {
-		return;
-	}
 	if (linkedShaderCache_.empty()) {
 		return;
 	}
@@ -1170,7 +1172,6 @@ void ShaderManagerGLES::SaveCache(const Path &filename, DrawEngineGLES *drawEngi
 	FILE *f = File::OpenCFile(filename, "wb");
 	if (!f) {
 		// Can't save, give up for now.
-		diskCacheDirty_ = false;
 		return;
 	}
 	CacheHeader header;
@@ -1204,5 +1205,4 @@ void ShaderManagerGLES::SaveCache(const Path &filename, DrawEngineGLES *drawEngi
 		fwrite(&fsid, 1, sizeof(fsid), f);
 	}
 	fclose(f);
-	diskCacheDirty_ = false;
 }

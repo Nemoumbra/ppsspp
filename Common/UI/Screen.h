@@ -21,6 +21,7 @@
 
 #include "Common/Common.h"
 #include "Common/Input/InputState.h"
+#include "Common/System/System.h"
 
 namespace UI {
 	class View;
@@ -55,7 +56,7 @@ public:
 	virtual void postRender() {}
 	virtual void resized() {}
 	virtual void dialogFinished(const Screen *dialog, DialogResult result) {}
-	virtual void sendMessage(const char *msg, const char *value) {}
+	virtual void sendMessage(UIMessage message, const char *value) {}
 	virtual void deviceLost() {}
 	virtual void deviceRestored() {}
 
@@ -63,7 +64,7 @@ public:
 	virtual bool UnsyncTouch(const TouchInput &touch) = 0;
 	// Return value of UnsyncKey is used to not block certain system keys like volume when unhandled, on Android.
 	virtual bool UnsyncKey(const KeyInput &touch) = 0;
-	virtual void UnsyncAxis(const AxisInput &touch) = 0;
+	virtual void UnsyncAxis(const AxisInput *axes, size_t count) = 0;
 
 	virtual void RecreateViews() {}
 
@@ -135,10 +136,10 @@ public:
 	// Instant touch, separate from the update() mechanism.
 	void touch(const TouchInput &touch);
 	bool key(const KeyInput &key);
-	void axis(const AxisInput &touch);
+	void axis(const AxisInput *axes, size_t count);
 
 	// Generic facility for gross hacks :P
-	void sendMessage(const char *msg, const char *value);
+	void sendMessage(UIMessage message, const char *value);
 
 	Screen *topScreen() const;
 

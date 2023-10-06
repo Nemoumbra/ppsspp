@@ -173,7 +173,7 @@ bool VulkanQueueRunner::InitDepthStencilBuffer(VkCommandBuffer cmd) {
 	image_info.queueFamilyIndexCount = 0;
 	image_info.pQueueFamilyIndices = nullptr;
 	image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
 	image_info.flags = 0;
 
 	depth_.format = depth_format;
@@ -414,7 +414,7 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, FrameData &frame
 
 		if (profile && profile->timestampsEnabled && profile->timestampDescriptions.size() + 1 < MAX_TIMESTAMP_QUERIES) {
 			vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile->queryPool, (uint32_t)profile->timestampDescriptions.size());
-			profile->timestampDescriptions.push_back(StepToString(step));
+			profile->timestampDescriptions.push_back(StepToString(vulkan_, step));
 		}
 
 		if (emitLabels) {
@@ -674,36 +674,16 @@ const char *AspectToString(VkImageAspectFlags aspect) {
 	}
 }
 
-static const char *rpTypeDebugNames[] = {
-	"RENDER",
-	"RENDER_DEPTH",
-	"RENDER_INPUT",
-	"RENDER_DEPTH_INPUT",
-	"MV_RENDER",
-	"MV_RENDER_DEPTH",
-	"MV_RENDER_INPUT",
-	"MV_RENDER_DEPTH_INPUT",
-	"MS_RENDER",
-	"MS_RENDER_DEPTH",
-	"MS_RENDER_INPUT",
-	"MS_RENDER_DEPTH_INPUT",
-	"MS_MV_RENDER",
-	"MS_MV_RENDER_DEPTH",
-	"MS_MV_RENDER_INPUT",
-	"MS_MV_RENDER_DEPTH_INPUT",
-	"BACKBUF",
-};
-
-std::string VulkanQueueRunner::StepToString(const VKRStep &step) const {
+std::string VulkanQueueRunner::StepToString(VulkanContext *vulkan, const VKRStep &step) {
 	char buffer[256];
 	switch (step.stepType) {
 	case VKRStepType::RENDER:
 	{
-		int w = step.render.framebuffer ? step.render.framebuffer->width : vulkan_->GetBackbufferWidth();
-		int h = step.render.framebuffer ? step.render.framebuffer->height : vulkan_->GetBackbufferHeight();
+		int w = step.render.framebuffer ? step.render.framebuffer->width : vulkan->GetBackbufferWidth();
+		int h = step.render.framebuffer ? step.render.framebuffer->height : vulkan->GetBackbufferHeight();
 		int actual_w = step.render.renderArea.extent.width;
 		int actual_h = step.render.renderArea.extent.height;
-		const char *renderCmd = rpTypeDebugNames[(size_t)step.render.renderPassType];
+		const char *renderCmd = GetRPTypeName(step.render.renderPassType);
 		snprintf(buffer, sizeof(buffer), "%s %s %s (draws: %d, %dx%d/%dx%d)", renderCmd, step.tag, step.render.framebuffer ? step.render.framebuffer->Tag() : "", step.render.numDraws, actual_w, actual_h, w, h);
 		break;
 	}
@@ -938,19 +918,19 @@ void VulkanQueueRunner::LogRenderPass(const VKRStep &pass, bool verbose) {
 }
 
 void VulkanQueueRunner::LogCopy(const VKRStep &step) {
-	INFO_LOG(G3D, "%s", StepToString(step).c_str());
+	INFO_LOG(G3D, "%s", StepToString(vulkan_, step).c_str());
 }
 
 void VulkanQueueRunner::LogBlit(const VKRStep &step) {
-	INFO_LOG(G3D, "%s", StepToString(step).c_str());
+	INFO_LOG(G3D, "%s", StepToString(vulkan_, step).c_str());
 }
 
 void VulkanQueueRunner::LogReadback(const VKRStep &step) {
-	INFO_LOG(G3D, "%s", StepToString(step).c_str());
+	INFO_LOG(G3D, "%s", StepToString(vulkan_, step).c_str());
 }
 
 void VulkanQueueRunner::LogReadbackImage(const VKRStep &step) {
-	INFO_LOG(G3D, "%s", StepToString(step).c_str());
+	INFO_LOG(G3D, "%s", StepToString(vulkan_, step).c_str());
 }
 
 void TransitionToOptimal(VkCommandBuffer cmd, VkImage colorImage, VkImageLayout colorLayout, VkImage depthStencilImage, VkImageLayout depthStencilLayout, int numLayers, VulkanBarrier *recordBarrier) {

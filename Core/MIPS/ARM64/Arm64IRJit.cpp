@@ -76,6 +76,8 @@ bool Arm64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 		SetBlockCheckedOffset(block_num, (int)GetOffset(GetCodePointer()));
 		wroteCheckedOffset = true;
 
+		WriteDebugPC(startPC);
+
 		// Check the sign bit to check if negative.
 		FixupBranch normalEntry = TBZ(DOWNCOUNTREG, 31);
 		MOVI2R(SCRATCH1, startPC);
@@ -87,15 +89,15 @@ bool Arm64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	const u8 *blockStart = GetCodePointer();
 	block->SetTargetOffset((int)GetOffset(blockStart));
 	compilingBlockNum_ = block_num;
+	lastConstPC_ = 0;
 
 	regs_.Start(block);
 
-	std::map<const u8 *, int> addresses;
+	std::vector<const u8 *> addresses;
 	for (int i = 0; i < block->GetNumInstructions(); ++i) {
 		const IRInst &inst = block->GetInstructions()[i];
 		regs_.SetIRIndex(i);
-		// TODO: This might be a little wasteful when compiling if we're not debugging jit...
-		addresses[GetCodePtr()] = i;
+		addresses.push_back(GetCodePtr());
 
 		CompileIRInst(inst);
 
@@ -128,6 +130,8 @@ bool Arm64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	}
 
 	if (jo.enableBlocklink && jo.useBackJump) {
+		WriteDebugPC(startPC);
+
 		// Small blocks are common, check if it's < 32KB long.
 		ptrdiff_t distance = blockStart - GetCodePointer();
 		if (distance >= -0x8000 && distance < 0x8000) {
@@ -145,10 +149,14 @@ bool Arm64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	if (logBlocks_ > 0) {
 		--logBlocks_;
 
+		std::map<const u8 *, int> addressesLookup;
+		for (int i = 0; i < (int)addresses.size(); ++i)
+			addressesLookup[addresses[i]] = i;
+
 		INFO_LOG(JIT, "=============== ARM64 (%08x, %d bytes) ===============", startPC, len);
 		for (const u8 *p = blockStart; p < GetCodePointer(); ) {
-			auto it = addresses.find(p);
-			if (it != addresses.end()) {
+			auto it = addressesLookup.find(p);
+			if (it != addressesLookup.end()) {
 				const IRInst &inst = block->GetInstructions()[it->second];
 
 				char temp[512];
@@ -157,7 +165,7 @@ bool Arm64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 			}
 
 			auto next = std::next(it);
-			const u8 *nextp = next == addresses.end() ? GetCodePointer() : next->first;
+			const u8 *nextp = next == addressesLookup.end() ? GetCodePointer() : next->first;
 
 			auto lines = DisassembleArm64(p, (int)(nextp - p));
 			for (const auto &line : lines)
@@ -228,8 +236,10 @@ void Arm64JitBackend::CompIR_Generic(IRInst inst) {
 
 	FlushAll();
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::IR_INTERPRET);
 	MOVI2R(X0, value);
 	QuickCallFunction(SCRATCH2_64, &DoIRInst);
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 
 	// We only need to check the return value if it's a potential exit.
@@ -255,12 +265,14 @@ void Arm64JitBackend::CompIR_Interpret(IRInst inst) {
 	// IR protects us against this being a branching instruction (well, hopefully.)
 	FlushAll();
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::INTERPRET);
 	if (DebugStatsEnabled()) {
 		MOVP2R(X0, MIPSGetName(op));
 		QuickCallFunction(SCRATCH2_64, &NotifyMIPSInterpret);
 	}
 	MOVI2R(X0, inst.constant);
 	QuickCallFunction(SCRATCH2_64, MIPSGetInterpretFunc(op));
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 }
 
@@ -351,6 +363,32 @@ void Arm64JitBackend::MovFromPC(ARM64Reg r) {
 
 void Arm64JitBackend::MovToPC(ARM64Reg r) {
 	STR(INDEX_UNSIGNED, r, CTXREG, offsetof(MIPSState, pc));
+}
+
+void Arm64JitBackend::WriteDebugPC(uint32_t pc) {
+	if (hooks_.profilerPC) {
+		int offset = (int)((const u8 *)hooks_.profilerPC - GetBasePtr());
+		MOVI2R(SCRATCH2, MIPS_EMUHACK_OPCODE + offset);
+		MOVI2R(SCRATCH1, pc);
+		STR(SCRATCH1, JITBASEREG, SCRATCH2);
+	}
+}
+
+void Arm64JitBackend::WriteDebugPC(ARM64Reg r) {
+	if (hooks_.profilerPC) {
+		int offset = (int)((const u8 *)hooks_.profilerPC - GetBasePtr());
+		MOVI2R(SCRATCH2, MIPS_EMUHACK_OPCODE + offset);
+		STR(r, JITBASEREG, SCRATCH2);
+	}
+}
+
+void Arm64JitBackend::WriteDebugProfilerStatus(IRProfilerStatus status) {
+	if (hooks_.profilerPC) {
+		int offset = (int)((const u8 *)hooks_.profilerStatus - GetBasePtr());
+		MOVI2R(SCRATCH2, MIPS_EMUHACK_OPCODE + offset);
+		MOVI2R(SCRATCH1, (int)status);
+		STR(SCRATCH1, JITBASEREG, SCRATCH2);
+	}
 }
 
 void Arm64JitBackend::SaveStaticRegisters() {

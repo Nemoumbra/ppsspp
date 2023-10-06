@@ -117,27 +117,11 @@ bool ScreenManager::key(const KeyInput &key) {
 	return result;
 }
 
-void ScreenManager::axis(const AxisInput &axis) {
+void ScreenManager::axis(const AxisInput *axes, size_t count) {
 	std::lock_guard<std::recursive_mutex> guard(inputLock_);
-
-	// Ignore duplicate values to prevent axis values overwriting each other.
-	uint64_t key = ((uint64_t)axis.axisId << 32) | axis.deviceId;
-	// Center value far from zero just to ensure we send the first zero.
-	// PSP games can't see higher resolution than this.
-	int value = 128 + ceilf(axis.value * 127.5f + 127.5f);
-	if (lastAxis_[key] == value) {
+	if (stack_.empty())
 		return;
-	}
-	lastAxis_[key] = value;
-
-	// Send center axis to every screen layer.
-	if (axis.value == 0) {
-		for (auto &layer : stack_) {
-			layer.screen->UnsyncAxis(axis);
-		}
-	} else if (!stack_.empty()) {
-		stack_.back().screen->UnsyncAxis(axis);
-	}
+	stack_.back().screen->UnsyncAxis(axes, count);
 }
 
 void ScreenManager::deviceLost() {
@@ -226,10 +210,10 @@ void ScreenManager::getFocusPosition(float &x, float &y, float &z) {
 	z = stack_.size();
 }
 
-void ScreenManager::sendMessage(const char *msg, const char *value) {
-	if (!strcmp(msg, "recreateviews"))
+void ScreenManager::sendMessage(UIMessage message, const char *value) {
+	if (message == UIMessage::RECREATE_VIEWS) {
 		RecreateAllViews();
-	if (!strcmp(msg, "lost_focus")) {
+	} else if (message == UIMessage::LOST_FOCUS) {
 		TouchInput input{};
 		input.x = -50000.0f;
 		input.y = -50000.0f;
@@ -238,8 +222,9 @@ void ScreenManager::sendMessage(const char *msg, const char *value) {
 		input.id = 0;
 		touch(input);
 	}
+
 	if (!stack_.empty())
-		stack_.back().screen->sendMessage(msg, value);
+		stack_.back().screen->sendMessage(message, value);
 }
 
 Screen *ScreenManager::topScreen() const {

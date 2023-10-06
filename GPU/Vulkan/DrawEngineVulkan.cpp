@@ -99,8 +99,8 @@ void DrawEngineVulkan::InitDeviceObjects() {
 	bindings[3].descriptorCount = 1;
 	bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	bindings[3].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-	if (gstate_c.Use(GPU_USE_GS_CULLING))
-		bindings[3].stageFlags |= VK_SHADER_STAGE_GEOMETRY_BIT;
+	if (draw_->GetDeviceCaps().geometryShaderSupported)
+		bindings[3].stageFlags |= VK_SHADER_STAGE_GEOMETRY_BIT;  // unlikely to have a penalty. if we check GPU_USE_GS_CULLING, we have problems on runtime toggle.
 	bindings[3].binding = DRAW_BINDING_DYNUBO_BASE;
 	bindings[4].descriptorCount = 1;
 	bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -566,10 +566,11 @@ bool DrawEngineVulkan::VertexCacheLookup(int &vertexCount, GEPrimitiveType &prim
 		vai->minihash = ComputeMiniHash();
 		vai->status = VertexArrayInfoVulkan::VAI_HASHING;
 		vai->drawsUntilNextFullHash = 0;
-		DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);  // writes to indexGen
+		DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
+		DecodeInds();
 		vai->numVerts = indexGen.VertexCount();
 		vai->prim = indexGen.Prim();
-		vai->maxIndex = indexGen.MaxIndex();
+		vai->maxIndex = MaxIndex();
 		vai->flags = gstate_c.vertexFullAlpha ? VAIVULKAN_FLAG_VERTEXFULLALPHA : 0;
 		return true;
 	}
@@ -593,6 +594,7 @@ bool DrawEngineVulkan::VertexCacheLookup(int &vertexCount, GEPrimitiveType &prim
 			if (newMiniHash != vai->minihash || newHash != vai->hash) {
 				MarkUnreliable(vai);
 				DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
+				DecodeInds();
 				return true;
 			}
 			if (vai->numVerts > 64) {
@@ -612,6 +614,7 @@ bool DrawEngineVulkan::VertexCacheLookup(int &vertexCount, GEPrimitiveType &prim
 			if (newMiniHash != vai->minihash) {
 				MarkUnreliable(vai);
 				DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
+				DecodeInds();
 				return true;
 			}
 		}
@@ -619,9 +622,10 @@ bool DrawEngineVulkan::VertexCacheLookup(int &vertexCount, GEPrimitiveType &prim
 		if (!vai->vb) {
 			// Directly push to the vertex cache.
 			DecodeVertsToPushBuffer(vertexCache_, &vai->vbOffset, &vai->vb);
+			DecodeInds();
 			_dbg_assert_msg_(gstate_c.vertBounds.minV >= gstate_c.vertBounds.maxV, "Should not have checked UVs when caching.");
 			vai->numVerts = indexGen.VertexCount();
-			vai->maxIndex = indexGen.MaxIndex();
+			vai->maxIndex = MaxIndex();
 			vai->flags = gstate_c.vertexFullAlpha ? VAIVULKAN_FLAG_VERTEXFULLALPHA : 0;
 			if (forceIndexed) {
 				vai->prim = indexGen.GeneralPrim();
@@ -684,6 +688,7 @@ bool DrawEngineVulkan::VertexCacheLookup(int &vertexCount, GEPrimitiveType &prim
 			vai->numFrames++;
 		}
 		DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
+		DecodeInds();
 		return true;
 	}
 	default:
@@ -748,6 +753,7 @@ void DrawEngineVulkan::DoFlush() {
 				// Decode directly into the pushbuffer
 				DecodeVertsToPushPool(pushVertex_, &vbOffset, &vbuf);
 			}
+			DecodeInds();
 			gpuStats.numUncachedVertsDrawn += indexGen.VertexCount();
 		}
 
@@ -791,20 +797,20 @@ void DrawEngineVulkan::DoFlush() {
 			VulkanGeometryShader *gshader = nullptr;
 
 			shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, &gshader, pipelineState_, true, useHWTessellation_, decOptions_.expandAllWeightsToFloat, decOptions_.applySkinInDecode);
-			if (!vshader) {
-				// We're screwed.
-				return;
-			}
 			_dbg_assert_msg_(vshader->UseHWTransform(), "Bad vshader");
-
 			VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, true, 0, framebufferManager_->GetMSAALevel(), false);
 			if (!pipeline || !pipeline->pipeline) {
 				// Already logged, let's bail out.
+				ResetAfterDraw();
 				return;
 			}
 			BindShaderBlendTex();  // This might cause copies so important to do before BindPipeline.
 
-			renderManager->BindPipeline(pipeline->pipeline, pipeline->pipelineFlags, pipelineLayout_);
+			if (!renderManager->BindPipeline(pipeline->pipeline, pipeline->pipelineFlags, pipelineLayout_)) {
+				renderManager->ReportBadStateForDraw();
+				ResetAfterDraw();
+				return;
+			}
 			if (pipeline != lastPipeline_) {
 				if (lastPipeline_ && !(lastPipeline_->UsesBlendConstant() && pipeline->UsesBlendConstant())) {
 					gstate_c.Dirty(DIRTY_BLEND_STATE);
@@ -845,6 +851,7 @@ void DrawEngineVulkan::DoFlush() {
 			dec_ = GetVertexDecoder(lastVType_);
 		}
 		DecodeVerts(decoded_);
+		DecodeInds();
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && (hasColor || gstate.getMaterialAmbientA() == 255);
@@ -857,6 +864,7 @@ void DrawEngineVulkan::DoFlush() {
 		// Undo the strip optimization, not supported by the SW code yet.
 		if (prim == GE_PRIM_TRIANGLE_STRIP)
 			prim = GE_PRIM_TRIANGLES;
+		_dbg_assert_(prim != GE_PRIM_INVALID);
 
 		u16 *inds = decIndex_;
 		SoftwareTransformResult result{};
@@ -886,7 +894,7 @@ void DrawEngineVulkan::DoFlush() {
 			UpdateCachedViewportState(vpAndScissor);
 		}
 
-		int maxIndex = indexGen.MaxIndex();
+		int maxIndex = MaxIndex();
 		SoftwareTransform swTransform(params);
 
 		const Lin::Vec3 trans(gstate_c.vpXOffset, gstate_c.vpYOffset, gstate_c.vpZOffset * 0.5f + 0.5f);
@@ -931,15 +939,16 @@ void DrawEngineVulkan::DoFlush() {
 				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, false, 0, framebufferManager_->GetMSAALevel(), false);
 				if (!pipeline || !pipeline->pipeline) {
 					// Already logged, let's bail out.
-					decodedVerts_ = 0;
-					numDrawCalls_ = 0;
-					decodeCounter_ = 0;
-					decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
+					ResetAfterDraw();
 					return;
 				}
 				BindShaderBlendTex();  // This might cause copies so super important to do before BindPipeline.
 
-				renderManager->BindPipeline(pipeline->pipeline, pipeline->pipelineFlags, pipelineLayout_);
+				if (!renderManager->BindPipeline(pipeline->pipeline, pipeline->pipelineFlags, pipelineLayout_)) {
+					renderManager->ReportBadStateForDraw();
+					ResetAfterDraw();
+					return;
+				}
 				if (pipeline != lastPipeline_) {
 					if (lastPipeline_ && !lastPipeline_->UsesBlendConstant() && pipeline->UsesBlendConstant()) {
 						gstate_c.Dirty(DIRTY_BLEND_STATE);
@@ -1005,25 +1014,23 @@ void DrawEngineVulkan::DoFlush() {
 		decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	}
 
-	gpuStats.numFlushes++;
-	gpuStats.numDrawCalls += numDrawCalls_;
-	gpuStats.numVertsSubmitted += vertexCountInDrawCalls_;
+	ResetAfterDrawInline();
 
-	indexGen.Reset();
-	decodedVerts_ = 0;
-	numDrawCalls_ = 0;
-	vertexCountInDrawCalls_ = 0;
-	decodeCounter_ = 0;
-	gstate_c.vertexFullAlpha = true;
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
 
-	// Now seems as good a time as any to reset the min/max coords, which we may examine later.
-	gstate_c.vertBounds.minU = 512;
-	gstate_c.vertBounds.minV = 512;
-	gstate_c.vertBounds.maxU = 0;
-	gstate_c.vertBounds.maxV = 0;
-
 	GPUDebug::NotifyDraw();
+}
+
+void DrawEngineVulkan::ResetAfterDraw() {
+	indexGen.Reset();
+	decodedVerts_ = 0;
+	numDrawVerts_ = 0;
+	numDrawInds_ = 0;
+	vertexCountInDrawCalls_ = 0;
+	decodeIndsCounter_ = 0;
+	decodeVertsCounter_ = 0;
+	decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
+	gstate_c.vertexFullAlpha = true;
 }
 
 void DrawEngineVulkan::UpdateUBOs(FrameData *frame) {

@@ -149,7 +149,7 @@ option(USING_EGL "Set to ON if target environment uses EGL" ${USING_EGL})
 option(USING_FBDEV "Set to ON if target environment uses fbdev (eg. Pandora)" ${USING_FBDEV})
 option(USING_GLES2 "Set to ON if target device uses OpenGL ES 2.0" ${USING_GLES2})
 option(USING_X11_VULKAN "Set to OFF if target environment doesn't use X11 for Vulkan" ON)
-option(USE_WAYLAND_WSI "Enable or disable Wayland WSI support for Vulkan" ${USE_WAYLAND_WSI})
+option(USE_WAYLAND_WSI "Enable or disable Wayland WSI support for Vulkan" ON)
 option(USE_VULKAN_DISPLAY_KHR "Enable or disable full screen display of Vulkan" ${USE_VULKAN_DISPLAY_KHR})
 # :: Frontends
 option(USING_QT_UI "Set to ON if you wish to use the Qt frontend wrapper" ${USING_QT_UI})
@@ -188,10 +188,9 @@ if(UNIX AND NOT (APPLE OR ANDROID) AND VULKAN)
 	find_package(Wayland)
 	if(NOT WAYLAND_FOUND)
 		message(STATUS "Could not find Wayland libraries, disabling Wayland WSI support for Vulkan.")
-	else()
+	elseif(USE_WAYLAND_WSI)
 		include_directories(${WAYLAND_INCLUDE_DIR})
 		add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
-		add_definitions(-DUSE_WAYLAND_WSI=ON)
 	endif()
 
 	if(USE_VULKAN_DISPLAY_KHR)
@@ -262,6 +261,14 @@ if(NOT LIBRETRO AND NOT IOS AND NOT MACOSX)
 	find_package(SDL2)
 	find_package(SDL2_ttf)
 	find_package(Fontconfig)
+
+	# TODO: this can be removed once CI supports newer SDL2_ttf
+	if (NOT SDL2_ttf_FOUND)
+		find_package(PkgConfig)
+		if(PkgConfig_FOUND)
+			pkg_check_modules(SDL2_ttf_PKGCONFIG IMPORTED_TARGET SDL2_ttf)
+		endif()
+	endif()
 endif()
 
 if(MACOSX AND NOT IOS)
@@ -398,6 +405,8 @@ if(NOT MSVC)
 	if(${CMAKE_C_COMPILER_ID} STREQUAL "Intel")
 		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -parallel -fopenmp")
 	endif()
+
+	add_definitions(-fno-math-errno)
 
 	if(X86 OR X86_64)
 		# enable sse2 code generation
@@ -1334,14 +1343,21 @@ else()
 			SDL/SDLVulkanGraphicsContext.cpp
 		)
 	endif()
-	if(SDL2_ttf_FOUND)
+	if(SDL2_ttf_FOUND OR
+		(SDL2_ttf_PKGCONFIG_FOUND AND
+		 SDL2_ttf_PKGCONFIG_VERSION VERSION_GREATER_EQUAL "2.0.18"))
 		add_definitions(-DUSE_SDL2_TTF)
-		set(nativeExtraLibs ${nativeExtraLibs} SDL2_ttf::SDL2_ttf)
-
 		if(FONTCONFIG_FOUND)
 			add_definitions(-DUSE_SDL2_TTF_FONTCONFIG)
 			set(nativeExtraLibs ${nativeExtraLibs} Fontconfig::Fontconfig)
 		endif()
+	elseif(SDL2_ttf_PKGCONFIG_FOUND)
+		message(WARNING "Found SDL2_ttf <2.0.18 - this is too old, falling back to atlas")
+	endif()
+	if(SDL2_ttf_FOUND)
+		set(nativeExtraLibs ${nativeExtraLibs} SDL2_ttf::SDL2_ttf)
+	elseif(SDL2_ttf_PKGCONFIG_FOUND)
+		set(nativeExtraLibs ${nativeExtraLibs} PkgConfig::SDL2_ttf_PKGCONFIG)
 	endif()
 	if(APPLE)
 		set(nativeExtra ${nativeExtra} 
@@ -2303,7 +2319,9 @@ else()
 	include_directories(ext/zstd/lib)
 endif()
 
-target_link_libraries(${CoreLibName} Common native kirk cityhash sfmt19937 xbrz xxhash rcheevos ${GlslangLibs}
+include_directories(ext/libchdr/include)
+
+target_link_libraries(${CoreLibName} Common native chdr kirk cityhash sfmt19937 xbrz xxhash rcheevos ${GlslangLibs}
 	${CoreExtraLibs} ${OPENGL_LIBRARIES} ${X11_LIBRARIES} ${CMAKE_DL_LIBS})
 
 if(NOT HTTPS_NOT_AVAILABLE)

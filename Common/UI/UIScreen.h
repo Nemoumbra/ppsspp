@@ -48,7 +48,7 @@ public:
 
 	bool UnsyncTouch(const TouchInput &touch) override;
 	bool UnsyncKey(const KeyInput &key) override;
-	void UnsyncAxis(const AxisInput &axis) override;
+	void UnsyncAxis(const AxisInput *axes, size_t count) override;
 
 	TouchInput transformTouch(const TouchInput &touch) override;
 
@@ -88,7 +88,7 @@ class UIDialogScreen : public UIScreen {
 public:
 	UIDialogScreen() : UIScreen(), finished_(false) {}
 	bool key(const KeyInput &key) override;
-	void sendMessage(const char *msg, const char *value) override;
+	void sendMessage(UIMessage message, const char *value) override;
 
 private:
 	bool finished_;

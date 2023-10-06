@@ -94,6 +94,8 @@ IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorStrin
 		return IdentifiedFileType::PSP_ISO;
 	} else if (extension == ".cso") {
 		return IdentifiedFileType::PSP_ISO;
+	} else if (extension == ".chd") {
+		return IdentifiedFileType::PSP_ISO;
 	} else if (extension == ".ppst") {
 		return IdentifiedFileType::PPSSPP_SAVESTATE;
 	} else if (extension == ".ppdmp") {
@@ -285,7 +287,7 @@ bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 
 				std::string dir = fileLoader->GetPath().GetDirectory();
 				if (fileLoader->GetPath().Type() == PathType::CONTENT_URI) {
-					dir = AndroidContentURI(dir.c_str()).FilePath();
+					dir = AndroidContentURI(dir).FilePath();
 				}
 				size_t pos = dir.find("PSP/GAME/");
 				if (pos != std::string::npos) {
@@ -385,7 +387,7 @@ bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 	return false;
 }
 
-bool UmdReplace(const Path &filepath, std::string &error) {
+bool UmdReplace(const Path &filepath, FileLoader **fileLoader, std::string &error) {
 	IFileSystem *currentUMD = pspFileSystem.GetSystem("disc0:");
 
 	if (!currentUMD) {
@@ -404,6 +406,8 @@ bool UmdReplace(const Path &filepath, std::string &error) {
 
 	loadedFile = ResolveFileLoaderTarget(loadedFile);
 
+	*fileLoader = loadedFile;
+
 	std::string errorString;
 	IdentifiedFileType type = Identify_File(loadedFile, &errorString);
 
@@ -415,7 +419,6 @@ bool UmdReplace(const Path &filepath, std::string &error) {
 			error = "reinit memory failed";
 			return false;
 		}
-
 		break;
 	default:
 		error = "Unsupported file type: " + std::to_string((int)type) + " " + errorString;

@@ -16,7 +16,7 @@ public:
 	// Inputs to the table-based mapping
 	// These functions are free-threaded.
 	bool Key(const KeyInput &key, bool *pauseTrigger);
-	void Axis(const AxisInput &axis);
+	void Axis(const AxisInput *axes, size_t count);
 
 	// Required callbacks.
 	// TODO: These are so many now that a virtual interface might be more appropriate..
@@ -62,7 +62,7 @@ private:
 	float virtKeys_[VIRTKEY_COUNT]{};
 	bool virtKeyOn_[VIRTKEY_COUNT]{};  // Track boolean output separaately since thresholds may differ.
 
-	double deviceTimestamps_[42]{};
+	double deviceTimestamps_[(size_t)DEVICE_ID_COUNT]{};
 
 	int lastNonDeadzoneDeviceID_[2]{};
 
@@ -76,6 +76,8 @@ private:
 	bool swapAxes_ = false;
 
 	// Protects basically all the state.
+	// TODO: Maybe we should piggyback on the screenmanager mutex - it's always locked
+	// when events come in here.
 	std::mutex mutex_;
 
 	std::map<InputMapping, InputSample> curInput_;

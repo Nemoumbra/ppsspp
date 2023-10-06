@@ -86,13 +86,17 @@ protected:
 	const int *GetAllocationOrder(MIPSLoc type, MIPSMap flags, int &count, int &base) const override;
 	void AdjustNativeRegAsPtr(IRNativeReg nreg, bool state) override;
 
-	bool IsNativeRegCompatible(IRNativeReg nreg, MIPSLoc type, MIPSMap flags) override;
+	bool IsNativeRegCompatible(IRNativeReg nreg, MIPSLoc type, MIPSMap flags, int lanes) override;
 	void LoadNativeReg(IRNativeReg nreg, IRReg first, int lanes) override;
 	void StoreNativeReg(IRNativeReg nreg, IRReg first, int lanes) override;
 	void SetNativeRegValue(IRNativeReg nreg, uint32_t imm) override;
 	void StoreRegValue(IRReg mreg, uint32_t imm) override;
+	bool TransferNativeReg(IRNativeReg nreg, IRNativeReg dest, MIPSLoc type, IRReg first, int lanes, MIPSMap flags) override;
 
 private:
+	bool TransferVecTo1(IRNativeReg nreg, IRNativeReg dest, IRReg first, int oldlanes);
+	bool Transfer1ToVec(IRNativeReg nreg, IRNativeReg dest, IRReg first, int lanes);
+
 	IRNativeReg GPRToNativeReg(Arm64Gen::ARM64Reg r);
 	IRNativeReg VFPToNativeReg(Arm64Gen::ARM64Reg r);
 	Arm64Gen::ARM64Reg FromNativeReg(IRNativeReg r);

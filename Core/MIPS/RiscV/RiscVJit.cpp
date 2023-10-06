@@ -67,6 +67,8 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 		SetBlockCheckedOffset(block_num, (int)GetOffset(GetCodePointer()));
 		wroteCheckedOffset = true;
 
+		WriteDebugPC(startPC);
+
 		FixupBranch normalEntry = BGE(DOWNCOUNTREG, R_ZERO);
 		LI(SCRATCH1, startPC);
 		QuickJ(R_RA, outerLoopPCInSCRATCH1_);
@@ -80,12 +82,11 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 
 	regs_.Start(block);
 
-	std::map<const u8 *, int> addresses;
+	std::vector<const u8 *> addresses;
 	for (int i = 0; i < block->GetNumInstructions(); ++i) {
 		const IRInst &inst = block->GetInstructions()[i];
 		regs_.SetIRIndex(i);
-		// TODO: This might be a little wasteful when compiling if we're not debugging jit...
-		addresses[GetCodePtr()] = i;
+		addresses.push_back(GetCodePtr());
 
 		CompileIRInst(inst);
 
@@ -118,6 +119,8 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	}
 
 	if (jo.enableBlocklink && jo.useBackJump) {
+		WriteDebugPC(startPC);
+
 		// Most blocks shouldn't be >= 4KB, so usually we can just BGE.
 		if (BInRange(blockStart)) {
 			BGE(DOWNCOUNTREG, R_ZERO, blockStart);
@@ -133,10 +136,14 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	if (logBlocks_ > 0) {
 		--logBlocks_;
 
+		std::map<const u8 *, int> addressesLookup;
+		for (int i = 0; i < (int)addresses.size(); ++i)
+			addressesLookup[addresses[i]] = i;
+
 		INFO_LOG(JIT, "=============== RISCV (%08x, %d bytes) ===============", startPC, len);
 		for (const u8 *p = blockStart; p < GetCodePointer(); ) {
-			auto it = addresses.find(p);
-			if (it != addresses.end()) {
+			auto it = addressesLookup.find(p);
+			if (it != addressesLookup.end()) {
 				const IRInst &inst = block->GetInstructions()[it->second];
 
 				char temp[512];
@@ -145,7 +152,7 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 			}
 
 			auto next = std::next(it);
-			const u8 *nextp = next == addresses.end() ? GetCodePointer() : next->first;
+			const u8 *nextp = next == addressesLookup.end() ? GetCodePointer() : next->first;
 
 #if PPSSPP_ARCH(RISCV64) || (PPSSPP_PLATFORM(WINDOWS) && !defined(__LIBRETRO__))
 			auto lines = DisassembleRV64(p, (int)(nextp - p));
@@ -218,7 +225,9 @@ void RiscVJitBackend::CompIR_Generic(IRInst inst) {
 	FlushAll();
 	LI(X10, value, SCRATCH2);
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::IR_INTERPRET);
 	QuickCallFunction(&DoIRInst, SCRATCH2);
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 
 	// We only need to check the return value if it's a potential exit.
@@ -241,12 +250,14 @@ void RiscVJitBackend::CompIR_Interpret(IRInst inst) {
 	// IR protects us against this being a branching instruction (well, hopefully.)
 	FlushAll();
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::INTERPRET);
 	if (DebugStatsEnabled()) {
 		LI(X10, MIPSGetName(op));
 		QuickCallFunction(&NotifyMIPSInterpret, SCRATCH2);
 	}
 	LI(X10, (int32_t)inst.constant);
 	QuickCallFunction((const u8 *)MIPSGetInterpretFunc(op), SCRATCH2);
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 }
 
@@ -327,6 +338,32 @@ void RiscVJitBackend::MovFromPC(RiscVReg r) {
 
 void RiscVJitBackend::MovToPC(RiscVReg r) {
 	SW(r, CTXREG, offsetof(MIPSState, pc));
+}
+
+void RiscVJitBackend::WriteDebugPC(uint32_t pc) {
+	if (hooks_.profilerPC) {
+		int offset = (const u8 *)hooks_.profilerPC - GetBasePtr();
+		LI(SCRATCH2, hooks_.profilerPC);
+		LI(R_RA, (int32_t)pc);
+		SW(R_RA, SCRATCH2, 0);
+	}
+}
+
+void RiscVJitBackend::WriteDebugPC(RiscVReg r) {
+	if (hooks_.profilerPC) {
+		int offset = (const u8 *)hooks_.profilerPC - GetBasePtr();
+		LI(SCRATCH2, hooks_.profilerPC);
+		SW(r,  SCRATCH2, 0);
+	}
+}
+
+void RiscVJitBackend::WriteDebugProfilerStatus(IRProfilerStatus status) {
+	if (hooks_.profilerPC) {
+		int offset = (const u8 *)hooks_.profilerStatus - GetBasePtr();
+		LI(SCRATCH2, hooks_.profilerStatus);
+		LI(R_RA, (int)status);
+		SW(R_RA, SCRATCH2, 0);
+	}
 }
 
 void RiscVJitBackend::SaveStaticRegisters() {

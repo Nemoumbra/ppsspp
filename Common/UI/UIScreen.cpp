@@ -91,20 +91,22 @@ bool UIScreen::UnsyncTouch(const TouchInput &touch) {
 		}
 	}
 
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::TOUCH;
 	ev.touch = touch;
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
 	return false;
 }
 
-void UIScreen::UnsyncAxis(const AxisInput &axis) {
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
+void UIScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::AXIS;
-	ev.axis = axis;
-	eventQueue_.push_back(ev);
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
+	for (size_t i = 0; i < count; i++) {
+		ev.axis = axes[i];
+		eventQueue_.push_back(ev);
+	}
 }
 
 bool UIScreen::UnsyncKey(const KeyInput &key) {
@@ -123,10 +125,10 @@ bool UIScreen::UnsyncKey(const KeyInput &key) {
 		}
 	}
 
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::KEY;
 	ev.key = key;
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
 	return retval;
 }
@@ -267,10 +269,10 @@ bool UIDialogScreen::key(const KeyInput &key) {
 	return retval;
 }
 
-void UIDialogScreen::sendMessage(const char *msg, const char *value) {
+void UIDialogScreen::sendMessage(UIMessage message, const char *value) {
 	Screen *screen = screenManager()->dialogParent(this);
 	if (screen) {
-		screen->sendMessage(msg, value);
+		screen->sendMessage(message, value);
 	}
 }
 

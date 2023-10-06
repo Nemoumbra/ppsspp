@@ -39,17 +39,13 @@ AudioFileChooser::AudioFileChooser(std::string *value, const std::string &title,
 		return UI::EVENT_DONE;
 	});
 	Add(new FileChooserChoice(value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([=](UI::EventParams &e) {
-		// TODO: Check the file format here.
-		// Need to forward the event out.
 		std::string path = e.s;
 		Sample *sample = Sample::Load(path);
 		if (sample) {
 			g_BackgroundAudio.SFX().UpdateSample(sound, sample);
 		} else {
-			if (!sample) {
-				auto au = GetI18NCategory(I18NCat::AUDIO);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, au->T("Audio file format not supported. Must be 16-bit WAV."));
-			}
+			auto au = GetI18NCategory(I18NCat::AUDIO);
+			g_OSD.Show(OSDType::MESSAGE_ERROR, au->T("Audio file format not supported. Must be WAV."));
 			value->clear();
 		}
 		return UI::EVENT_DONE;
@@ -264,10 +260,10 @@ void RetroAchievementsSettingsScreen::CreateTabs() {
 	CreateDeveloperToolsTab(AddTab("AchievementsDeveloperTools", sy->T("Developer Tools")));
 }
 
-void RetroAchievementsSettingsScreen::sendMessage(const char *message, const char *value) {
+void RetroAchievementsSettingsScreen::sendMessage(UIMessage message, const char *value) {
 	TabbedUIDialogScreenWithGameBackground::sendMessage(message, value);
 
-	if (!strcmp(message, "achievements_loginstatechange")) {
+	if (message == UIMessage::ACHIEVEMENT_LOGIN_STATE_CHANGE) {
 		RecreateViews();
 	}
 }
@@ -520,7 +516,7 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	char cacheKey[256];
 	snprintf(cacheKey, sizeof(cacheKey), "ai:%s:%s", achievement->badge_name, iconState == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED ? "unlocked" : "locked");
 	if (RC_OK == rc_client_achievement_get_image_url(achievement, iconState, temp, sizeof(temp))) {
-		Achievements::DownloadImageIfMissing(cacheKey, std::move(std::string(temp)));
+		Achievements::DownloadImageIfMissing(cacheKey, std::string(temp));
 		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
 			dc.Draw()->DrawTexRect(Bounds(bounds.x + padding, bounds.y + padding, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 		}
@@ -564,7 +560,7 @@ void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, float alp
 	char cacheKey[256];
 	snprintf(cacheKey, sizeof(cacheKey), "gi:%s", gameInfo->badge_name);
 	if (RC_OK == rc_client_game_get_image_url(gameInfo, url, sizeof(url))) {
-		Achievements::DownloadImageIfMissing(cacheKey, std::move(std::string(url)));
+		Achievements::DownloadImageIfMissing(cacheKey, std::string(url));
 		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
 			dc.Draw()->DrawTexRect(Bounds(bounds.x, bounds.y, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 		}
@@ -664,7 +660,7 @@ void RenderLeaderboardEntry(UIContext &dc, const rc_client_leaderboard_entry_t *
 	snprintf(cacheKey, sizeof(cacheKey), "lbe:%s", entry->user);
 	char temp[512];
 	if (RC_OK == rc_client_leaderboard_entry_get_user_image_url(entry, temp, sizeof(temp))) {
-		Achievements::DownloadImageIfMissing(cacheKey, std::move(std::string(temp)));
+		Achievements::DownloadImageIfMissing(cacheKey, std::string(temp));
 		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
 			dc.Draw()->DrawTexRect(Bounds(bounds.x + iconLeft, bounds.y + 4.0f, 64.0f, 64.0f), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 		}

@@ -58,7 +58,7 @@ static inline const char *DeNull(const char *ptr) {
 }
 
 void OnAchievementsLoginStateChange() {
-	System_PostUIMessage("achievements_loginstatechange", "");
+	System_PostUIMessage(UIMessage::ACHIEVEMENT_LOGIN_STATE_CHANGE);
 }
 
 namespace Achievements {
@@ -85,6 +85,12 @@ double g_lastLoginAttemptTime;
 static rc_client_t *g_rcClient;
 static const std::string g_RAImageID = "I_RETROACHIEVEMENTS_LOGO";
 constexpr double LOGIN_ATTEMPT_INTERVAL_S = 10.0;
+
+struct FileContext {
+	BlockDevice *bd;
+	int64_t seekPos;
+};
+static BlockDevice *g_blockDevice;
 
 #define PSP_MEMORY_OFFSET 0x08000000
 
@@ -222,7 +228,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 	case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
 		// An achievement was earned by the player. The handler should notify the player that the achievement was earned.
 		g_OSD.ShowAchievementUnlocked(event->achievement->id);
-		System_PostUIMessage("play_sound", "achievement_unlocked");
+		System_PostUIMessage(UIMessage::REQUEST_PLAY_SOUND, "achievement_unlocked");
 		INFO_LOG(ACHIEVEMENTS, "Achievement unlocked: '%s' (%d)", event->achievement->title, event->achievement->id);
 		break;
 
@@ -240,11 +246,11 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		rc_client_user_game_summary_t summary;
 		rc_client_get_user_game_summary(g_rcClient, &summary);
 
-		std::string message = StringFromFormat(ac->T("%d achievements"), summary.num_unlocked_achievements);
+		std::string message = ApplySafeSubstitutions(ac->T("%d achievements, %d points"), summary.num_unlocked_achievements, summary.points_unlocked);
 
 		g_OSD.Show(OSDType::MESSAGE_INFO, title, message, DeNull(gameInfo->badge_name), 10.0f);
 
-		System_PostUIMessage("play_sound", "achievement_unlocked");
+		System_PostUIMessage(UIMessage::REQUEST_PLAY_SOUND, "achievement_unlocked");
 
 		INFO_LOG(ACHIEVEMENTS, "%s", message.c_str());
 		break;
@@ -278,7 +284,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 			title = event->leaderboard->description;
 		}
 		g_OSD.ShowLeaderboardSubmitted(ApplySafeSubstitutions(ac->T("Submitted %1 for %2"), DeNull(event->leaderboard->tracker_value), title), "");
-		System_PostUIMessage("play_sound", "leaderboard_submitted");
+		System_PostUIMessage(UIMessage::REQUEST_PLAY_SOUND, "leaderboard_submitted");
 		break;
 	}
 	case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
@@ -335,7 +341,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 	case RC_CLIENT_EVENT_RESET:
 		WARN_LOG(ACHIEVEMENTS, "Resetting game due to achievement setting change!");
 		// Challenge mode was enabled, or something else that forces a game reset.
-		System_PostUIMessage("reset", "");
+		System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
 		break;
 	case RC_CLIENT_EVENT_SERVER_ERROR:
 		ERROR_LOG(ACHIEVEMENTS, "Server error: %s: %s", event->server_error->api, event->server_error->error_message);
@@ -368,6 +374,9 @@ static void login_token_callback(int result, const char *error_message, rc_clien
 		}
 		break;
 	}
+	case RC_ACCESS_DENIED:
+	case RC_INVALID_CREDENTIALS:
+	case RC_EXPIRED_TOKEN:
 	case RC_API_FAILURE:
 	case RC_INVALID_STATE:
 	case RC_MISSING_VALUE:
@@ -410,6 +419,60 @@ void Initialize() {
 	}
 
 	rc_client_set_event_handler(g_rcClient, event_handler_callback);
+
+	rc_hash_filereader rc_filereader;
+	rc_filereader.open = [](const char *utf8Path) -> void *{
+		if (!g_blockDevice) {
+			ERROR_LOG(ACHIEVEMENTS, "No block device");
+			return nullptr;
+		}
+
+		return (void *) new FileContext{ g_blockDevice, 0 };
+	};
+	rc_filereader.seek = [](void *file_handle, int64_t offset, int origin) {
+		FileContext *ctx = (FileContext *)file_handle;
+		switch (origin) {
+		case SEEK_SET: ctx->seekPos = offset; break;
+		case SEEK_END: ctx->seekPos = ctx->bd->GetBlockSize() * ctx->bd->GetNumBlocks() + offset; break;
+		case SEEK_CUR: ctx->seekPos += offset; break;
+		default: break;
+		}
+	};
+	rc_filereader.tell = [](void *file_handle) -> int64_t {
+		return ((FileContext *)file_handle)->seekPos;
+	};
+	rc_filereader.read = [](void *file_handle, void *buffer, size_t requested_bytes) -> size_t {
+		FileContext *ctx = (FileContext *)file_handle;
+
+		int blockSize = ctx->bd->GetBlockSize();
+
+		int64_t offset = ctx->seekPos;
+		int64_t endOffset = ctx->seekPos + requested_bytes;
+		int firstBlock = offset / blockSize;
+		int afterLastBlock = (endOffset + blockSize - 1) / blockSize;
+		int numBlocks = afterLastBlock - firstBlock;
+		// This is suboptimal, but good enough since we're not doing a lot of accesses.
+		uint8_t *buf = new uint8_t[numBlocks * blockSize];
+		bool success = ctx->bd->ReadBlocks(firstBlock, numBlocks, (u8 *)buf);
+		if (success) {
+			int64_t firstOffset = firstBlock * blockSize;
+			memcpy(buffer, buf + (offset - firstOffset), requested_bytes);
+			ctx->seekPos += requested_bytes;
+			delete[] buf;
+			return requested_bytes;
+		} else {
+			delete[] buf;
+			ERROR_LOG(ACHIEVEMENTS, "Block device load fail");
+			return 0;
+		}
+	};
+	rc_filereader.close = [](void *file_handle) {
+		FileContext *ctx = (FileContext *)file_handle;
+		delete ctx->bd;
+		delete ctx;
+	};
+	rc_hash_init_custom_filereader(&rc_filereader);
+	rc_hash_init_default_cdreader();
 
 	TryLoginByToken(true);
 }
@@ -458,6 +521,9 @@ static void login_password_callback(int result, const char *error_message, rc_cl
 	case RC_API_FAILURE:
 	case RC_MISSING_VALUE:
 	case RC_INVALID_JSON:
+	case RC_ACCESS_DENIED:
+	case RC_INVALID_CREDENTIALS:
+	case RC_EXPIRED_TOKEN:
 	default:
 	{
 		ERROR_LOG(ACHIEVEMENTS, "Failure logging in via password: %d, %s", result, error_message);
@@ -659,7 +725,7 @@ std::string GetGameAchievementSummary() {
 	if (summary.num_core_achievements + summary.num_unofficial_achievements == 0) {
 		summaryString = ac->T("This game has no achievements");
 	} else {
-		summaryString = StringFromFormat(ac->T("Earned", "You have unlocked %d of %d achievements, earning %d of %d points"),
+		summaryString = ApplySafeSubstitutions(ac->T("Earned", "You have unlocked %1 of %2 achievements, earning %3 of %4 points"),
 			summary.num_unlocked_achievements, summary.num_core_achievements + summary.num_unofficial_achievements,
 			summary.points_unlocked, summary.points_core);
 		if (ChallengeModeActive()) {
@@ -723,13 +789,6 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 	g_isIdentifying = false;
 }
 
-struct FileContext {
-	BlockDevice *bd;
-	int64_t seekPos;
-};
-
-static BlockDevice *g_blockDevice;
-
 bool IsReadyToStart() {
 	return !g_isLoggingIn;
 }
@@ -770,58 +829,6 @@ void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoad
 		return;
 	}
 
-	rc_hash_filereader rc_filereader;
-	rc_filereader.open = [](const char *utf8Path) -> void * {
-		if (!g_blockDevice) {
-			ERROR_LOG(ACHIEVEMENTS, "No block device");
-			return nullptr;
-		}
-
-		return (void *) new FileContext{ g_blockDevice, 0 };
-	};
-	rc_filereader.seek = [](void *file_handle, int64_t offset, int origin) {
-		FileContext *ctx = (FileContext *)file_handle;
-		switch (origin) {
-		case SEEK_SET: ctx->seekPos = offset; break;
-		case SEEK_END: ctx->seekPos = ctx->bd->GetBlockSize() * ctx->bd->GetNumBlocks() + offset; break;
-		case SEEK_CUR: ctx->seekPos += offset; break;
-		default: break;
-		}
-	};
-	rc_filereader.tell = [](void *file_handle) -> int64_t {
-		return ((FileContext *)file_handle)->seekPos;
-	};
-	rc_filereader.read = [](void *file_handle, void *buffer, size_t requested_bytes) -> size_t {
-		FileContext *ctx = (FileContext *)file_handle;
-
-		int blockSize = ctx->bd->GetBlockSize();
-
-		int64_t offset = ctx->seekPos;
-		int64_t endOffset = ctx->seekPos + requested_bytes;
-		int firstBlock = offset / blockSize;
-		int afterLastBlock = (endOffset + blockSize - 1) / blockSize;
-		int numBlocks = afterLastBlock - firstBlock;
-		// This is suboptimal, but good enough since we're not doing a lot of accesses.
-		uint8_t *buf = new uint8_t[numBlocks * blockSize];
-		bool success = ctx->bd->ReadBlocks(firstBlock, numBlocks, (u8 *)buf);
-		if (success) {
-			int64_t firstOffset = firstBlock * blockSize;
-			memcpy(buffer, buf + (offset - firstOffset), requested_bytes);
-			ctx->seekPos += requested_bytes;
-			delete[] buf;
-			return requested_bytes;
-		} else {
-			delete[] buf;
-			ERROR_LOG(ACHIEVEMENTS, "Block device load fail");
-			return 0;
-		}
-	};
-	rc_filereader.close = [](void *file_handle) {
-		FileContext *ctx = (FileContext *)file_handle;
-		delete ctx->bd;
-		delete ctx;
-	};
-
 	// The caller should hold off on executing game code until this turns false, checking with IsBlockingExecution()
 	g_isIdentifying = true;
 
@@ -830,8 +837,6 @@ void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoad
 	rc_client_set_encore_mode_enabled(g_rcClient, g_Config.bAchievementsEncoreMode ? 1 : 0);
 	rc_client_set_unofficial_enabled(g_rcClient, g_Config.bAchievementsUnofficial ? 1 : 0);
 
-	rc_hash_init_custom_filereader(&rc_filereader);
-	rc_hash_init_default_cdreader();
 	rc_client_begin_identify_and_load_game(g_rcClient, RC_CONSOLE_PSP, path.c_str(), nullptr, 0, &identify_and_load_callback, nullptr);
 
 	// fclose above will have deleted it.
@@ -845,17 +850,47 @@ void UnloadGame() {
 }
 
 void change_media_callback(int result, const char *error_message, rc_client_t *client, void *userdata) {
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 	NOTICE_LOG(ACHIEVEMENTS, "Change media callback: %d (%s)", result, error_message);
 	g_isIdentifying = false;
+
+	switch (result) {
+	case RC_OK:
+	{
+		// Successful! Later, show a message that we succeeded.
+		break;
+	}
+	case RC_NO_GAME_LOADED:
+		// The current game does not support achievements.
+		g_OSD.Show(OSDType::MESSAGE_INFO, ac->T("RetroAchievements are not available for this game"), "", g_RAImageID, 3.0f);
+		break;
+	case RC_NO_RESPONSE:
+		// We lost the internet connection at some point and can't report achievements.
+		ShowNotLoggedInMessage();
+		break;
+	default:
+		// Other various errors.
+		ERROR_LOG(ACHIEVEMENTS, "Failed to identify/load game: %d (%s)", result, error_message);
+		g_OSD.Show(OSDType::MESSAGE_ERROR, ac->T("Failed to identify game. Achievements will not unlock."), "", g_RAImageID, 6.0f);
+		break;
+	}
 }
 
-void ChangeUMD(const Path &path) {
+void ChangeUMD(const Path &path, FileLoader *fileLoader) {
 	if (!IsActive()) {
 		// Nothing to do.
 		return;
 	}
 
-	rc_client_begin_change_media(g_rcClient, 
+	g_blockDevice = constructBlockDevice(fileLoader);
+	if (!g_blockDevice) {
+		ERROR_LOG(ACHIEVEMENTS, "Failed to construct block device for '%s' - can't identify", path.c_str());
+		return;
+	}
+
+	g_isIdentifying = true;
+
+	rc_client_begin_change_media(g_rcClient,
 		path.c_str(),
 		nullptr,
 		0,
@@ -863,7 +898,8 @@ void ChangeUMD(const Path &path) {
 		nullptr
 	);
 
-	g_isIdentifying = true;
+	// fclose above will have deleted it.
+	g_blockDevice = nullptr;
 }
 
 std::set<uint32_t> GetActiveChallengeIDs() {

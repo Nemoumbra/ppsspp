@@ -62,13 +62,12 @@ public abstract class NativeActivity extends Activity {
 	// Allows us to skip a lot of initialization on secondary calls to onCreate.
 	private static boolean initialized = false;
 
-	// False to use C++ EGL, queried from C++ after NativeApp.init.
+	// False to use Vulkan, queried from C++ after NativeApp.init.
 	private static boolean javaGL = true;
 
-	// Graphics and audio interfaces for EGL (javaGL = false)
+	// Graphics and audio interfaces for Vulkan (javaGL = false)
 	private NativeSurfaceView mSurfaceView;
 	private Surface mSurface;
-	private Thread mRenderLoopThread = null;
 
 	// Graphics and audio interfaces for Java EGL (javaGL = true)
 	private NativeGLView mGLSurfaceView;
@@ -568,19 +567,6 @@ public abstract class NativeActivity extends Activity {
 		}
 	}
 
-	private final Runnable mEmulationRunner = new Runnable() {
-		@Override
-		public void run() {
-			Log.i(TAG, "Starting the render loop: " + mSurface);
-			// Start emulation using the provided Surface.
-			if (!runVulkanRenderLoop(mSurface)) {
-				// Shouldn't happen.
-				Log.e(TAG, "Failed to start up OpenGL/Vulkan - runVulkanRenderLoop returned false");
-			}
-			Log.i(TAG, "Left the render loop: " + mSurface);
-		}
-	};
-
 	public native boolean runVulkanRenderLoop(Surface surface);
 	// Tells the render loop thread to exit, so we can restart it.
 	public native void requestExitVulkanRenderLoop();
@@ -662,7 +648,7 @@ public abstract class NativeActivity extends Activity {
 			Log.i(TAG, "setcontentview before");
 			setContentView(mSurfaceView);
 			Log.i(TAG, "setcontentview after");
-			ensureRenderLoop();
+			startRenderLoopThread();
 		}
 	}
 
@@ -677,55 +663,47 @@ public abstract class NativeActivity extends Activity {
 
 	public void notifySurface(Surface surface) {
 		mSurface = surface;
+
+		if (!initialized) {
+			Log.e(TAG, "Can't deal with surfaces while not initialized");
+			return;
+		}
+
 		if (!javaGL) {
 			// If we got a surface, this starts the thread. If not, it doesn't.
 			if (mSurface == null) {
 				joinRenderLoopThread();
 			} else {
-				ensureRenderLoop();
+				startRenderLoopThread();
 			}
 		}
 		updateSustainedPerformanceMode();
 	}
 
-	// Invariants: After this, mRenderLoopThread will be set, and the thread will be running,
-	// if in Vulkan mode.
-	protected synchronized void ensureRenderLoop() {
+	// The render loop thread (EmuThread) is now spawned from the native side.
+	protected synchronized void startRenderLoopThread() {
 		if (javaGL) {
-			Log.e(TAG, "JavaGL mode - should not get into ensureRenderLoop.");
+			Log.e(TAG, "JavaGL mode - should not get into startRenderLoopThread.");
 			return;
 		}
 		if (mSurface == null) {
-			Log.w(TAG, "ensureRenderLoop - not starting thread, needs surface");
+			Log.w(TAG, "startRenderLoopThread - not starting thread, needs surface");
 			return;
 		}
-		if (mRenderLoopThread == null) {
-			Log.w(TAG, "ensureRenderLoop: Starting thread");
-			mRenderLoopThread = new Thread(mEmulationRunner);
-			mRenderLoopThread.start();
-		}
+
+		Log.w(TAG, "startRenderLoopThread: Starting thread");
+		runVulkanRenderLoop(mSurface);
 	}
 
-	// Invariants: After this, mRenderLoopThread will be null, and the thread has exited.
 	private synchronized void joinRenderLoopThread() {
 		if (javaGL) {
 			Log.e(TAG, "JavaGL - should not get into joinRenderLoopThread.");
 			return;
 		}
 
-		if (mRenderLoopThread != null) {
-			// This will wait until the thread has exited.
-			Log.i(TAG, "requestExitVulkanRenderLoop");
-			requestExitVulkanRenderLoop();
-			try {
-				Log.i(TAG, "joining render loop thread...");
-				mRenderLoopThread.join();
-				Log.w(TAG, "Joined render loop thread.");
-				mRenderLoopThread = null;
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
+		// This will wait until the thread has exited.
+		Log.i(TAG, "requestExitVulkanRenderLoop");
+		requestExitVulkanRenderLoop();
 	}
 
 	@TargetApi(Build.VERSION_CODES.KITKAT)
@@ -740,32 +718,36 @@ public abstract class NativeActivity extends Activity {
 	}
 
 	@Override
-	protected void onStop() {
-		super.onStop();
-		Log.i(TAG, "onStop - do nothing special");
-	}
-
-	@Override
 	protected void onDestroy() {
 		super.onDestroy();
 		Log.i(TAG, "onDestroy");
 		if (javaGL) {
-			if (nativeRenderer != null && nativeRenderer.isRenderingFrame()) {
-				Log.i(TAG, "Waiting for renderer to finish.");
-				int tries = 200;
-				do {
-					try {
-						Thread.sleep(10);
-					} catch (InterruptedException e) {
-					}
-					tries--;
-				} while (nativeRenderer.isRenderingFrame() && tries > 0);
+			if (nativeRenderer != null) {
+				if (nativeRenderer.isRenderingFrame()) {
+					Log.i(TAG, "Waiting for renderer to finish.");
+					int tries = 200;
+					do {
+						try {
+							Thread.sleep(10);
+						} catch (InterruptedException e) {
+						}
+						tries--;
+					} while (nativeRenderer.isRenderingFrame() && tries > 0);
+				} else {
+					Log.i(TAG, "nativerenderer done.");
+					nativeRenderer = null;
+				}
 			}
-			mGLSurfaceView.onDestroy();
-			mGLSurfaceView = null;
+			if (mGLSurfaceView != null) {
+				mGLSurfaceView.onDestroy();
+				mGLSurfaceView = null;
+			}
 		} else {
-			mSurfaceView.onDestroy();
-			mSurfaceView = null;
+			if (mSurfaceView != null) {
+				mSurfaceView.onDestroy();
+				mSurfaceView = null;
+			}
+			mSurface = null;
 		}
 
 		// Probably vain attempt to help the garbage collector...
@@ -781,7 +763,7 @@ public abstract class NativeActivity extends Activity {
 		// TODO: Can we ensure that the GL thread has stopped rendering here?
 		// I've seen crashes that seem to indicate that sometimes it hasn't...
 		NativeApp.audioShutdown();
-		if (shuttingDown || isFinishing()) {
+		if (shuttingDown) {
 			NativeApp.shutdown();
 			unregisterCallbacks();
 			initialized = false;
@@ -799,6 +781,7 @@ public abstract class NativeActivity extends Activity {
 		super.onPause();
 		Log.i(TAG, "onPause");
 		loseAudioFocus(this.audioManager, this.audioFocusChangeListener);
+		sizeManager.setPaused(true);
 		NativeApp.pause();
 		if (!javaGL) {
 			mSurfaceView.onPause();
@@ -834,6 +817,7 @@ public abstract class NativeActivity extends Activity {
 	protected void onResume() {
 		super.onResume();
 		updateSustainedPerformanceMode();
+		sizeManager.setPaused(false);
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
 			updateSystemUiVisibility();
 		}
@@ -862,7 +846,7 @@ public abstract class NativeActivity extends Activity {
 
 		if (!javaGL) {
 			// Restart the render loop.
-			ensureRenderLoop();
+			startRenderLoopThread();
 		}
 	}
 

@@ -45,6 +45,14 @@
 #include "GPU/Vulkan/StateMappingVulkan.h"
 #include "GPU/Vulkan/VulkanRenderManager.h"
 
+
+// TODO: Move to some appropriate header.
+#ifdef _MSC_VER
+#define NO_INLINE __declspec(noinline)
+#else
+#define NO_INLINE __attribute__((noinline))
+#endif
+
 struct DecVtxFormat;
 struct UVScale;
 
@@ -162,13 +170,13 @@ public:
 
 	// So that this can be inlined
 	void Flush() {
-		if (!numDrawCalls_)
+		if (!numDrawInds_)
 			return;
 		DoFlush();
 	}
 
 	void FinishDeferred() {
-		if (!numDrawCalls_)
+		if (!numDrawInds_)
 			return;
 		// Decode any pending vertices. And also flush while we're at it, for simplicity.
 		// It might be possible to only decode like in the other backends, but meh, it can't matter.
@@ -177,9 +185,9 @@ public:
 	}
 
 	void DispatchFlush() override {
-		if (!numDrawCalls_)
+		if (!numDrawInds_)
 			return;
-		Flush();
+		DoFlush();
 	}
 
 	VkPipelineLayout GetPipelineLayout() const {
@@ -229,6 +237,8 @@ private:
 	void DoFlush();
 	void UpdateUBOs(FrameData *frame);
 	FrameData &GetCurFrame();
+
+	NO_INLINE void ResetAfterDraw();
 
 	VkDescriptorSet GetOrCreateDescriptorSet(VkImageView imageView, VkSampler sampler, VkBuffer base, VkBuffer light, VkBuffer bone, bool tess);
 

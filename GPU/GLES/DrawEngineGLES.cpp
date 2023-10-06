@@ -218,7 +218,7 @@ GLRInputLayout *DrawEngineGLES::SetupDecFmtForDraw(const DecVtxFormat &decFmt) {
 	VertexAttribSetup(ATTR_COLOR0, decFmt.c0fmt, decFmt.stride, decFmt.c0off, entries);
 	VertexAttribSetup(ATTR_COLOR1, decFmt.c1fmt, decFmt.stride, decFmt.c1off, entries);
 	VertexAttribSetup(ATTR_NORMAL, decFmt.nrmfmt, decFmt.stride, decFmt.nrmoff, entries);
-	VertexAttribSetup(ATTR_POSITION, decFmt.posfmt, decFmt.stride, decFmt.posoff, entries);
+	VertexAttribSetup(ATTR_POSITION, DecVtxFormat::PosFmt(), decFmt.stride, decFmt.posoff, entries);
 
 	inputLayout = render_->CreateInputLayout(entries);
 	inputLayoutMap_.Insert(key, inputLayout);
@@ -245,9 +245,11 @@ void DrawEngineGLES::DoFlush() {
 		// can't goto bail here, skips too many variable initializations. So let's wipe the most important stuff.
 		indexGen.Reset();
 		decodedVerts_ = 0;
-		numDrawCalls_ = 0;
+		numDrawVerts_ = 0;
+		numDrawInds_ = 0;
 		vertexCountInDrawCalls_ = 0;
-		decodeCounter_ = 0;
+		decodeVertsCounter_ = 0;
+		decodeIndsCounter_ = 0;
 		return;
 	}
 
@@ -284,9 +286,9 @@ void DrawEngineGLES::DoFlush() {
 			// Figure out how much pushbuffer space we need to allocate.
 			int vertsToDecode = ComputeNumVertsToDecode();
 			u8 *dest = (u8 *)frameData.pushVertex->Allocate(vertsToDecode * dec_->GetDecVtxFmt().stride, 4, &vertexBuffer, &vertexBufferOffset);
-			// Indices are decoded in here.
 			DecodeVerts(dest);
 		}
+		DecodeInds();
 
 		gpuStats.numUncachedVertsDrawn += indexGen.VertexCount();
 
@@ -343,6 +345,7 @@ void DrawEngineGLES::DoFlush() {
 			dec_ = GetVertexDecoder(lastVType_);
 		}
 		DecodeVerts(decoded_);
+		DecodeInds();
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
@@ -381,7 +384,7 @@ void DrawEngineGLES::DoFlush() {
 			UpdateCachedViewportState(vpAndScissor_);
 		}
 
-		int maxIndex = indexGen.MaxIndex();
+		int maxIndex = MaxIndex();
 		int vertexCount = indexGen.VertexCount();
 
 		// TODO: Split up into multiple draw calls for GLES 2.0 where you can't guarantee support for more than 0x10000 verts.
@@ -470,27 +473,8 @@ void DrawEngineGLES::DoFlush() {
 	}
 
 bail:
-	gpuStats.numFlushes++;
-	gpuStats.numDrawCalls += numDrawCalls_;
-	gpuStats.numVertsSubmitted += vertexCountInDrawCalls_;
-
-	// TODO: When the next flush has the same vertex format, we can continue with the same offset in the vertex buffer,
-	// and start indexing from a higher value. This is very friendly to OpenGL (where we can't rely on baseindex if we
-	// wanted to avoid rebinding the vertex input every time).
-	indexGen.Reset();
-	decodedVerts_ = 0;
-	numDrawCalls_ = 0;
-	vertexCountInDrawCalls_ = 0;
-	decodeCounter_ = 0;
-	gstate_c.vertexFullAlpha = true;
+	ResetAfterDrawInline();
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-
-	// Now seems as good a time as any to reset the min/max coords, which we may examine later.
-	gstate_c.vertBounds.minU = 512;
-	gstate_c.vertBounds.minV = 512;
-	gstate_c.vertBounds.maxU = 0;
-	gstate_c.vertBounds.maxV = 0;
-
 	GPUDebug::NotifyDraw();
 }
 
@@ -520,7 +504,7 @@ void TessellationDataTransferGLES::SendDataToShader(const SimpleVertex *const *p
 	if (prevSizeU < size_u || prevSizeV < size_v) {
 		prevSizeU = size_u;
 		prevSizeV = size_v;
-		if (!data_tex[0])
+		if (data_tex[0])
 			renderManager_->DeleteTexture(data_tex[0]);
 		data_tex[0] = renderManager_->CreateTexture(GL_TEXTURE_2D, size_u * 3, size_v, 1, 1);
 		renderManager_->TextureImage(data_tex[0], 0, size_u * 3, size_v, 1, Draw::DataFormat::R32G32B32A32_FLOAT, nullptr, GLRAllocType::NONE, false);
@@ -539,7 +523,7 @@ void TessellationDataTransferGLES::SendDataToShader(const SimpleVertex *const *p
 	// Weight U
 	if (prevSizeWU < weights.size_u) {
 		prevSizeWU = weights.size_u;
-		if (!data_tex[1])
+		if (data_tex[1])
 			renderManager_->DeleteTexture(data_tex[1]);
 		data_tex[1] = renderManager_->CreateTexture(GL_TEXTURE_2D, weights.size_u * 2, 1, 1, 1);
 		renderManager_->TextureImage(data_tex[1], 0, weights.size_u * 2, 1, 1, Draw::DataFormat::R32G32B32A32_FLOAT, nullptr, GLRAllocType::NONE, false);
@@ -551,7 +535,7 @@ void TessellationDataTransferGLES::SendDataToShader(const SimpleVertex *const *p
 	// Weight V
 	if (prevSizeWV < weights.size_v) {
 		prevSizeWV = weights.size_v;
-		if (!data_tex[2])
+		if (data_tex[2])
 			renderManager_->DeleteTexture(data_tex[2]);
 		data_tex[2] = renderManager_->CreateTexture(GL_TEXTURE_2D, weights.size_v * 2, 1, 1, 1);
 		renderManager_->TextureImage(data_tex[2], 0, weights.size_v * 2, 1, 1, Draw::DataFormat::R32G32B32A32_FLOAT, nullptr, GLRAllocType::NONE, false);

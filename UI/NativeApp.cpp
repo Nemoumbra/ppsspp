@@ -153,7 +153,7 @@
 
 #include <Core/HLE/Plugins.h>
 
-bool HandleGlobalMessage(const std::string &msg, const std::string &value);
+bool HandleGlobalMessage(UIMessage message, const std::string &value);
 
 ScreenManager *g_screenManager;
 std::string config_filename;
@@ -167,7 +167,7 @@ static bool restarting = false;
 static int renderCounter = 0;
 
 struct PendingMessage {
-	std::string msg;
+	UIMessage message;
 	std::string value;
 };
 
@@ -828,7 +828,7 @@ bool CreateGlobalPipelines();
 bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 	INFO_LOG(SYSTEM, "NativeInitGraphics");
 
-	_assert_(g_screenManager);
+	_assert_msg_(g_screenManager, "No screenmanager, bad init order. Backend = %d", g_Config.iGPUBackend);
 
 	// We set this now so any resize during init is processed later.
 	resized = false;
@@ -1070,6 +1070,13 @@ static Matrix4x4 ComputeOrthoMatrix(float xres, float yres) {
 void NativeFrame(GraphicsContext *graphicsContext) {
 	PROFILE_END_FRAME();
 
+	bool menuThrottle = (GetUIState() != UISTATE_INGAME || !PSP_IsInited()) && GetUIState() != UISTATE_EXIT;
+
+	double startTime;
+	if (menuThrottle) {
+		startTime = time_now_d();
+	}
+
 	std::vector<PendingMessage> toProcess;
 	{
 		std::lock_guard<std::mutex> lock(pendingMutex);
@@ -1078,10 +1085,11 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 	}
 
 	for (const auto &item : toProcess) {
-		if (HandleGlobalMessage(item.msg, item.value)) {
-			INFO_LOG(SYSTEM, "Handled global message: %s / %s", item.msg.c_str(), item.value.c_str());
+		if (HandleGlobalMessage(item.message, item.value)) {
+			// TODO: Add a to-string thingy.
+			INFO_LOG(SYSTEM, "Handled global message: %d / %s", (int)item.message, item.value.c_str());
 		}
-		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
+		g_screenManager->sendMessage(item.message, item.value.c_str());
 	}
 
 	g_requestManager.ProcessRequests();
@@ -1177,42 +1185,52 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 #if !PPSSPP_PLATFORM(WINDOWS) && !defined(ANDROID)
 		PSP_CoreParameter().pixelWidth = g_display.pixel_xres;
 		PSP_CoreParameter().pixelHeight = g_display.pixel_yres;
-		System_PostUIMessage("gpu_displayResized", "");
+		System_PostUIMessage(UIMessage::GPU_DISPLAY_RESIZED);
 #endif
 	} else {
 		// INFO_LOG(G3D, "Polling graphics context");
 		graphicsContext->Poll();
 	}
+
+	if (menuThrottle) {
+		float refreshRate = System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE);
+		// Simple throttling to not burn the GPU in the menu.
+		// TODO: This should move into NativeFrame. Also, it's only necessary in MAILBOX or IMMEDIATE presentation modes.
+		double diffTime = time_now_d() - startTime;
+		int sleepTime = (int)(1000.0 / refreshRate) - (int)(diffTime * 1000.0);
+		if (sleepTime > 0)
+			sleep_ms(sleepTime);
+	}
 }
 
-bool HandleGlobalMessage(const std::string &msg, const std::string &value) {
-	if (msg == "savestate_displayslot") {
+bool HandleGlobalMessage(UIMessage message, const std::string &value) {
+	if (message == UIMessage::SAVESTATE_DISPLAY_SLOT) {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
 		std::string msg = StringFromFormat("%s: %d", sy->T("Savestate Slot"), SaveState::GetCurrentSlot() + 1);
 		// Show for the same duration as the preview.
 		g_OSD.Show(OSDType::MESSAGE_INFO, msg, 2.0f, "savestate_slot");
 		return true;
 	}
-	else if (msg == "gpu_displayResized") {
+	else if (message == UIMessage::GPU_DISPLAY_RESIZED) {
 		if (gpu) {
 			gpu->NotifyDisplayResized();
 		}
 		return true;
 	}
-	else if (msg == "gpu_renderResized") {
+	else if (message == UIMessage::GPU_RENDER_RESIZED) {
 		if (gpu) {
 			gpu->NotifyRenderResized();
 		}
 		return true;
 	}
-	else if (msg == "gpu_configChanged") {
+	else if (message == UIMessage::GPU_CONFIG_CHANGED) {
 		if (gpu) {
 			gpu->NotifyConfigChanged();
 		}
 		Reporting::UpdateConfig();
 		return true;
 	}
-	else if (msg == "core_powerSaving") {
+	else if (message == UIMessage::POWER_SAVING) {
 		if (value != "false") {
 			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 #if PPSSPP_PLATFORM(ANDROID)
@@ -1224,7 +1242,7 @@ bool HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		Core_SetPowerSaving(value != "false");
 		return true;
 	}
-	else if (msg == "permission_granted" && value == "storage") {
+	else if (message == UIMessage::PERMISSION_GRANTED && value == "storage") {
 		CreateSysDirectories();
 		// We must have failed to load the config before, so load it now to avoid overwriting the old config
 		// with a freshly generated one.
@@ -1237,7 +1255,7 @@ bool HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		PostLoadConfig();
 		g_Config.iGPUBackend = gpuBackend;
 		return true;
-	} else if (msg == "app_resumed" || msg == "got_focus") {
+	} else if (message == UIMessage::APP_RESUMED || message == UIMessage::GOT_FOCUS) {
 		// Assume that the user may have modified things.
 		MemoryStick_NotifyWrite();
 		return true;
@@ -1319,9 +1337,9 @@ bool NativeKey(const KeyInput &key) {
 	return retval;
 }
 
-static void ProcessOneAxisEvent(const AxisInput &axis) {
+void NativeAxis(const AxisInput *axes, size_t count) {
 	// VR actions
-	if (IsVREnabled() && !UpdateVRAxis(axis)) {
+	if (IsVREnabled() && !UpdateVRAxis(axes, count)) {
 		return;
 	}
 
@@ -1330,28 +1348,15 @@ static void ProcessOneAxisEvent(const AxisInput &axis) {
 		return;
 	}
 
-	// only do special handling of tilt events if tilt is enabled.
-	HLEPlugins::PluginDataAxis[axis.axisId] = axis.value;
-	g_screenManager->axis(axis);
-}
-
-void NativeAxis(const AxisInput *axes, size_t count) {
-	// figure out what the current tilt orientation is by checking the axis event
-	// This is static, since we need to remember where we last were (in terms of orientation)
-	static float tiltX;
-	static float tiltY;
-	static float tiltZ;
+	g_screenManager->axis(axes, count);
 
 	for (size_t i = 0; i < count; i++) {
-		ProcessOneAxisEvent(axes[i]);
-		switch (axes[i].axisId) {
-		case JOYSTICK_AXIS_ACCELEROMETER_X: tiltX = axes[i].value; break;
-		case JOYSTICK_AXIS_ACCELEROMETER_Y: tiltY = axes[i].value; break;
-		case JOYSTICK_AXIS_ACCELEROMETER_Z: tiltZ = axes[i].value; break;
-		default: break;
-		}
+		const AxisInput &axis = axes[i];
+		HLEPlugins::PluginDataAxis[axis.axisId] = axis.value;
 	}
+}
 
+void NativeAccelerometer(float tiltX, float tiltY, float tiltZ) {
 	if (g_Config.iTiltInputType == TILT_NULL) {
 		// if tilt events are disabled, don't do anything special.
 		return;
@@ -1377,12 +1382,16 @@ void NativeAxis(const AxisInput *axes, size_t count) {
 	TiltEventProcessor::ProcessTilt(landscape, tiltBaseAngleY, tiltX, tiltY, tiltZ,
 		g_Config.bInvertTiltX, g_Config.bInvertTiltY,
 		xSensitivity, ySensitivity);
+
+	HLEPlugins::PluginDataAxis[JOYSTICK_AXIS_ACCELEROMETER_X] = tiltX;
+	HLEPlugins::PluginDataAxis[JOYSTICK_AXIS_ACCELEROMETER_Y] = tiltY;
+	HLEPlugins::PluginDataAxis[JOYSTICK_AXIS_ACCELEROMETER_Z] = tiltZ;
 }
 
-void System_PostUIMessage(const std::string &message, const std::string &value) {
+void System_PostUIMessage(UIMessage message, const std::string &value) {
 	std::lock_guard<std::mutex> lock(pendingMutex);
 	PendingMessage pendingMessage;
-	pendingMessage.msg = message;
+	pendingMessage.message = message;
 	pendingMessage.value = value;
 	pendingMessages.push_back(pendingMessage);
 }

@@ -306,7 +306,7 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 
 	//in case we didn't go through EmuScreen::boot
 	g_Config.loadGameConfig(id, g_paramSFO.GetValueString("TITLE"));
-	System_PostUIMessage("config_loaded", "");
+	System_PostUIMessage(UIMessage::CONFIG_LOADED);
 	INFO_LOG(LOADER, "Loading %s...", bootpath.c_str());
 
 	PSPLoaders_Shutdown();
@@ -382,7 +382,7 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 	std::string file = full_path.GetFilename();
 
 	if (full_path.Type() == PathType::CONTENT_URI) {
-		path = AndroidContentURI(full_path.GetDirectory().c_str()).FilePath();
+		path = AndroidContentURI(full_path.GetDirectory()).FilePath();
 	}
 
 	size_t pos = path.find("PSP/GAME/");

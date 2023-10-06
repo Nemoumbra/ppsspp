@@ -122,7 +122,11 @@ void PopupMultiChoice::UpdateText() {
 	if (index < 0 || index >= numChoices_) {
 		valueText_ = "(invalid choice)";  // Shouldn't happen. Should be no need to translate this.
 	} else {
-		valueText_ = T(category_, choices_[index]);
+		if (choices_[index]) {
+			valueText_ = T(category_, choices_[index]);
+		} else {
+			valueText_ = "";
+		}
 	}
 }
 
@@ -265,7 +269,7 @@ std::string PopupSliderChoiceFloat::ValueText() const {
 	temp[0] = '\0';
 	if (zeroLabel_.size() && *value_ == 0.0f) {
 		truncate_cpy(temp, zeroLabel_.c_str());
-	} else if (IsValidNumberFormatString(fmt_.c_str())) {
+	} else if (IsValidNumberFormatString(fmt_)) {
 		snprintf(temp, sizeof(temp), fmt_.c_str(), *value_);
 	} else {
 		snprintf(temp, sizeof(temp), "%0.2f", *value_);

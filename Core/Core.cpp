@@ -209,30 +209,12 @@ void UpdateRunLoop(GraphicsContext *ctx) {
 
 // Note: not used on Android.
 void Core_RunLoop(GraphicsContext *ctx) {
-	float refreshRate = System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE);
-
 	if (windowHidden && g_Config.bPauseWhenMinimized) {
 		sleep_ms(16);
 		return;
 	}
 
-	bool menuThrottle = (GetUIState() != UISTATE_INGAME || !PSP_IsInited()) && GetUIState() != UISTATE_EXIT;
-
-	double startTime;
-	if (menuThrottle) {
-		startTime = time_now_d();
-	}
-
 	NativeFrame(ctx);
-
-	if (menuThrottle) {
-		// Simple throttling to not burn the GPU in the menu.
-		// TODO: This should move into NativeFrame. Also, it's only necessary in MAILBOX or IMMEDIATE presentation modes.
-		double diffTime = time_now_d() - startTime;
-		int sleepTime = (int)(1000.0 / refreshRate) - (int)(diffTime * 1000.0);
-		if (sleepTime > 0)
-			sleep_ms(sleepTime);
-	}
 }
 
 void Core_DoSingleStep() {

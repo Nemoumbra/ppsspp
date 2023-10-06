@@ -19,6 +19,7 @@
 #if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
 
 #include <cstddef>
+#include "Common/StringUtils.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/x86/X64IRJit.h"
@@ -63,6 +64,8 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 		SetBlockCheckedOffset(block_num, (int)GetOffset(GetCodePointer()));
 		wroteCheckedOffset = true;
 
+		WriteDebugPC(startPC);
+
 		// TODO: See if we can get flags to always have the downcount compare.
 		if (jo.downcountInRegister) {
 			TEST(32, R(DOWNCOUNTREG), R(DOWNCOUNTREG));
@@ -79,15 +82,16 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 	const u8 *blockStart = GetCodePointer();
 	block->SetTargetOffset((int)GetOffset(blockStart));
 	compilingBlockNum_ = block_num;
+	lastConstPC_ = 0;
 
 	regs_.Start(block);
 
-	std::map<const u8 *, int> addresses;
+	std::vector<const u8 *> addresses;
+	addresses.reserve(block->GetNumInstructions());
 	for (int i = 0; i < block->GetNumInstructions(); ++i) {
 		const IRInst &inst = block->GetInstructions()[i];
 		regs_.SetIRIndex(i);
-		// TODO: This might be a little wasteful when compiling if we're not debugging jit...
-		addresses[GetCodePtr()] = i;
+		addresses.push_back(GetCodePtr());
 
 		CompileIRInst(inst);
 
@@ -120,6 +124,8 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 	}
 
 	if (jo.enableBlocklink && jo.useBackJump) {
+		WriteDebugPC(startPC);
+
 		if (jo.downcountInRegister) {
 			TEST(32, R(DOWNCOUNTREG), R(DOWNCOUNTREG));
 		} else {
@@ -134,10 +140,14 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 	if (logBlocks_ > 0) {
 		--logBlocks_;
 
+		std::map<const u8 *, int> addressesLookup;
+		for (int i = 0; i < (int)addresses.size(); ++i)
+			addressesLookup[addresses[i]] = i;
+
 		INFO_LOG(JIT, "=============== x86 (%08x, %d bytes) ===============", startPC, len);
 		for (const u8 *p = blockStart; p < GetCodePointer(); ) {
-			auto it = addresses.find(p);
-			if (it != addresses.end()) {
+			auto it = addressesLookup.find(p);
+			if (it != addressesLookup.end()) {
 				const IRInst &inst = block->GetInstructions()[it->second];
 
 				char temp[512];
@@ -146,7 +156,7 @@ bool X64JitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) {
 			}
 
 			auto next = std::next(it);
-			const u8 *nextp = next == addresses.end() ? GetCodePointer() : next->first;
+			const u8 *nextp = next == addressesLookup.end() ? GetCodePointer() : next->first;
 
 			auto lines = DisassembleX86(p, (int)(nextp - p));
 			for (const auto &line : lines)
@@ -214,11 +224,13 @@ void X64JitBackend::CompIR_Generic(IRInst inst) {
 
 	FlushAll();
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::IR_INTERPRET);
 #if PPSSPP_ARCH(AMD64)
 	ABI_CallFunctionP((const void *)&DoIRInst, (void *)value);
 #else
 	ABI_CallFunctionCC((const void *)&DoIRInst, (u32)(value & 0xFFFFFFFF), (u32)(value >> 32));
 #endif
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 
 	// We only need to check the return value if it's a potential exit.
@@ -236,10 +248,12 @@ void X64JitBackend::CompIR_Interpret(IRInst inst) {
 	// IR protects us against this being a branching instruction (well, hopefully.)
 	FlushAll();
 	SaveStaticRegisters();
+	WriteDebugProfilerStatus(IRProfilerStatus::INTERPRET);
 	if (DebugStatsEnabled()) {
 		ABI_CallFunctionP((const void *)&NotifyMIPSInterpret, (void *)MIPSGetName(op));
 	}
 	ABI_CallFunctionC((const void *)MIPSGetInterpretFunc(op), inst.constant);
+	WriteDebugProfilerStatus(IRProfilerStatus::IN_JIT);
 	LoadStaticRegisters();
 }
 
@@ -265,7 +279,31 @@ bool X64JitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 	} else if (ptr == applyRoundingMode_) {
 		name = "applyRoundingMode";
 	} else if (ptr >= GetBasePtr() && ptr < GetBasePtr() + jitStartOffset_) {
-		name = "fixedCode";
+		if (ptr == constants.noSignMask) {
+			name = "constants.noSignMask";
+		} else if (ptr == constants.signBitAll) {
+			name = "constants.signBitAll";
+		} else if (ptr == constants.positiveZeroes) {
+			name = "constants.positiveZeroes";
+		} else if (ptr == constants.positiveInfinity) {
+			name = "constants.positiveInfinity";
+		} else if (ptr == constants.positiveOnes) {
+			name = "constants.positiveOnes";
+		} else if (ptr == constants.negativeOnes) {
+			name = "constants.negativeOnes";
+		} else if (ptr == constants.qNAN) {
+			name = "constants.qNAN";
+		} else if (ptr == constants.maxIntBelowAsFloat) {
+			name = "constants.maxIntBelowAsFloat";
+		} else if ((const float *)ptr >= constants.mulTableVi2f && (const float *)ptr < constants.mulTableVi2f + 32) {
+			name = StringFromFormat("constants.mulTableVi2f[%d]", (int)((const float *)ptr - constants.mulTableVi2f));
+		} else if ((const float *)ptr >= constants.mulTableVf2i && (const float *)ptr < constants.mulTableVf2i + 32) {
+			name = StringFromFormat("constants.mulTableVf2i[%d]", (int)((const float *)ptr - constants.mulTableVf2i));
+		} else if ((const Float4Constant *)ptr >= constants.vec4InitValues && (const Float4Constant *)ptr < constants.vec4InitValues + 8) {
+			name = StringFromFormat("constants.vec4InitValues[%d]", (int)((const Float4Constant *)ptr - constants.vec4InitValues));
+		} else {
+			name = "fixedCode";
+		}
 	} else {
 		return IRNativeBackend::DescribeCodePtr(ptr, name);
 	}
@@ -318,6 +356,21 @@ void X64JitBackend::MovFromPC(X64Reg r) {
 
 void X64JitBackend::MovToPC(X64Reg r) {
 	MOV(32, MDisp(CTXREG, pcOffset), R(r));
+}
+
+void X64JitBackend::WriteDebugPC(uint32_t pc) {
+	if (hooks_.profilerPC)
+		MOV(32, M(hooks_.profilerPC), Imm32(pc));
+}
+
+void X64JitBackend::WriteDebugPC(Gen::X64Reg r) {
+	if (hooks_.profilerPC)
+		MOV(32, M(hooks_.profilerPC), R(r));
+}
+
+void X64JitBackend::WriteDebugProfilerStatus(IRProfilerStatus status) {
+	if (hooks_.profilerPC)
+		MOV(32, M(hooks_.profilerStatus), Imm32((int32_t)status));
 }
 
 void X64JitBackend::SaveStaticRegisters() {

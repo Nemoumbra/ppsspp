@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <string>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 #ifdef _MSC_VER
@@ -83,6 +84,9 @@ std::string StringFromInt(int value);
 std::string StripSpaces(const std::string &s);
 std::string StripQuotes(const std::string &s);
 
+std::string_view StripSpaces(std::string_view s);
+std::string_view StripQuotes(std::string_view s);
+
 void SplitString(const std::string& str, const char delim, std::vector<std::string>& output);
 
 void GetQuotedStrings(const std::string& str, std::vector<std::string>& output);
@@ -123,4 +127,6 @@ bool SplitPath(const std::string& full_path, std::string* _pPath, std::string* _
 
 // Replaces %1, %2, %3 in format with arg1, arg2, arg3.
 // Much safer than snprintf and friends.
-std::string ApplySafeSubstitutions(const char *format, const std::string &string1, const std::string &string2 = "", const std::string &string3 = "");
+// For mixes of strings and ints, manually convert the ints to strings.
+std::string ApplySafeSubstitutions(const char *format, std::string_view string1, std::string_view string2 = "", std::string_view string3 = "", std::string_view string4 = "");
+std::string ApplySafeSubstitutions(const char *format, int i1, int i2 = 0, int i3 = 0, int i4 = 0);
