@@ -968,7 +968,9 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	const void *verts = Memory::GetPointerUnchecked(gstate_c.vertexAddr);
 	const void *inds = nullptr;
 
-	bool canExtend = true;
+	bool isTriangle = IsTrianglePrim(prim);
+
+	bool canExtend = isTriangle;
 	u32 vertexType = gstate.vertType;
 	if ((vertexType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		u32 indexAddr = gstate_c.indexAddr;
@@ -987,7 +989,9 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	int cullMode = gstate.getCullMode();
 
 	uint32_t vertTypeID = GetVertTypeID(vertexType, gstate.getUVGenMode(), g_Config.bSoftwareSkinning);
-	drawEngineCommon_->SubmitPrim(verts, inds, prim, count, vertTypeID, cullMode, &bytesRead);
+	if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, vertTypeID, true, &bytesRead)) {
+		canExtend = false;
+	}
 	// After drawing, we advance the vertexAddr (when non indexed) or indexAddr (when indexed).
 	// Some games rely on this, they don't bother reloading VADDR and IADDR.
 	// The VADDR/IADDR registers are NOT updated.
@@ -1006,8 +1010,6 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 
 	uint32_t vtypeCheckMask = g_Config.bSoftwareSkinning ? (~GE_VTYPE_WEIGHTCOUNT_MASK) : 0xFFFFFFFF;
 
-	bool isTriangle = IsTrianglePrim(prim);
-
 	if (debugRecording_)
 		goto bail;
 
@@ -1022,27 +1024,32 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 			// TODO: more efficient updating of verts/inds
 
 			u32 count = data & 0xFFFF;
+			bool clockwise = !gstate.isCullEnabled() || gstate.getCullMode() == cullMode;
 			if (canExtend) {
 				// Non-indexed draws can be cheaply merged if vertexAddr hasn't changed, that means the vertices
 				// are consecutive in memory.
 				_dbg_assert_((vertexType & GE_VTYPE_IDX_MASK) == GE_VTYPE_IDX_NONE);
-				if (drawEngineCommon_->ExtendNonIndexedPrim(newPrim, count, vertTypeID, cullMode, &bytesRead)) {
-					gstate_c.vertexAddr += bytesRead;
-					totalVertCount += count;
-					break;
+				int commandsExecuted = drawEngineCommon_->ExtendNonIndexedPrim(src, stall, vertTypeID, clockwise, &bytesRead, isTriangle);
+				if (!commandsExecuted) {
+					goto bail;
 				}
+				src += commandsExecuted - 1;
+				gstate_c.vertexAddr += bytesRead;
+				totalVertCount += count;
+				break;
 			}
 
-			// Failed, or can't extend? Do a normal submit.
 			verts = Memory::GetPointerUnchecked(gstate_c.vertexAddr);
 			inds = nullptr;
 			if ((vertexType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 				inds = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 			} else {
 				// We can extend again after submitting a normal draw.
-				canExtend = true;
+				canExtend = isTriangle;
 			}
-			drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, vertTypeID, cullMode, &bytesRead);
+			if (!drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, vertTypeID, clockwise, &bytesRead)) {
+				canExtend = false;
+			}
 			AdvanceVerts(vertexType, count, bytesRead);
 			totalVertCount += count;
 			break;
@@ -1052,9 +1059,9 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 			uint32_t diff = data ^ vertexType;
 			// don't mask upper bits, vertexType is unmasked
 			if (diff) {
-				drawEngineCommon_->FlushSkin();
 				if (diff & vtypeCheckMask)
 					goto bail;
+				drawEngineCommon_->FlushSkin();
 				canExtend = false;  // TODO: Might support extending between some vertex types in the future.
 				vertexType = data;
 				vertTypeID = GetVertTypeID(vertexType, gstate.getUVGenMode(), g_Config.bSoftwareSkinning);
@@ -1678,15 +1685,14 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 	return snprintf(buffer, size,
 		"DL processing time: %0.2f ms, %d drawsync, %d listsync\n"
 		"Draw: %d (%d dec), flushes %d, clears %d, bbox jumps %d (%d updates)\n"
-		"Cached draws: %d (tracked: %d)\n"
-		"Vertices: %d cached: %d uncached: %d\n"
+		"Vertices: %d drawn: %d\n"
 		"FBOs active: %d (evaluations: %d)\n"
 		"Textures: %d, dec: %d, invalidated: %d, hashed: %d kB\n"
 		"readbacks %d (%d non-block), uploads %d, depal %d\n"
 		"block transfers: %d\n"
 		"replacer: tracks %d references, %d unique textures\n"
 		"Cpy: depth %d, color %d, reint %d, blend %d, self %d\n"
-		"GPU cycles: %d (%f per vertex)\n%s",
+		"GPU cycles: %d (%0.1f per vertex)\n%s",
 		gpuStats.msProcessingDisplayLists * 1000.0f,
 		gpuStats.numDrawSyncs,
 		gpuStats.numListSyncs,
@@ -1696,10 +1702,7 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numClears,
 		gpuStats.numBBOXJumps,
 		gpuStats.numPlaneUpdates,
-		gpuStats.numCachedDrawCalls,
-		gpuStats.numTrackedVertexArrays,
 		gpuStats.numVertsSubmitted,
-		gpuStats.numCachedVertsDrawn,
 		gpuStats.numUncachedVertsDrawn,
 		(int)framebufferManager_->NumVFBs(),
 		gpuStats.numFramebufferEvaluations,

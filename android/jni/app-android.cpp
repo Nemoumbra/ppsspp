@@ -1448,8 +1448,14 @@ static void VulkanEmuThread(ANativeWindow *wnd);
 extern "C" bool JNICALL Java_org_ppsspp_ppsspp_NativeActivity_runVulkanRenderLoop(JNIEnv * env, jobject obj, jobject _surf) {
 	_assert_(!useCPUThread);
 
+	if (!graphicsContext) {
+		ERROR_LOG(G3D, "runVulkanRenderLoop: Tried to enter without a created graphics context.");
+		return false;
+	}
+
 	if (g_vulkanRenderLoopThread.joinable()) {
 		ERROR_LOG(G3D, "runVulkanRenderLoop: Already running");
+		return false;
 	}
 
 	ANativeWindow *wnd = _surf ? ANativeWindow_fromSurface(env, _surf) : nullptr;

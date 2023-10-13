@@ -338,7 +338,7 @@ void VulkanQueueRunner::PreprocessSteps(std::vector<VKRStep *> &steps) {
 	}
 }
 
-void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, FrameData &frameData, FrameDataShared &frameDataShared, bool keepSteps) {
+void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, FrameData &frameData, FrameDataShared &frameDataShared, bool keepSteps) {
 	QueueProfileContext *profile = frameData.profile.enabled ? &frameData.profile : nullptr;
 
 	if (profile)
@@ -394,7 +394,7 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, FrameData &frame
 					vkCmdBeginDebugUtilsLabelEXT(cmd, &labelInfo);
 				}
 			}
-			PerformRenderPass(step, cmd);
+			PerformRenderPass(step, cmd, curFrame);
 			break;
 		case VKRStepType::COPY:
 			PerformCopy(step, cmd);
@@ -876,9 +876,6 @@ void VulkanQueueRunner::LogRenderPass(const VKRStep &pass, bool verbose) {
 			case VKRRenderCommand::BIND_GRAPHICS_PIPELINE:
 				INFO_LOG(G3D, "  BindGraphicsPipeline(%x)", (int)(intptr_t)cmd.graphics_pipeline.pipeline);
 				break;
-			case VKRRenderCommand::BIND_COMPUTE_PIPELINE:
-				INFO_LOG(G3D, "  BindComputePipeline(%x)", (int)(intptr_t)cmd.compute_pipeline.pipeline);
-				break;
 			case VKRRenderCommand::BLEND:
 				INFO_LOG(G3D, "  BlendColor(%08x)", cmd.blendColor.color);
 				break;
@@ -1103,7 +1100,7 @@ void TransitionFromOptimal(VkCommandBuffer cmd, VkImage colorImage, VkImageLayou
 	}
 }
 
-void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer cmd) {
+void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer cmd, int curFrame) {
 	for (size_t i = 0; i < step.preTransitions.size(); i++) {
 		const TransitionRequest &iter = step.preTransitions[i];
 		if (iter.aspect == VK_IMAGE_ASPECT_COLOR_BIT && iter.fb->color.layout != iter.targetLayout) {
@@ -1199,6 +1196,7 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 	// The stencil ones are very commonly mostly redundant so let's eliminate them where possible.
 	// Might also want to consider scissor and viewport.
 	VkPipeline lastPipeline = VK_NULL_HANDLE;
+	FastVec<PendingDescSet> *descSets = nullptr;
 	VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
 	bool pipelineOK = false;
@@ -1241,7 +1239,9 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 
 				if (pipeline != VK_NULL_HANDLE) {
 					vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-					pipelineLayout = c.pipeline.pipelineLayout;
+					descSets = &c.graphics_pipeline.pipelineLayout->frameData[curFrame].descSets_;
+					pipelineLayout = c.graphics_pipeline.pipelineLayout->pipelineLayout;
+					_dbg_assert_(pipelineLayout != VK_NULL_HANDLE);
 					lastGraphicsPipeline = graphicsPipeline;
 					pipelineOK = true;
 				} else {
@@ -1252,20 +1252,6 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 				lastStencilWriteMask = -1;
 				lastStencilCompareMask = -1;
 				lastStencilReference = -1;
-			}
-			break;
-		}
-
-		case VKRRenderCommand::BIND_COMPUTE_PIPELINE:
-		{
-			VKRComputePipeline *computePipeline = c.compute_pipeline.pipeline;
-			if (computePipeline != lastComputePipeline) {
-				VkPipeline pipeline = computePipeline->pipeline->BlockUntilReady();
-				if (pipeline != VK_NULL_HANDLE) {
-					vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-					pipelineLayout = c.pipeline.pipelineLayout;
-					lastComputePipeline = computePipeline;
-				}
 			}
 			break;
 		}
@@ -1336,7 +1322,9 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 
 		case VKRRenderCommand::DRAW_INDEXED:
 			if (pipelineOK) {
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &c.drawIndexed.ds, c.drawIndexed.numUboOffsets, c.drawIndexed.uboOffsets);
+				VkDescriptorSet set = (*descSets)[c.drawIndexed.descSetIndex].set;
+				_dbg_assert_(set != VK_NULL_HANDLE);
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, c.drawIndexed.numUboOffsets, c.drawIndexed.uboOffsets);
 				vkCmdBindIndexBuffer(cmd, c.drawIndexed.ibuffer, c.drawIndexed.ioffset, VK_INDEX_TYPE_UINT16);
 				VkDeviceSize voffset = c.drawIndexed.voffset;
 				vkCmdBindVertexBuffers(cmd, 0, 1, &c.drawIndexed.vbuffer, &voffset);
@@ -1346,7 +1334,9 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 
 		case VKRRenderCommand::DRAW:
 			if (pipelineOK) {
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &c.draw.ds, c.draw.numUboOffsets, c.draw.uboOffsets);
+				VkDescriptorSet set = (*descSets)[c.drawIndexed.descSetIndex].set;
+				_dbg_assert_(set != VK_NULL_HANDLE);
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, c.draw.numUboOffsets, c.draw.uboOffsets);
 				if (c.draw.vbuffer) {
 					vkCmdBindVertexBuffers(cmd, 0, 1, &c.draw.vbuffer, &c.draw.voffset);
 				}

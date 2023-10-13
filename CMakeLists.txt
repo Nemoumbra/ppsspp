@@ -220,7 +220,7 @@ else()
 	set(CoreLinkType STATIC)
 endif()
 
-if(NOT ANDROID AND NOT WIN32 AND NOT APPLE)
+if(NOT ANDROID AND NOT WIN32 AND (NOT APPLE OR IOS))
 	set(HTTPS_NOT_AVAILABLE ON)
 endif()
 
@@ -712,6 +712,8 @@ add_library(Common STATIC
 	Common/GPU/Vulkan/VulkanDebug.h
 	Common/GPU/Vulkan/VulkanContext.cpp
 	Common/GPU/Vulkan/VulkanContext.h
+	Common/GPU/Vulkan/VulkanDescSet.cpp
+	Common/GPU/Vulkan/VulkanDescSet.h
 	Common/GPU/Vulkan/VulkanFramebuffer.cpp
 	Common/GPU/Vulkan/VulkanFramebuffer.h
 	Common/GPU/Vulkan/VulkanImage.cpp

@@ -184,7 +184,9 @@ void DrawEngineCommon::DispatchSubmitImm(GEPrimitiveType prim, TransformedVertex
 
 	int bytesRead;
 	uint32_t vertTypeID = GetVertTypeID(vtype, 0, decOptions_.applySkinInDecode);
-	SubmitPrim(&temp[0], nullptr, prim, vertexCount, vertTypeID, cullMode, &bytesRead);
+
+	bool clockwise = !gstate.isCullEnabled() || gstate.getCullMode() == cullMode;
+	SubmitPrim(&temp[0], nullptr, prim, vertexCount, vertTypeID, clockwise, &bytesRead);
 	DispatchFlush();
 
 	if (!prevThrough) {
@@ -573,77 +575,6 @@ void DrawEngineCommon::ApplyFramebufferRead(FBOTexState *fboTexState) {
 	gstate_c.Dirty(DIRTY_SHADERBLEND);
 }
 
-inline u32 ComputeMiniHashRange(const void *ptr, size_t sz) {
-	// Switch to u32 units, and round up to avoid unaligned accesses.
-	// Probably doesn't matter if we skip the first few bytes in some cases.
-	const u32 *p = (const u32 *)(((uintptr_t)ptr + 3) & ~3);
-	sz >>= 2;
-
-	if (sz > 100) {
-		size_t step = sz / 4;
-		u32 hash = 0;
-		for (size_t i = 0; i < sz; i += step) {
-			hash += XXH3_64bits(p + i, 100);
-		}
-		return hash;
-	} else {
-		return p[0] + p[sz - 1];
-	}
-}
-
-u32 DrawEngineCommon::ComputeMiniHash() {
-	u32 fullhash = 0;
-	const int vertexSize = dec_->GetDecVtxFmt().stride;
-	const int indexSize = IndexSize(dec_->VertexType());
-
-	int step;
-	if (numDrawVerts_ < 3) {
-		step = 1;
-	} else if (numDrawVerts_ < 8) {
-		step = 4;
-	} else {
-		step = numDrawVerts_ / 8;
-	}
-	for (int i = 0; i < numDrawVerts_; i += step) {
-		const DeferredVerts &dc = drawVerts_[i];
-		fullhash += ComputeMiniHashRange((const u8 *)dc.verts + vertexSize * dc.indexLowerBound, vertexSize * (dc.indexUpperBound - dc.indexLowerBound));
-	}
-	for (int i = 0; i < numDrawInds_; i += step) {
-		const DeferredInds &di = drawInds_[i];
-		if (di.inds) {
-			fullhash += ComputeMiniHashRange(di.inds, indexSize * di.vertexCount);
-		}
-	}
-
-	return fullhash;
-}
-
-// Cheap bit scrambler from https://nullprogram.com/blog/2018/07/31/
-inline uint32_t lowbias32_r(uint32_t x) {
-	x ^= x >> 16;
-	x *= 0x43021123U;
-	x ^= x >> 15 ^ x >> 30;
-	x *= 0x1d69e2a5U;
-	x ^= x >> 16;
-	return x;
-}
-
-uint32_t DrawEngineCommon::ComputeDrawcallsHash() const {
-	uint32_t dcid = 0;
-	for (int i = 0; i < numDrawVerts_; i++) {
-		u32 dhash = dcid;
-		dhash = __rotl(dhash ^ (u32)(uintptr_t)drawVerts_[i].verts, 13);
-		dhash = __rotl(dhash ^ (u32)drawInds_[i].vertexCount, 11);
-		dcid = lowbias32_r(dhash ^ (u32)drawInds_[i].prim);
-	}
-	for (int j = 0; j < numDrawInds_; j++) {
-		u32 dhash = dcid;
-		dhash = __rotl(dhash ^ (u32)(uintptr_t)drawInds_[j].inds, 19);
-		dcid = lowbias32_r(__rotl(dhash ^ (u32)drawInds_[j].indexType, 7));
-	}
-	return dcid;
-}
-
 int DrawEngineCommon::ComputeNumVertsToDecode() const {
 	int sum = 0;
 	for (int i = 0; i < numDrawVerts_; i++) {
@@ -652,61 +583,48 @@ int DrawEngineCommon::ComputeNumVertsToDecode() const {
 	return sum;
 }
 
-uint64_t DrawEngineCommon::ComputeHash() {
-	uint64_t fullhash = 0;
-	const int vertexSize = dec_->GetDecVtxFmt().stride;
-
-	// TODO: Add some caps both for numDrawCalls_ and num verts to check?
-	// It is really very expensive to check all the vertex data so often.
-	for (int i = 0; i < numDrawVerts_; i++) {
-		const DeferredVerts &dv = drawVerts_[i];
-		int indexLowerBound = dv.indexLowerBound, indexUpperBound = dv.indexUpperBound;
-		fullhash += XXH3_64bits((const char *)dv.verts + vertexSize * indexLowerBound, vertexSize * (indexUpperBound - indexLowerBound));
-	}
-
-	for (int i = 0; i < numDrawInds_; i++) {
-		const DeferredInds &di = drawInds_[i];
-		if (di.indexType != 0) {
-			int indexSize = IndexSize(di.indexType << GE_VTYPE_IDX_SHIFT);
-			// Hm, we will miss some indices when combining above, but meh, it should be fine.
-			fullhash += XXH3_64bits((const char *)di.inds, indexSize * di.vertexCount);
-		}
-	}
-
-	// this looks utterly broken??
-	// fullhash += XXH3_64bits(&drawCalls_[0].uvScale, sizeof(drawCalls_[0].uvScale) * numDrawCalls_);
-	return fullhash;
-}
-
-bool DrawEngineCommon::ExtendNonIndexedPrim(GEPrimitiveType prim, int vertexCount, u32 vertTypeID, int cullMode, int *bytesRead) {
-	if (numDrawInds_ >= MAX_DEFERRED_DRAW_INDS || vertexCountInDrawCalls_ + vertexCount > VERTEX_BUFFER_MAX) {
-		return false;
-	}
-
-	_dbg_assert_(numDrawInds_ < MAX_DEFERRED_DRAW_INDS);
-	_dbg_assert_(numDrawVerts_ > 0);
-	*bytesRead = vertexCount * dec_->VertexSize();
-
-	DeferredInds &di = drawInds_[numDrawInds_++];
-	di.inds = nullptr;
-	di.indexType = 0;
-	di.prim = prim;
-	di.cullMode = cullMode;
-	di.vertexCount = vertexCount;
-	di.vertDecodeIndex = numDrawVerts_ - 1;
-
-	DeferredVerts &dv = drawVerts_[numDrawVerts_ - 1];
+int DrawEngineCommon::ExtendNonIndexedPrim(const uint32_t *cmd, const uint32_t *stall, u32 vertTypeID, bool clockwise, int *bytesRead, bool isTriangle) {
+	const uint32_t *start = cmd;
+	int prevDrawVerts = numDrawVerts_ - 1;
+	DeferredVerts &dv = drawVerts_[prevDrawVerts];
 	int offset = dv.vertexCount;
-	di.offset = offset;
-	dv.vertexCount += vertexCount;
-	dv.indexUpperBound = dv.vertexCount - 1;
-	vertexCountInDrawCalls_ += vertexCount;
 
-	return true;
+	_dbg_assert_(numDrawInds_ <= MAX_DEFERRED_DRAW_INDS);  // if it's equal, the check below will take care of it before any action is taken.
+	_dbg_assert_(numDrawVerts_ > 0);
+
+	while (cmd != stall) {
+		uint32_t data = *cmd;
+		if ((data & 0xFFF80000) != 0x04000000) {
+			break;
+		}
+		GEPrimitiveType newPrim = static_cast<GEPrimitiveType>((data >> 16) & 7);
+		if (IsTrianglePrim(newPrim) != isTriangle)
+			break;
+		int vertexCount = data & 0xFFFF;
+		if (numDrawInds_ >= MAX_DEFERRED_DRAW_INDS || vertexCountInDrawCalls_ + offset + vertexCount > VERTEX_BUFFER_MAX) {
+			break;
+		}
+		DeferredInds &di = drawInds_[numDrawInds_++];
+		di.indexType = 0;
+		di.prim = newPrim;
+		di.clockwise = clockwise;
+		di.vertexCount = vertexCount;
+		di.vertDecodeIndex = prevDrawVerts;
+		di.offset = offset;
+		offset += vertexCount;
+		cmd++;
+	}
+
+	int totalCount = offset - dv.vertexCount;
+	dv.vertexCount = offset;
+	dv.indexUpperBound = dv.vertexCount - 1;
+	vertexCountInDrawCalls_ += totalCount;
+	*bytesRead = totalCount * dec_->VertexSize();
+	return cmd - start;
 }
 
 // vertTypeID is the vertex type but with the UVGen mode smashed into the top bits.
-void DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, int cullMode, int *bytesRead) {
+bool DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, bool clockwise, int *bytesRead) {
 	if (!indexGen.PrimCompatible(prevPrim_, prim) || numDrawVerts_ >= MAX_DEFERRED_DRAW_VERTS || numDrawInds_ >= MAX_DEFERRED_DRAW_INDS || vertexCountInDrawCalls_ + vertexCount > VERTEX_BUFFER_MAX) {
 		DispatchFlush();
 	}
@@ -734,7 +652,7 @@ void DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimiti
 
 	// Check that we have enough vertices to form the requested primitive.
 	if (vertexCount < 3 && ((vertexCount < 2 && prim > 0) || (prim > GE_PRIM_LINE_STRIP && prim != GE_PRIM_RECTANGLES)))
-		return;
+		return false;
 
 	bool applySkin = (vertTypeID & GE_VTYPE_WEIGHT_MASK) && decOptions_.applySkinInDecode;
 
@@ -742,7 +660,7 @@ void DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimiti
 	di.inds = inds;
 	di.indexType = (vertTypeID & GE_VTYPE_IDX_MASK) >> GE_VTYPE_IDX_SHIFT;
 	di.prim = prim;
-	di.cullMode = cullMode;
+	di.clockwise = clockwise;
 	di.vertexCount = vertexCount;
 	di.vertDecodeIndex = numDrawVerts_;
 	di.offset = 0;
@@ -782,6 +700,7 @@ void DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimiti
 		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 		DispatchFlush();
 	}
+	return true;
 }
 
 void DrawEngineCommon::DecodeVerts(u8 *dest) {
@@ -807,10 +726,7 @@ void DrawEngineCommon::DecodeInds() {
 		const DeferredInds &di = drawInds_[i];
 
 		int indexOffset = drawVertexOffsets_[di.vertDecodeIndex] + di.offset;
-		bool clockwise = true;
-		if (gstate.isCullEnabled() && gstate.getCullMode() != di.cullMode) {
-			clockwise = false;
-		}
+		bool clockwise = di.clockwise;
 		// We've already collapsed subsequent draws with the same vertex pointer, so no tricky logic here anymore.
 		// 2. Loop through the drawcalls, translating indices as we go.
 		switch (di.indexType) {

@@ -96,8 +96,8 @@ public:
 	// This would seem to be unnecessary now, but is still required for splines/beziers to work in the software backend since SubmitPrim
 	// is different. Should probably refactor that.
 	// Note that vertTypeID should be computed using GetVertTypeID().
-	virtual void DispatchSubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, int cullMode, int *bytesRead) {
-		SubmitPrim(verts, inds, prim, vertexCount, vertTypeID, cullMode, bytesRead);
+	virtual void DispatchSubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, bool clockwise, int *bytesRead) {
+		SubmitPrim(verts, inds, prim, vertexCount, vertTypeID, clockwise, bytesRead);
 	}
 
 	virtual void DispatchSubmitImm(GEPrimitiveType prim, TransformedVertex *buffer, int vertexCount, int cullMode, bool continuation);
@@ -111,8 +111,8 @@ public:
 		}
 	}
 
-	bool ExtendNonIndexedPrim(GEPrimitiveType prim, int vertexCount, u32 vertTypeID, int cullMode, int *bytesRead);
-	void SubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, int cullMode, int *bytesRead);
+	int ExtendNonIndexedPrim(const uint32_t *cmd, const uint32_t *stall, u32 vertTypeID, bool clockwise, int *bytesRead, bool isTriangle);
+	bool SubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertTypeID, bool clockwise, int *bytesRead);
 	template<class Surface>
 	void SubmitCurve(const void *control_points, const void *indices, Surface &surface, u32 vertType, int *bytesRead, const char *scope);
 	void ClearSplineBezierWeights();
@@ -158,10 +158,6 @@ protected:
 
 	// Preprocessing for spline/bezier
 	u32 NormalizeVertices(u8 *outPtr, u8 *bufPtr, const u8 *inPtr, int lowerBound, int upperBound, u32 vertType, int *vertexSize = nullptr);
-
-	// Utility for vertex caching
-	u32 ComputeMiniHash();
-	uint64_t ComputeHash();
 
 	int ComputeNumVertsToDecode() const;
 
@@ -257,7 +253,7 @@ protected:
 		u8 vertDecodeIndex;  // index into the drawVerts_ array to look up the vertexOffset.
 		u8 indexType;
 		s8 prim;
-		u8 cullMode;
+		bool clockwise;
 		u16 offset;
 	};
 
@@ -271,7 +267,6 @@ protected:
 	int numDrawInds_ = 0;
 	int vertexCountInDrawCalls_ = 0;
 
-	int decimationCounter_ = 0;
 	int decodeVertsCounter_ = 0;
 	int decodeIndsCounter_ = 0;
 
