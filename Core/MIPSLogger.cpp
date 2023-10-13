@@ -3,6 +3,7 @@
 #include "Core/Core.h"
 #include "Core/Mips/MIPSDebugInterface.h"
 #include "Core/Debugger/Breakpoints.h"
+#include "Common/Log.h"
 #include <vector>
 
 // #include <map>
@@ -278,6 +279,7 @@ void MIPSLogger::stopLogger() {
 	/*if (output) {
 		output.close();
 	}*/
+	INFO_LOG(SYSTEM, "MIPSLogger stopped");
 	logging_on = false;
 }
 
@@ -303,7 +305,8 @@ bool MIPSLogger::flush_to_file(const std::string& filename) {
 
 bool MIPSLogger::startLogger() {
 	if (!cur_settings) return false;
-	if ((cur_settings->getLoggingMode() == LoggingMode::Normal) && !output) return false;
+	if ((cur_settings->getLoggingMode() == LoggingMode::Normal) && !output.is_open()) return false;
+	INFO_LOG(SYSTEM, "MIPSLogger started");
 	logging_on = true;
 	return true;
 }

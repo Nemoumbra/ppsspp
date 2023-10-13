@@ -77,6 +77,9 @@
 #include "GPU/GPUInterface.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 
+#include "Core/MIPSLogger.h"
+#include "Core/Core.h"
+
 #if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
 #include "UI/DarwinFileSystemServices.h"
 #endif
@@ -1698,6 +1701,19 @@ void DeveloperToolsScreen::CreateViews() {
 	CheckBox *allowDebugger = new CheckBox(&allowDebugger_, dev->T("Allow remote debugger"));
 	list->Add(allowDebugger)->OnClick.Handle(this, &DeveloperToolsScreen::OnRemoteDebugger);
 	allowDebugger->SetEnabledPtr(&canAllowDebugger_);
+	
+	MIPSLoggerEnabled_ = mipsLogger.isLogging();
+	CheckBox *MIPSLoggerEnabled = new CheckBox(&MIPSLoggerEnabled_, dev->T("MIPSLogger enabled"));
+	list->Add(MIPSLoggerEnabled)->OnClick.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerEnabled);
+	MIPSLoggerEnabled->SetEnabledFunc([]() {
+#if PPSSPP_PLATFORM(WINDOWS)
+		bool temp = g_Config.iCpuCore == static_cast<int>(CPUCore::INTERPRETER) && PSP_IsInited();
+		return temp && Core_IsStepping() && coreState != CORE_POWERDOWN;
+#else
+		return false;
+#endif
+	});
+	
 
 	list->Add(new CheckBox(&g_Config.bShowOnScreenMessages, dev->T("Show on-screen messages")));
 	list->Add(new CheckBox(&g_Config.bEnableLogging, dev->T("Enable Logging")))->OnClick.Handle(this, &DeveloperToolsScreen::OnLoggingChanged);
@@ -1891,6 +1907,16 @@ UI::EventReturn DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 	}
 	// Persist the setting.  Maybe should separate?
 	g_Config.bRemoteDebuggerOnStartup = allowDebugger_;
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerEnabled(UI::EventParams &e) {
+	if (MIPSLoggerEnabled_) {
+		mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+		mipsLogger.startLogger();
+	} else {
+		mipsLogger.stopLogger();
+	}
 	return UI::EVENT_DONE;
 }
 

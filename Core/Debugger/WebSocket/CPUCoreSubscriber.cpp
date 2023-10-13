@@ -25,7 +25,6 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
 #include "Core/Reporting.h"
-//#include "Core/MIPSLogger.h"
 #include "Core/ConfigValues.h"
 
 

@@ -41,7 +41,6 @@ MIPSState mipsr4k;
 MIPSState *currentMIPS = &mipsr4k;
 MIPSDebugInterface debugr4k(&mipsr4k);
 MIPSDebugInterface *currentDebugMIPS = &debugr4k;
-// MIPSLogger mipsLogger;
 
 u8 voffset[128];
 u8 fromvoffset[128];

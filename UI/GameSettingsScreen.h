@@ -149,6 +149,7 @@ private:
 	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
 	UI::EventReturn OnJitDebugTools(UI::EventParams &e);
 	UI::EventReturn OnRemoteDebugger(UI::EventParams &e);
+	UI::EventReturn OnMIPSLoggerEnabled(UI::EventParams &e);
 	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
 	UI::EventReturn OnFramedumpTest(UI::EventParams &e);
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
@@ -162,6 +163,8 @@ private:
 		MAYBE,
 	};
 	HasIni hasTexturesIni_ = HasIni::MAYBE;
+
+	bool MIPSLoggerEnabled_ = false;
 };
 
 class HostnameSelectScreen : public PopupScreen {
