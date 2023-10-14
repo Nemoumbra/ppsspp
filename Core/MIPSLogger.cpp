@@ -25,7 +25,7 @@ void MIPSLogger::LastNLines::store_line(const std::string & line, u32 lineCount)
 bool MIPSLogger::LastNLines::flush_to_file(const std::string & filename, u32 lineCount) {
 	std::ofstream output(filename);
 	if (!output) return false;
-	INFO_LOG(SYSTEM, "Cyclic buffer ordered to flush the logs to %s", filename.c_str());
+	INFO_LOG(MIPSLOGGER, "Cyclic buffer ordered to flush the logs to %s", filename.c_str());
 	if (lines.size() < lineCount) {
 		for (const auto& line : lines) {
 			output << line << "\n";
@@ -168,7 +168,7 @@ const std::map<u32, std::string>& MIPSLoggerSettings::getAdditionalInfo() const 
 
 void MIPSLoggerSettings::setLoggingMode(LoggingMode new_mode) {
 	mode = new_mode;
-	INFO_LOG(SYSTEM, "MIPSLogger mode changed to %d (%s)", static_cast<int>(mode), to_string(mode));
+	INFO_LOG(MIPSLOGGER, "MIPSLogger mode changed to %d (%s)", static_cast<int>(mode), to_string(mode));
 }
 
 void MIPSLoggerSettings::setMaxCount(u32 new_value) {
@@ -272,13 +272,14 @@ bool MIPSLogger::selectLogPath(const std::string& output_path) {
 	// let's open the file
 	if (output.is_open()) {
 		output.close();
-		INFO_LOG(SYSTEM, "The old MIPSLogger file closed (was %s)", logging_path.c_str());
+		INFO_LOG(MIPSLOGGER, "The old MIPSLogger file closed (was %s)", logging_path.c_str());
 	}
 	logging_path = output_path;
 
 	output.open(logging_path, std::ios_base::app);
-	if (!output) return false;
-	INFO_LOG(SYSTEM, "Opened the new MIPSLogger file %s", logging_path.c_str());
+	if (!output.is_open()) return false;
+	INFO_LOG(MIPSLOGGER, "Opened the new MIPSLogger file %s", logging_path.c_str());
+
 	return true;
 }
 
@@ -287,14 +288,11 @@ std::string MIPSLogger::getLoggingPath() const {
 }
 
 void MIPSLogger::stopLogger() {
-	/*if (output) {
-		output.close();
-	}*/
-	INFO_LOG(SYSTEM, "MIPSLogger stopped");
+	INFO_LOG(MIPSLOGGER, "MIPSLogger stopped");
 	logging_on = false;
 }
 
-bool MIPSLogger::flush_to_file(const std::string& filename) {
+bool MIPSLogger::flush_to_file() {
 	// filename is only used in the LogLastNLines mode
 
 	if (logging_on) {
@@ -302,7 +300,7 @@ bool MIPSLogger::flush_to_file(const std::string& filename) {
 	}
 	auto mode = cur_settings->getLoggingMode();
 	if (mode == LoggingMode::Normal) {
-		if (!output) return false;
+		if (!output.is_open()) return false;
 		for (const auto& log : logs_storage) {
 			output << log << "\n";
 		}
@@ -311,17 +309,15 @@ bool MIPSLogger::flush_to_file(const std::string& filename) {
 		return true;
 	}
 	auto lastLinesCount = cur_settings->getLineCount();
-	return cyclic_buffer.flush_to_file(filename, lastLinesCount);
+	return cyclic_buffer.flush_to_file(logging_path, lastLinesCount);
 }
 
 bool MIPSLogger::startLogger() {
 	if (!cur_settings) return false;
 	if ((cur_settings->getLoggingMode() == LoggingMode::Normal) && !output.is_open()) return false;
-	INFO_LOG(SYSTEM, "MIPSLogger started");
+	INFO_LOG(MIPSLOGGER, "MIPSLogger started");
 	logging_on = true;
 	return true;
 }
 
 MIPSLogger mipsLogger;
-
-// std::shared_ptr<MIPSLoggerSettings> default_MIPSLogger_settings;

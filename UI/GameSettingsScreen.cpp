@@ -1750,6 +1750,16 @@ void DeveloperToolsScreen::CreateViews() {
 	MIPSLoggingPath_ = mipsLogger.getLoggingPath();
 	MIPSLoggingPath = list->Add(new InfoItem(dev->T("Current log file"), MIPSLoggingPath_));
 
+	Button *test = list->Add(new Button(dev->T("Flush logs")));
+	test->OnClick.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerFlushLogs);
+	test->SetEnabledFunc([]() {
+#if PPSSPP_PLATFORM(WINDOWS)
+		return mipsLogger.cur_settings->getLoggingMode() == LoggingMode::LogLastNLines;
+#else
+		return false;
+#endif
+	});
+
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
 
 	list->Add(new ItemHeader(dev->T("Ubershaders")));
@@ -1959,6 +1969,14 @@ UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerPathChanged(UI::EventParams &e
 		MIPSLoggingPath_ = std::move(fn);
 		MIPSLoggingPath->SetRightText(MIPSLoggingPath_);
 	}
+#endif
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerFlushLogs(UI::EventParams &e) {
+	// Let's ban the non-Windows platforms with force
+#if PPSSPP_PLATFORM(WINDOWS)
+	mipsLogger.flush_to_file();
 #endif
 	return UI::EVENT_DONE;
 }

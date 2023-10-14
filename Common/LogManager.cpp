@@ -98,6 +98,7 @@ static const char *g_logTypeNames[] = {
 	"ACHIEVEMENTS",
 	"HTTP",
 	"PRINTF",
+	"MIPSLOGGER",
 
 	"SCEAUDIO",
 	"SCECTRL",

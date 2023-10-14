@@ -47,6 +47,7 @@ enum class LogType {
 	ACHIEVEMENTS,
 	HTTP,
 	PRINTF,
+	MIPSLOGGER,
 
 	SCEAUDIO,
 	SCECTRL,

@@ -102,7 +102,7 @@ public:
 	bool selectLogPath(const std::string& output_path);
 	std::string getLoggingPath() const;
 	void stopLogger();
-	bool flush_to_file(const std::string& filename = "");
+	bool flush_to_file();
 
 	bool startLogger();
 };

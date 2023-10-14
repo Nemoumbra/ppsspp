@@ -152,6 +152,7 @@ private:
 	UI::EventReturn OnMIPSLoggerEnabled(UI::EventParams &e);
 	UI::EventReturn OnMIPSLoggerModeChanged(UI::EventParams &e);
 	UI::EventReturn OnMIPSLoggerPathChanged(UI::EventParams &e);
+	UI::EventReturn OnMIPSLoggerFlushLogs(UI::EventParams &e);
 	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
 	UI::EventReturn OnFramedumpTest(UI::EventParams &e);
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);

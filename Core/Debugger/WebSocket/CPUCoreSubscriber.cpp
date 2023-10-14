@@ -157,12 +157,12 @@ void WebSocketCPUFlushLogs(DebuggerRequest &req) {
 	if (mipsLogger.isLogging()) {
 		return req.Fail("Logging is on");
 	}
-	std::string filename;
-	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
-		return;
-	}
+	// std::string filename;
+	// if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
+	//     return;
+	// }
 
-	mipsLogger.flush_to_file(filename);
+	mipsLogger.flush_to_file();
 	req.Respond();
 	return;
 }
