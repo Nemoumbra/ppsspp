@@ -125,8 +125,6 @@ void WebSocketCPUStartLogging(DebuggerRequest &req) {
 
 	std::string filename;
 
-	mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
-
 	if (!req.ParamString("filename", &filename, DebuggerParamType::OPTIONAL)) {
 		if (!mipsLogger.startLogger()) {
 			return;
@@ -170,8 +168,7 @@ void WebSocketCPUFlushLogs(DebuggerRequest &req) {
 }
 
 void WebSocketCPUGetLoggingSettings(DebuggerRequest &req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 	
 	JsonWriter& json = req.Respond();
 	json.writeUint("maxCount", settings->getMaxCount());
@@ -184,8 +181,7 @@ void WebSocketCPUGetLoggingSettings(DebuggerRequest &req) {
 }
 
 void WebSocketCPUGetLoggerForbiddenRanges(DebuggerRequest &req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 
 	JsonWriter& json = req.Respond();
 	const auto& ranges = settings->getForbiddenRanges();
@@ -201,8 +197,7 @@ void WebSocketCPUGetLoggerForbiddenRanges(DebuggerRequest &req) {
 }
 
 void WebSocketCPULoggerForbideRange(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 
 	if (mipsLogger.isLogging()) {
 		req.Fail("Logging is on");
@@ -228,8 +223,7 @@ void WebSocketCPULoggerForbideRange(DebuggerRequest& req) {
 }
 
 void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 
 	if (mipsLogger.isLogging()) {
 		req.Fail("Logging is on");
@@ -251,8 +245,7 @@ void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
 }
 
 void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 
 	if (mipsLogger.isLogging()) {
 		req.Fail("Logging is on");
@@ -286,8 +279,7 @@ void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
 }
 
 void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 	u32 address;
 	if (!req.ParamU32("address", &address)) {
 		return;
@@ -305,8 +297,7 @@ void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
 }
 
 void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 	JsonWriter& json = req.Respond();
 	const auto& logs_info = settings->getAdditionalInfo();
 	json.writeUint("count", logs_info.size());
@@ -321,8 +312,7 @@ void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
 }
 
 void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req) {
-	// If this is the first call to our MIPSLogger methods, we want to initialize it
-	auto settings = mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
+	auto settings = mipsLogger.cur_settings;
 
 	if (mipsLogger.isLogging()) {
 		return req.Fail("Logging is on");

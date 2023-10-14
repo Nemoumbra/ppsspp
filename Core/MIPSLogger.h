@@ -77,16 +77,15 @@ class MIPSLogger {
 private:
 	std::vector <std::string> logs_storage;
 	bool logging_on;
+	std::string logging_path;
 	DisassemblyManager disasm;
 	DisassemblyLineInfo disasm_line;
 	std::stringstream disasm_buffer;
-	//std::shared_ptr<std::ofstream> output;
 	std::ofstream output;
 
 	struct LastNLines {
 		std::vector <std::string> lines;
 		u32 cur_index;
-		// u32 N;
 		void store_line(const std::string& line, u32 lineCount);
 		bool flush_to_file(const std::string& filename, u32 lineCount);
 	} cyclic_buffer;
@@ -100,9 +99,8 @@ public:
 	bool isLogging();
 	bool Log(u32 pc);
 
-	// bool selectLogStream(std::ofstream& output_stream);
-	// bool selectLogStream(std::shared_ptr<std::ofstream> output_stream);
 	bool selectLogPath(const std::string& output_path);
+	std::string getLoggingPath() const;
 	void stopLogger();
 	bool flush_to_file(const std::string& filename = "");
 

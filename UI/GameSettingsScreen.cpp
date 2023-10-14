@@ -1702,19 +1702,6 @@ void DeveloperToolsScreen::CreateViews() {
 	list->Add(allowDebugger)->OnClick.Handle(this, &DeveloperToolsScreen::OnRemoteDebugger);
 	allowDebugger->SetEnabledPtr(&canAllowDebugger_);
 	
-	MIPSLoggerEnabled_ = mipsLogger.isLogging();
-	CheckBox *MIPSLoggerEnabled = new CheckBox(&MIPSLoggerEnabled_, dev->T("MIPSLogger enabled"));
-	list->Add(MIPSLoggerEnabled)->OnClick.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerEnabled);
-	MIPSLoggerEnabled->SetEnabledFunc([]() {
-#if PPSSPP_PLATFORM(WINDOWS)
-		bool temp = g_Config.iCpuCore == static_cast<int>(CPUCore::INTERPRETER) && PSP_IsInited();
-		return temp && Core_IsStepping() && coreState != CORE_POWERDOWN;
-#else
-		return false;
-#endif
-	});
-	
-
 	list->Add(new CheckBox(&g_Config.bShowOnScreenMessages, dev->T("Show on-screen messages")));
 	list->Add(new CheckBox(&g_Config.bEnableLogging, dev->T("Enable Logging")))->OnClick.Handle(this, &DeveloperToolsScreen::OnLoggingChanged);
 	list->Add(new Choice(dev->T("Logging Channels")))->OnClick.Handle(this, &DeveloperToolsScreen::OnLogConfig);
@@ -1727,6 +1714,41 @@ void DeveloperToolsScreen::CreateViews() {
 	PopupMultiChoice *ffMode = list->Add(new PopupMultiChoice(&g_Config.iFastForwardMode, dev->T("Fast-forward mode"), ffModes, 0, ARRAY_SIZE(ffModes), I18NCat::GRAPHICS, screenManager()));
 	ffMode->SetEnabledFunc([]() { return !g_Config.bVSync; });
 	ffMode->HideChoice(1);  // not used
+
+
+	list->Add(new ItemHeader(dev->T("MIPSLogger")));
+
+	MIPSLoggerEnabled_ = mipsLogger.isLogging();
+	CheckBox *MIPSLoggerEnabled = new CheckBox(&MIPSLoggerEnabled_, dev->T("MIPSLogger enabled"));
+	list->Add(MIPSLoggerEnabled)->OnClick.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerEnabled);
+	MIPSLoggerEnabled->SetEnabledFunc([]() {
+#if PPSSPP_PLATFORM(WINDOWS)
+		bool temp = g_Config.iCpuCore == static_cast<int>(CPUCore::INTERPRETER) && PSP_IsInited();
+		return temp && Core_IsStepping() && coreState != CORE_POWERDOWN;
+#else
+		return false;
+#endif
+	});
+
+	static const char *loggingModes[] = { "Normal", "Last N lines" };
+	iMIPSLoggerCurrentMode_ = static_cast<int>(mipsLogger.cur_settings->getLoggingMode());
+	PopupMultiChoice *mipslogger_mode = list->Add(new PopupMultiChoice(&iMIPSLoggerCurrentMode_, dev->T("MIPSLogger mode"), loggingModes, 0, ARRAY_SIZE(loggingModes), I18NCat::DEVELOPER, screenManager()));
+	mipslogger_mode->OnChoice.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerModeChanged);
+
+	Choice *MIPSlogging_path = list->Add(new Choice(dev->T("Select the output logging file")));
+	MIPSlogging_path->OnClick.Handle(this, &DeveloperToolsScreen::OnMIPSLoggerPathChanged);
+	MIPSlogging_path->SetEnabledFunc([]() {
+#if PPSSPP_PLATFORM(WINDOWS)
+		if (!PSP_IsInited())
+			return false;
+		return true;
+#else
+		return false;
+#endif
+	});
+
+	MIPSLoggingPath_ = mipsLogger.getLoggingPath();
+	MIPSLoggingPath = list->Add(new InfoItem(dev->T("Current log file"), MIPSLoggingPath_));
 
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
 
@@ -1912,11 +1934,32 @@ UI::EventReturn DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 
 UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerEnabled(UI::EventParams &e) {
 	if (MIPSLoggerEnabled_) {
-		mipsLogger.cur_settings = MIPSLoggerSettings::getInstance();
 		mipsLogger.startLogger();
 	} else {
 		mipsLogger.stopLogger();
 	}
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerModeChanged(UI::EventParams &e) {
+	mipsLogger.cur_settings->setLoggingMode(static_cast<LoggingMode>(iMIPSLoggerCurrentMode_));
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnMIPSLoggerPathChanged(UI::EventParams &e) {
+	// auto dev = GetI18NCategory(I18NCat::DEVELOPER);
+	/*System_BrowseForFile(dev->T("Select the log file"), BrowseFileType::ANY, [](const std::string &value, int) {
+		
+	});*/
+
+#if PPSSPP_PLATFORM(WINDOWS)
+	std::string fn;
+	if (W32Util::BrowseForFileName(false, nullptr, L"Select the log file", 0, L"Text files\0*.*\0\0", L"txt", fn)) {
+		mipsLogger.selectLogPath(fn);
+		MIPSLoggingPath_ = std::move(fn);
+		MIPSLoggingPath->SetRightText(MIPSLoggingPath_);
+	}
+#endif
 	return UI::EVENT_DONE;
 }
 

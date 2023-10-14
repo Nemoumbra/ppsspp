@@ -150,6 +150,8 @@ private:
 	UI::EventReturn OnJitDebugTools(UI::EventParams &e);
 	UI::EventReturn OnRemoteDebugger(UI::EventParams &e);
 	UI::EventReturn OnMIPSLoggerEnabled(UI::EventParams &e);
+	UI::EventReturn OnMIPSLoggerModeChanged(UI::EventParams &e);
+	UI::EventReturn OnMIPSLoggerPathChanged(UI::EventParams &e);
 	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
 	UI::EventReturn OnFramedumpTest(UI::EventParams &e);
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
@@ -165,6 +167,9 @@ private:
 	HasIni hasTexturesIni_ = HasIni::MAYBE;
 
 	bool MIPSLoggerEnabled_ = false;
+	int iMIPSLoggerCurrentMode_ = 0;
+	std::string MIPSLoggingPath_ = "";
+	UI::InfoItem* MIPSLoggingPath = nullptr;
 };
 
 class HostnameSelectScreen : public PopupScreen {
