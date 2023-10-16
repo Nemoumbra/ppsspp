@@ -113,4 +113,3 @@ public:
 
 
 extern MIPSLogger mipsLogger;
-// extern std::shared_ptr<MIPSLoggerSettings> default_MIPSLogger_settings;

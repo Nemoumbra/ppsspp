@@ -245,21 +245,24 @@ void WebSocketCPULoggerAllowRange(DebuggerRequest& req) {
 }
 
 void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
-	auto settings = mipsLogger.cur_settings;
+	req.Fail("Method cpu.loggerUpdateInfo is deprecated");
+	return;
 
-	if (mipsLogger.isLogging()) {
-		req.Fail("Logging is on");
-	}
+	//auto settings = mipsLogger.cur_settings;
 
-	u32 address;
-	if (!req.ParamU32("address", &address)) {
-		return;
-	}
+	//if (mipsLogger.isLogging()) {
+	//	req.Fail("Logging is on");
+	//}
 
-	std::string log_info;
-	if (!req.ParamString("log_info", &log_info, DebuggerParamType::OPTIONAL)) {
-		return;
-	}
+	//u32 address;
+	//if (!req.ParamU32("address", &address)) {
+	//	return;
+	//}
+
+	//std::string log_info;
+	//if (!req.ParamString("log_info", &log_info, DebuggerParamType::OPTIONAL)) {
+	//	return;
+	//}
 	//if (log_info.empty()) {
 	//	if (!settings->remove_additional_log(address)) {
 	//		return req.Fail("Can't assign an empty log string");
@@ -275,7 +278,7 @@ void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
 	//	}
 	//	settings->update_additional_log(address, log_info);
 	//}
-	req.Respond();
+	//req.Respond();
 }
 
 void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
