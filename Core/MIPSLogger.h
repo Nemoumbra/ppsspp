@@ -3,10 +3,10 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <sstream>
+// #include <sstream>
 #include <fstream>
 #include "Core/MIPS/MIPS.h"
-#include "Core/Debugger/DisassemblyManager.h"
+// #include "Core/Debugger/DisassemblyManager.h"
 
 enum class LoggingMode {
 	Normal,
@@ -28,13 +28,18 @@ constexpr const char* to_string(LoggingMode mode) {
 }
 
 
+struct MIPSLoggerLine {
+	u32 pc;
+	Memory::Opcode opcode;
+};
+
 
 class MIPSLoggerSettings {
 private:
 	LoggingMode mode;
 	std::map<u32, u32> forbidden_ranges;
 	u32 max_count; // The size of the logs storage can only increase
-	std::map<u32, std::string> additional_info;
+	// std::map<u32, std::string> additional_info;
 	bool flush_when_full;
 	bool ignore_forbidden_when_recording;
 	u32 lineCount;
@@ -50,7 +55,7 @@ public:
 	bool getIgnoreForbiddenWhenRecording() const;
 	u32 getLineCount() const;
 	const std::map<u32, u32>& getForbiddenRanges() const;
-	const std::map<u32, std::string>& getAdditionalInfo() const;
+	//const std::map<u32, std::string>& getAdditionalInfo() const;
 
 
 	void setLoggingMode(LoggingMode new_mode);
@@ -63,34 +68,33 @@ public:
 	bool forbid_range(u32 start, u32 size);
 	bool allow_range(u32 start, u32 size);
 
-	void update_additional_log(u32 address, std::string log_info);
-	bool remove_additional_log(u32 address);
-	bool get_additional_log(u32 address, std::string& log_info) const;
+	//void update_additional_log(u32 address, std::string log_info);
+	//bool remove_additional_log(u32 address);
+	//bool get_additional_log(u32 address, std::string& log_info) const;
 
 	static std::shared_ptr<MIPSLoggerSettings> getInstance();
 	static bool instance_made;
 };
 
 
-
 class MIPSLogger {
 private:
-	std::vector <std::string> logs_storage;
+	std::vector <MIPSLoggerLine> logs_storage;
 	bool logging_on;
 	std::string logging_path;
-	DisassemblyManager disasm;
-	DisassemblyLineInfo disasm_line;
-	std::stringstream disasm_buffer;
+	// DisassemblyManager disasm;
+	// DisassemblyLineInfo disasm_line;
+	// std::stringstream disasm_buffer;
 	std::ofstream output;
 
 	struct LastNLines {
-		std::vector <std::string> lines;
+		std::vector <MIPSLoggerLine> lines;
 		u32 cur_index;
-		void store_line(const std::string& line, u32 lineCount);
+		void store_line(const MIPSLoggerLine& line, u32 lineCount);
 		bool flush_to_file(const std::string& filename, u32 lineCount);
 	} cyclic_buffer;
 
-	std::string compute_line(u32 pc);
+	// std::string compute_line(u32 pc);
 	
 public:
 	std::shared_ptr <MIPSLoggerSettings> cur_settings;

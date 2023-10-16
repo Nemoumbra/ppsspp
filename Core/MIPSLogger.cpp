@@ -1,15 +1,24 @@
 #include "CommonTypes.h"
 #include "Core/MIPSLogger.h"
 #include "Core/Core.h"
-#include "Core/Mips/MIPSDebugInterface.h"
-#include "Core/Debugger/Breakpoints.h"
+// #include "Core/Mips/MIPSDebugInterface.h"
+// #include "Core/Debugger/Breakpoints.h"
 #include "Common/Log.h"
 #include <vector>
 
+#include "Core/MIPS/MIPSTables.h"
+#include "Core/MemMap.h"
+
 // #include <map>
 
-void MIPSLogger::LastNLines::store_line(const std::string & line, u32 lineCount) {
-	
+static std::string evaluate_line(const MIPSLoggerLine& line) {
+	static char buffer[512];
+	MIPSDisAsm(line.opcode, line.pc, buffer, sizeof(buffer), true);
+
+	return std::string(buffer);
+}
+
+void MIPSLogger::LastNLines::store_line(const MIPSLoggerLine& line, u32 lineCount) {
 	if (lines.size() < lineCount) {
 		lines.push_back(line);
 		return;
@@ -28,16 +37,16 @@ bool MIPSLogger::LastNLines::flush_to_file(const std::string & filename, u32 lin
 	INFO_LOG(MIPSLOGGER, "Cyclic buffer ordered to flush the logs to %s", filename.c_str());
 	if (lines.size() < lineCount) {
 		for (const auto& line : lines) {
-			output << line << "\n";
+			output << "PC = " << std::hex << line.pc << std::dec << " " << evaluate_line(line) << "\n";
 		}
 		return true;
 	}
 
 	for (u32 i = cur_index; i < lineCount; ++i) {
-		output << lines[i] << "\n";
+		output << "PC = " << std::hex << lines[i].pc << std::dec << " " << evaluate_line(lines[i]) << "\n";
 	}
 	for (u32 i = 0; i < cur_index; ++i) {
-		output << lines[i] << "\n";
+		output << "PC = " << std::hex << lines[i].pc << std::dec << " " << evaluate_line(lines[i]) << "\n";
 	}
 	return true;
 }
@@ -46,7 +55,7 @@ MIPSLoggerSettings::MIPSLoggerSettings(int max_count_) :
 	mode(LoggingMode::Normal),
 	max_count(max_count_),
 	forbidden_ranges(),
-	additional_info(),
+	//additional_info(),
 	flush_when_full(false),
 	ignore_forbidden_when_recording(false),
 	lineCount(100)
@@ -56,7 +65,7 @@ MIPSLoggerSettings::MIPSLoggerSettings() :
 	mode(LoggingMode::Normal),
 	max_count(100000),
 	forbidden_ranges(),
-	additional_info(),
+	//additional_info(),
 	flush_when_full(false),
 	ignore_forbidden_when_recording(false),
 	lineCount(100)
@@ -136,35 +145,35 @@ bool MIPSLoggerSettings::allow_range(u32 start, u32 size) {
 	return true;
 }
 
-void MIPSLoggerSettings::update_additional_log(u32 address, std::string log_info) {
-	additional_info[address] = log_info;
-}
+//void MIPSLoggerSettings::update_additional_log(u32 address, std::string log_info) {
+//	additional_info[address] = log_info;
+//}
 
-bool MIPSLoggerSettings::remove_additional_log(u32 address) {
-	auto iter = additional_info.find(address);
-	if (iter == additional_info.end()) {
-		return false;
-	}
-	additional_info.erase(iter);
-	return true;
-}
+//bool MIPSLoggerSettings::remove_additional_log(u32 address) {
+//	auto iter = additional_info.find(address);
+//	if (iter == additional_info.end()) {
+//		return false;
+//	}
+//	additional_info.erase(iter);
+//	return true;
+//}
 
-bool MIPSLoggerSettings::get_additional_log(u32 address, std::string& log_info) const {
-	auto iter = additional_info.find(address);
-	if (iter == additional_info.end()) {
-		return false;
-	}
-	log_info = iter->second;
-	return true;
-}
+//bool MIPSLoggerSettings::get_additional_log(u32 address, std::string& log_info) const {
+//	auto iter = additional_info.find(address);
+//	if (iter == additional_info.end()) {
+//		return false;
+//	}
+//	log_info = iter->second;
+//	return true;
+//}
 
 const std::map<u32, u32>& MIPSLoggerSettings::getForbiddenRanges() const {
 	return forbidden_ranges;
 }
 
-const std::map<u32, std::string>& MIPSLoggerSettings::getAdditionalInfo() const {
-	return additional_info;
-}
+//const std::map<u32, std::string>& MIPSLoggerSettings::getAdditionalInfo() const {
+//	return additional_info;
+//}
 
 void MIPSLoggerSettings::setLoggingMode(LoggingMode new_mode) {
 	mode = new_mode;
@@ -201,33 +210,33 @@ std::shared_ptr<MIPSLoggerSettings> MIPSLoggerSettings::getInstance() {
 
 
 
-std::string MIPSLogger::compute_line(u32 pc) {
-	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
-	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
-	disasm_buffer << disasm_line.name << " " << disasm_line.params;
-	std::string format;
-	if (cur_settings->get_additional_log(pc, format)) {
-		disasm_buffer << " // ";
-		std::string additional;
-		if (CBreakPoints::EvaluateLogFormat(currentDebugMIPS, format, additional)) {
-			disasm_buffer << additional;
-		}
-		else {
-			disasm_buffer << format;
-		}
-	}
-	std::string res = disasm_buffer.str();
-	disasm_buffer.str(std::string());
-	return res;
-}
+//std::string MIPSLogger::compute_line(u32 pc) {
+//	disasm.getLine(pc, false, disasm_line, currentDebugMIPS);
+//	disasm_buffer << "PC = " << std::hex << pc << std::dec << " ";
+//	disasm_buffer << disasm_line.name << " " << disasm_line.params;
+//	std::string format;
+//	if (cur_settings->get_additional_log(pc, format)) {
+//		disasm_buffer << " // ";
+//		std::string additional;
+//		if (CBreakPoints::EvaluateLogFormat(currentDebugMIPS, format, additional)) {
+//			disasm_buffer << additional;
+//		}
+//		else {
+//			disasm_buffer << format;
+//		}
+//	}
+//	std::string res = disasm_buffer.str();
+//	disasm_buffer.str(std::string());
+//	return res;
+//}
 
 MIPSLogger::MIPSLogger() {
 	cur_settings = MIPSLoggerSettings::getInstance();
-	disasm.setCpu(currentDebugMIPS);
+	// disasm.setCpu(currentDebugMIPS);
 }
 
 MIPSLogger::~MIPSLogger() {
-	disasm.clear();
+	// disasm.clear();
 }
 
 bool MIPSLogger::isLogging() {
@@ -247,7 +256,9 @@ bool MIPSLogger::Log(u32 pc) {
 		if (!cur_settings->getIgnoreForbiddenWhenRecording() && !cur_settings->log_address(pc)) return false;
 	}
 	
-	auto line = compute_line(pc);
+	// auto line = compute_line(pc);
+	MIPSLoggerLine line {pc, Memory::Read_Instruction(pc, true)};
+	
 
 	if (mode == LoggingMode::LogLastNLines) {
 		auto lastLinesCount = cur_settings->getLineCount();
@@ -302,7 +313,7 @@ bool MIPSLogger::flush_to_file() {
 	if (mode == LoggingMode::Normal) {
 		if (!output.is_open()) return false;
 		for (const auto& log : logs_storage) {
-			output << log << "\n";
+			output << evaluate_line(log) << "\n";
 		}
 		// Not catching exceptions here.
 		output.flush();

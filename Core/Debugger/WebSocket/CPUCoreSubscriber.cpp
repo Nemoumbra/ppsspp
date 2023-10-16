@@ -174,7 +174,7 @@ void WebSocketCPUGetLoggingSettings(DebuggerRequest &req) {
 	json.writeUint("maxCount", settings->getMaxCount());
 	json.writeBool("flushWhenFull", settings->getFlushWhenFull());
 	json.writeUint("forbiddenRangesCount", settings->getForbiddenRanges().size());
-	json.writeUint("additionalInfoCount", settings->getAdditionalInfo().size());
+	// json.writeUint("additionalInfoCount", settings->getAdditionalInfo().size());
 	json.writeString("mode", to_string(settings->getLoggingMode()));
 	json.writeBool("ignoreForbiddenWhenRecording", settings->getIgnoreForbiddenWhenRecording());
 	// and 3 million on the way...
@@ -260,21 +260,21 @@ void WebSocketCPULoggerUpdateInfo(DebuggerRequest& req) {
 	if (!req.ParamString("log_info", &log_info, DebuggerParamType::OPTIONAL)) {
 		return;
 	}
-	if (log_info.empty()) {
-		if (!settings->remove_additional_log(address)) {
-			return req.Fail("Can't assign an empty log string");
-		}
-	}
-	else {
-		// let's see if this expression makes sense
-		if (!currentDebugMIPS->isAlive()) {
-			return req.Fail("CPU not started");
-		}
-		if (!CBreakPoints::ValidateLogFormat(currentDebugMIPS, log_info)) {
-			return req.Fail("Cannot parse the log string");
-		}
-		settings->update_additional_log(address, log_info);
-	}
+	//if (log_info.empty()) {
+	//	if (!settings->remove_additional_log(address)) {
+	//		return req.Fail("Can't assign an empty log string");
+	//	}
+	//}
+	//else {
+	//	// let's see if this expression makes sense
+	//	if (!currentDebugMIPS->isAlive()) {
+	//		return req.Fail("CPU not started");
+	//	}
+	//	if (!CBreakPoints::ValidateLogFormat(currentDebugMIPS, log_info)) {
+	//		return req.Fail("Cannot parse the log string");
+	//	}
+	//	settings->update_additional_log(address, log_info);
+	//}
 	req.Respond();
 }
 
@@ -285,21 +285,21 @@ void WebSocketCPUGetLoggerInfoAt(DebuggerRequest& req) {
 		return;
 	}
 	JsonWriter& json = req.Respond();
-	std::string log_info;
+	/*std::string log_info;
 	if (!settings->get_additional_log(address, log_info)) {
 		json.writeBool("hasLogInfo", false);
 	}
 	else {
 		json.writeBool("hasLogInfo", true);
 		json.writeString("comment", log_info);
-	}
+	}*/
 
 }
 
 void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
 	auto settings = mipsLogger.cur_settings;
 	JsonWriter& json = req.Respond();
-	const auto& logs_info = settings->getAdditionalInfo();
+	/*const auto& logs_info = settings->getAdditionalInfo();
 	json.writeUint("count", logs_info.size());
 	json.pushArray("comments");
 	for (const auto&[address, comment] : logs_info) {
@@ -308,7 +308,7 @@ void WebSocketCPUGetLoggerInfo(DebuggerRequest& req) {
 		json.writeString("comment", comment);
 		json.end();
 	}
-	json.end();
+	json.end();*/
 }
 
 void WebSocketCPUUpdateLoggerSettings(DebuggerRequest& req) {
