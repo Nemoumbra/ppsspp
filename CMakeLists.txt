@@ -2267,6 +2267,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/Util/AudioFormat.h
 	Core/Util/GameManager.cpp
 	Core/Util/GameManager.h
+	Core/Util/GameDB.cpp
+	Core/Util/GameDB.h
 	Core/Util/PortManager.cpp
 	Core/Util/PortManager.h
 	Core/Util/BlockAllocator.cpp
@@ -2332,6 +2334,9 @@ target_link_libraries(${CoreLibName} Common native chdr kirk cityhash sfmt19937 
 
 if(NOT HTTPS_NOT_AVAILABLE)
 	target_link_libraries(${CoreLibName} naett)
+	if(WIN32)
+		target_link_libraries(${CoreLibName} winhttp)
+	endif()
 endif()
 
 target_compile_features(${CoreLibName} PUBLIC cxx_std_17)
