@@ -1712,6 +1712,10 @@ void DeveloperToolsScreen::CreateViews() {
 	ffMode->SetEnabledFunc([]() { return !g_Config.bVSync; });
 	ffMode->HideChoice(1);  // not used
 
+	list->Add(new ItemHeader(dev->T("For testing purposes")));
+	Button *test = list->Add(new Button(dev->T("Emit non-UTF8 log")));
+	test->OnClick.Handle(this, &DeveloperToolsScreen::OnEmitNonUTF8LogClick);
+
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
 
 	list->Add(new ItemHeader(dev->T("Ubershaders")));
@@ -1891,6 +1895,16 @@ UI::EventReturn DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 	}
 	// Persist the setting.  Maybe should separate?
 	g_Config.bRemoteDebuggerOnStartup = allowDebugger_;
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnEmitNonUTF8LogClick(UI::EventParams &e) {
+	static const char message_bytes[23] = {
+	0xDD, 0xF2, 0xEE, 0xF2, 0x20, 0xF5, 0xEE, 0xF1, 0xF2, 0x20, 0xED, 0xE5, 0xE8, 0xE7, 0xE2, 0xE5,
+	0xF1, 0xF2, 0xE5, 0xED, 0x2E, 0x20, 0x00
+	};
+	// That's Windows-1251 (extended ASCII, Russian code page)
+	INFO_LOG(SYSTEM, message_bytes);
 	return UI::EVENT_DONE;
 }
 

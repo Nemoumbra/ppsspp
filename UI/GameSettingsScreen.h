@@ -154,6 +154,8 @@ private:
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
 	UI::EventReturn OnCopyStatesToRoot(UI::EventParams &e);
 
+	UI::EventReturn OnEmitNonUTF8LogClick(UI::EventParams &e);
+
 	bool allowDebugger_ = false;
 	bool canAllowDebugger_ = true;
 	enum class HasIni {
