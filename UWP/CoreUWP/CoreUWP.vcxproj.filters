@@ -789,7 +789,7 @@
     <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompALU.cpp">
       <Filter>MIPS\ARM64</Filter>
     </ClCompile>
-     <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompBranch.cpp">
+    <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompBranch.cpp">
       <Filter>MIPS\ARM64</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Core\MIPS\ARM64\Arm64IRCompFPU.cpp">
@@ -1190,6 +1190,9 @@
     <ClCompile Include="..\..\Core\ConfigSettings.cpp" />
     <ClCompile Include="..\..\Core\RetroAchievements.cpp" />
     <ClCompile Include="..\..\Core\FrameTiming.cpp" />
+    <ClCompile Include="..\..\Core\Util\GameDB.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
@@ -1864,6 +1867,9 @@
     <ClInclude Include="..\..\Core\Debugger\WebSocket\ClientConfigSubscriber.h" />
     <ClInclude Include="..\..\Core\RetroAchievements.h" />
     <ClInclude Include="..\..\Core\FrameTiming.h" />
+    <ClInclude Include="..\..\Core\Util\GameDB.h">
+      <Filter>Util</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\ext\gason\LICENSE">

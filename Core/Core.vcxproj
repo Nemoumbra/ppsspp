@@ -1077,6 +1077,7 @@
     <ClCompile Include="Util\AudioFormat.cpp" />
     <ClCompile Include="Util\BlockAllocator.cpp" />
     <ClCompile Include="Util\DisArm64.cpp" />
+    <ClCompile Include="Util\GameDB.cpp" />
     <ClCompile Include="Util\GameManager.cpp" />
     <ClCompile Include="Util\PortManager.cpp" />
     <ClCompile Include="Util\PPGeDraw.cpp" />
@@ -1446,6 +1447,7 @@
     <ClInclude Include="Util\AudioFormat.h" />
     <ClInclude Include="Util\BlockAllocator.h" />
     <ClInclude Include="Util\DisArm64.h" />
+    <ClInclude Include="Util\GameDB.h" />
     <ClInclude Include="Util\GameManager.h" />
     <ClInclude Include="Util\PortManager.h" />
     <ClInclude Include="Util\PPGeDraw.h" />
