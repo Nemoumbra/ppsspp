@@ -60,7 +60,7 @@ const char* safe_string(const char* s) {
 	return s ? s : "(null)";
 }
 
-long parseHexLong(std::string s) {
+long parseHexLong(const std::string &s) {
 	long value = 0;
 
 	if (s.substr(0,2) == "0x") {
@@ -284,8 +284,8 @@ std::string_view StripQuotes(std::string_view s) {
 		return s;
 }
 
-void SplitString(const std::string& str, const char delim, std::vector<std::string>& output)
-{
+// NOTE: str must live at least as long as all uses of output.
+void SplitString(std::string_view str, const char delim, std::vector<std::string_view> &output) {
 	size_t next = 0;
 	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
 		if (str[pos] == delim) {
@@ -297,6 +297,23 @@ void SplitString(const std::string& str, const char delim, std::vector<std::stri
 
 	if (next == 0) {
 		output.push_back(str);
+	} else if (next < str.length()) {
+		output.emplace_back(str.substr(next));
+	}
+}
+
+void SplitString(std::string_view str, const char delim, std::vector<std::string> &output) {
+	size_t next = 0;
+	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
+		if (str[pos] == delim) {
+			output.emplace_back(str.substr(next, pos - next));
+			// Skip the delimiter itself.
+			next = pos + 1;
+		}
+	}
+
+	if (next == 0) {
+		output.emplace_back(str);
 	} else if (next < str.length()) {
 		output.emplace_back(str.substr(next));
 	}
@@ -321,8 +338,7 @@ static std::string ApplyHtmlEscapes(std::string str) {
 }
 
 // Meant for HTML listings and similar, so supports some HTML escapes.
-void GetQuotedStrings(const std::string& str, std::vector<std::string>& output)
-{
+void GetQuotedStrings(const std::string& str, std::vector<std::string> &output) {
 	size_t next = 0;
 	bool even = 0;
 	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
@@ -341,15 +357,16 @@ void GetQuotedStrings(const std::string& str, std::vector<std::string>& output)
 	}
 }
 
-std::string ReplaceAll(std::string result, const std::string& src, const std::string& dest)
-{
+std::string ReplaceAll(std::string_view input, std::string_view src, std::string_view dest) {
 	size_t pos = 0;
+
+	std::string result(input);
 
 	if (src == dest)
 		return result;
 
-	while (1)
-	{
+	// TODO: Don't mutate the input, just append stuff to the output instead.
+	while (true) {
 		pos = result.find(src, pos);
 		if (pos == result.npos)
 			break;

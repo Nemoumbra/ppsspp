@@ -43,7 +43,7 @@ inline bool startsWith(std::string_view str, std::string_view key) {
 	return !memcmp(str.data(), key.data(), key.size());
 }
 
-inline bool endsWith(const std::string &str, const std::string &what) {
+inline bool endsWith(std::string_view str, std::string_view what) {
 	if (str.size() < what.size())
 		return false;
 	return str.substr(str.size() - what.size()) == what;
@@ -81,11 +81,14 @@ std::string StripQuotes(const std::string &s);
 std::string_view StripSpaces(std::string_view s);
 std::string_view StripQuotes(std::string_view s);
 
-void SplitString(const std::string& str, const char delim, std::vector<std::string>& output);
+// NOTE: str must live at least as long as all uses of output.
+void SplitString(std::string_view str, const char delim, std::vector<std::string_view> &output);
+// Try to avoid this when possible, in favor of the string_view version.
+void SplitString(std::string_view str, const char delim, std::vector<std::string> &output);
 
 void GetQuotedStrings(const std::string& str, std::vector<std::string>& output);
 
-std::string ReplaceAll(std::string input, const std::string& src, const std::string& dest);
+std::string ReplaceAll(std::string_view input, std::string_view src, std::string_view dest);
 
 // Takes something like R&eplace and returns Replace, plus writes 'e' to *shortcutChar
 // if not nullptr. Useful for Windows menu strings.
@@ -101,7 +104,7 @@ inline size_t truncate_cpy(char(&out)[Count], const char *src) {
 
 const char* safe_string(const char* s);
 
-long parseHexLong(std::string s);
+long parseHexLong(const std::string &s);
 long parseLong(std::string s);
 std::string StringFromFormat(const char* format, ...);
 // Cheap!

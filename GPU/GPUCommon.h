@@ -204,8 +204,6 @@ public:
 	GPUgstate GetGState() override;
 	void SetCmdValue(u32 op) override;
 
-	void UpdateUVScaleOffset();
-
 	DisplayList* getList(int listid) override {
 		return &dls[listid];
 	}
@@ -225,6 +223,8 @@ public:
 		primaryInfo = reportingPrimaryInfo_;
 		fullInfo = reportingFullInfo_;
 	}
+
+	bool PresentedThisFrame() const override;
 
 protected:
 	void ClearCacheNextFrame() override {}
@@ -246,7 +246,7 @@ protected:
 		}
 	}
 
-	void BeginFrame() override;
+	void PSPFrame() override;
 
 	virtual void CheckDepthUsage(VirtualFramebuffer *vfb) {}
 	virtual void FastRunLoop(DisplayList &list) = 0;

@@ -14,6 +14,7 @@
 #include "Common/UI/Tween.h"
 #include "Common/UI/Root.h"
 #include "Common/UI/View.h"
+#include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
 #include "Common/Render/DrawBuffer.h"
 
@@ -25,7 +26,7 @@ namespace UI {
 
 static constexpr Size ITEM_HEIGHT = 64.f;
 
-void ApplyGravity(const Bounds outer, const Margins &margins, float w, float h, int gravity, Bounds &inner) {
+void ApplyGravity(const Bounds &outer, const Margins &margins, float w, float h, int gravity, Bounds &inner) {
 	inner.w = w;
 	inner.h = h;
 
@@ -47,12 +48,12 @@ ViewGroup::~ViewGroup() {
 	Clear();
 }
 
-void ViewGroup::RemoveSubview(View *view) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
+void ViewGroup::RemoveSubview(View *subView) {
+	// loop counter needed, so can't convert loop.
 	for (size_t i = 0; i < views_.size(); i++) {
-		if (views_[i] == view) {
+		if (views_[i] == subView) {
 			views_.erase(views_.begin() + i);
-			delete view;
+			delete subView;
 			return;
 		}
 	}
@@ -67,17 +68,13 @@ bool ViewGroup::ContainsSubview(const View *view) const {
 }
 
 void ViewGroup::Clear() {
-	std::lock_guard<std::mutex> guard(modifyLock_);
-	for (size_t i = 0; i < views_.size(); i++) {
-		delete views_[i];
-		views_[i] = nullptr;
+	for (View *view : views_) {
+		delete view;
 	}
 	views_.clear();
 }
 
 void ViewGroup::PersistData(PersistStatus status, std::string anonId, PersistMap &storage) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
-
 	std::string tag = Tag();
 	if (tag.empty()) {
 		tag = anonId;
@@ -89,12 +86,11 @@ void ViewGroup::PersistData(PersistStatus status, std::string anonId, PersistMap
 }
 
 bool ViewGroup::Touch(const TouchInput &input) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
 	bool any = false;
-	for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
+	for (View *view : views_) {
 		// TODO: If there is a transformation active, transform input coordinates accordingly.
-		if ((*iter)->GetVisibility() == V_VISIBLE) {
-			bool touch = (*iter)->Touch(input);
+		if (view->GetVisibility() == V_VISIBLE) {
+			bool touch = view->Touch(input);
 			any = any || touch;
 			if (exclusiveTouch_ && touch && (input.flags & TOUCH_DOWN)) {
 				break;
@@ -111,43 +107,39 @@ bool ViewGroup::Touch(const TouchInput &input) {
 void ViewGroup::Query(float x, float y, std::vector<View *> &list) {
 	if (bounds_.Contains(x, y)) {
 		list.push_back(this);
-		for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
-			(*iter)->Query(x, y, list);
+		for (View *view : views_) {
+			view->Query(x, y, list);
 		}
 	}
 }
 
 bool ViewGroup::Key(const KeyInput &input) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
 	bool ret = false;
-	for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
+	for (View *view : views_) {
 		// TODO: If there is a transformation active, transform input coordinates accordingly.
-		if ((*iter)->GetVisibility() == V_VISIBLE)
-			ret = ret || (*iter)->Key(input);
+		if (view->GetVisibility() == V_VISIBLE)
+			ret = ret || view->Key(input);
 	}
 	return ret;
 }
 
 void ViewGroup::Axis(const AxisInput &input) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
-	for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
+	for (View *view : views_) {
 		// TODO: If there is a transformation active, transform input coordinates accordingly.
-		if ((*iter)->GetVisibility() == V_VISIBLE)
-			(*iter)->Axis(input);
+		if (view->GetVisibility() == V_VISIBLE)
+			view->Axis(input);
 	}
 }
 
 void ViewGroup::DeviceLost() {
-	std::lock_guard<std::mutex> guard(modifyLock_);
-	for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
-		(*iter)->DeviceLost();
+	for (View *view : views_) {
+		view->DeviceLost();
 	}
 }
 
 void ViewGroup::DeviceRestored(Draw::DrawContext *draw) {
-	std::lock_guard<std::mutex> guard(modifyLock_);
-	for (auto iter = views_.begin(); iter != views_.end(); ++iter) {
-		(*iter)->DeviceRestored(draw);
+	for (View *view : views_) {
+		view->DeviceRestored(draw);
 	}
 }
 
@@ -245,21 +237,18 @@ void ViewGroup::Update() {
 }
 
 bool ViewGroup::SetFocus() {
-	std::lock_guard<std::mutex> guard(modifyLock_);
 	if (!CanBeFocused() && !views_.empty()) {
-		for (size_t i = 0; i < views_.size(); i++) {
-			if (views_[i]->SetFocus())
+		for (View *view : views_) {
+			if (view->SetFocus())
 				return true;
 		}
 	}
 	return false;
 }
 
-bool ViewGroup::SubviewFocused(View *view) {
-	for (size_t i = 0; i < views_.size(); i++) {
-		if (views_[i] == view)
-			return true;
-		if (views_[i]->SubviewFocused(view))
+bool ViewGroup::SubviewFocused(View *queryView) {
+	for (View *view : views_) {
+		if (view == queryView || view->SubviewFocused(queryView))
 			return true;
 	}
 	return false;
@@ -961,14 +950,27 @@ TabHolder::TabHolder(Orientation orientation, float stripSize, LayoutParams *lay
 		tabScroll_->Add(tabStrip_);
 		Add(tabScroll_);
 	} else {
-		tabStrip_ = new ChoiceStrip(orientation, new LayoutParams(stripSize, WRAP_CONTENT));
+		tabContainer_ = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(stripSize, FILL_PARENT));
+		tabStrip_ = new ChoiceStrip(orientation, new LayoutParams(FILL_PARENT, FILL_PARENT));
 		tabStrip_->SetTopTabs(true);
-		Add(tabStrip_);
+		tabScroll_ = new ScrollView(orientation, new LinearLayoutParams(1.0f));
+		tabScroll_->Add(tabStrip_);
+		tabContainer_->Add(tabScroll_);
+		Add(tabContainer_);
 	}
 	tabStrip_->OnChoice.Handle(this, &TabHolder::OnTabClick);
 
+	Add(new Spacer(4.0f))->SetSeparator();
+
 	contents_ = new AnchorLayout(new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
 	Add(contents_)->SetClip(true);
+}
+
+void TabHolder::AddBack(UIScreen *parent) {
+	if (tabContainer_) {
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		tabContainer_->Add(new Choice(di->T("Back"), "", false, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 0.0f, Margins(0, 0, 10, 10))))->OnClick.Handle<UIScreen>(parent, &UIScreen::OnBack);
+	}
 }
 
 void TabHolder::AddTabContents(const std::string &title, View *tabContents) {
@@ -1161,16 +1163,6 @@ bool ChoiceStrip::Key(const KeyInput &input) {
 	return ret || ViewGroup::Key(input);
 }
 
-void ChoiceStrip::Draw(UIContext &dc) {
-	ViewGroup::Draw(dc);
-	if (topTabs_) {
-		if (orientation_ == ORIENT_HORIZONTAL)
-			dc.Draw()->DrawImageCenterTexel(dc.theme->whiteImage, bounds_.x, bounds_.y2() - 4, bounds_.x2(), bounds_.y2(), dc.theme->itemDownStyle.background.color );
-		else if (orientation_ == ORIENT_VERTICAL)
-			dc.Draw()->DrawImageCenterTexel(dc.theme->whiteImage, bounds_.x2() - 4, bounds_.y, bounds_.x2(), bounds_.y2(), dc.theme->itemDownStyle.background.color );
-	}
-}
-
 std::string ChoiceStrip::DescribeText() const {
 	auto u = GetI18NCategory(I18NCat::UI_ELEMENTS);
 	return DescribeListUnordered(u->T("Choices:"));
@@ -1190,9 +1182,7 @@ CollapsibleSection::CollapsibleSection(const std::string &title, LayoutParams *l
 	heading_->OnClick.Add([=](UI::EventParams &) {
 		// Change the visibility of all children except the first one.
 		// Later maybe try something more ambitious.
-		for (size_t i = 1; i < views_.size(); i++) {
-			views_[i]->SetVisibility(open_ ? V_VISIBLE : V_GONE);
-		}
+		UpdateVisibility();
 		return UI::EVENT_DONE;
 	});
 }
@@ -1200,6 +1190,12 @@ CollapsibleSection::CollapsibleSection(const std::string &title, LayoutParams *l
 void CollapsibleSection::Update() {
 	ViewGroup::Update();
 	heading_->SetHasSubitems(views_.size() > 1);
+}
+
+void CollapsibleSection::UpdateVisibility() {
+	for (size_t i = 1; i < views_.size(); i++) {
+		views_[i]->SetVisibility(open_ ? V_VISIBLE : V_GONE);
+	}
 }
 
 }  // namespace UI

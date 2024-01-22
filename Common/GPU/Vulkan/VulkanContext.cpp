@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 
+#include "Core/Config.h"
 #include "Common/System/System.h"
 #include "Common/System/Display.h"
 #include "Common/Log.h"
@@ -34,7 +35,7 @@ using namespace PPSSPP_VK;
 
 VulkanLogOptions g_LogOptions;
 
-static const char *validationLayers[] = {
+static const char * const validationLayers[] = {
 	"VK_LAYER_KHRONOS_validation",
 	/*
 	// For layers included in the Android NDK.
@@ -132,7 +133,7 @@ VkResult VulkanContext::CreateInstance(const CreateInfo &info) {
 #endif
 #endif
 
-	if (flags_ & VULKAN_FLAG_VALIDATE) {
+	if ((flags_ & VULKAN_FLAG_VALIDATE) && g_Config.sCustomDriver.empty()) {
 		if (IsInstanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
 			// Enable the validation layers
 			for (size_t i = 0; i < ARRAY_SIZE(validationLayers); i++) {
@@ -486,7 +487,7 @@ bool VulkanContext::CheckLayers(const std::vector<LayerProperties> &layer_props,
 	return true;
 }
 
-int VulkanContext::GetPhysicalDeviceByName(std::string name) {
+int VulkanContext::GetPhysicalDeviceByName(const std::string &name) {
 	for (size_t i = 0; i < physical_devices_.size(); i++) {
 		if (physicalDeviceProperties_[i].properties.deviceName == name)
 			return (int)i;

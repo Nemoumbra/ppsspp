@@ -42,7 +42,7 @@
 #define fseeko fseek
 #endif
 
-static const char *CACHEFILE_MAGIC = "ppssppDC";
+static const char * const CACHEFILE_MAGIC = "ppssppDC";
 static const s64 SAFETY_FREE_DISK_SPACE = 768 * 1024 * 1024; // 768 MB
 // Aim to allow this many files cached at once.
 static const u32 CACHE_SPACE_FLEX = 4;
@@ -127,6 +127,7 @@ std::vector<Path> DiskCachingFileLoader::GetCachedPathsInUse() {
 
 	// This is on the file loader so that it can manage the caches_.
 	std::vector<Path> files;
+	files.reserve(caches_.size());
 
 	for (auto it : caches_) {
 		files.push_back(it.first);
@@ -691,7 +692,7 @@ bool DiskCachingFileLoaderCache::LockCacheFile(bool lockStatus) {
 	// TODO: Also use flock where supported?
 	if (lockStatus) {
 		if ((flags_ & FLAG_LOCKED) != 0) {
-			ERROR_LOG(LOADER, "Could not lock disk cache file for %s", origPath_.c_str());
+			ERROR_LOG(LOADER, "Could not lock disk cache file for %s (already locked)", origPath_.c_str());
 			return false;
 		}
 		flags_ |= FLAG_LOCKED;

@@ -419,11 +419,12 @@ struct AutoRef {
 		return ptr != nullptr;
 	}
 
-	void clear() {
+	// Takes over ownership over newItem, so we don't need to AddRef it, the number of owners didn't change.
+	void reset(T *newItem) {
 		if (ptr) {
 			ptr->Release();
-			ptr = nullptr;
 		}
+		ptr = newItem;
 	}
 
 	T *ptr = nullptr;
@@ -475,20 +476,14 @@ protected:
 	DataFormat format_ = DataFormat::UNDEFINED;
 };
 
-struct BindingDesc {
-	int stride;
-	bool instanceRate;
-};
-
 struct AttributeDesc {
-	int binding;
 	int location;  // corresponds to semantic
 	DataFormat format;
 	int offset;
 };
 
 struct InputLayoutDesc {
-	std::vector<BindingDesc> bindings;
+	int stride;
 	std::vector<AttributeDesc> attributes;
 };
 
@@ -614,6 +609,7 @@ struct DeviceCaps {
 	bool sampleRateShadingSupported;
 	bool setMaxFrameLatencySupported;
 	bool textureSwizzleSupported;
+	bool requiresHalfPixelOffset;
 
 	bool verySlowShaderCompiler;
 
@@ -697,11 +693,15 @@ public:
 
 	Bugs GetBugs() const { return bugs_; }
 
+	virtual void Wait() {}
+
 	virtual const DeviceCaps &GetDeviceCaps() const = 0;
 	virtual uint32_t GetDataFormatSupport(DataFormat fmt) const = 0;
 	virtual std::vector<std::string> GetFeatureList() const { return std::vector<std::string>(); }
 	virtual std::vector<std::string> GetExtensionList(bool device, bool enabledOnly) const { return std::vector<std::string>(); }
 	virtual std::vector<std::string> GetDeviceList() const { return std::vector<std::string>(); }
+	virtual std::vector<std::string> GetPresentModeList(const char *currentMarkerString) const { return std::vector<std::string>(); }
+	virtual std::vector<std::string> GetSurfaceFormatList() const { return std::vector<std::string>(); }
 
 	// Describes the primary shader language that this implementation prefers.
 	const ShaderLanguageDesc &GetShaderLanguageDesc() {
@@ -720,7 +720,6 @@ public:
 	virtual BlendState *CreateBlendState(const BlendStateDesc &desc) = 0;
 	virtual SamplerState *CreateSamplerState(const SamplerStateDesc &desc) = 0;
 	virtual RasterState *CreateRasterState(const RasterStateDesc &desc) = 0;
-	// virtual ComputePipeline CreateComputePipeline(const ComputePipelineDesc &desc) = 0
 	virtual InputLayout *CreateInputLayout(const InputLayoutDesc &desc) = 0;
 	virtual ShaderModule *CreateShaderModule(ShaderStage stage, ShaderLanguage language, const uint8_t *data, size_t dataSize, const char *tag = "thin3d") = 0;
 	virtual Pipeline *CreateGraphicsPipeline(const PipelineDesc &desc, const char *tag) = 0;
@@ -787,7 +786,7 @@ public:
 
 	virtual void BindSamplerStates(int start, int count, SamplerState **state) = 0;
 	virtual void BindTextures(int start, int count, Texture **textures, TextureBindFlags flags = TextureBindFlags::NONE) = 0;
-	virtual void BindVertexBuffers(int start, int count, Buffer **buffers, const int *offsets) = 0;
+	virtual void BindVertexBuffer(Buffer *vertexBuffer, int offset) = 0;
 	virtual void BindIndexBuffer(Buffer *indexBuffer, int offset) = 0;
 
 	// Sometimes it's necessary to bind a texture not created by thin3d, and use with a thin3d pipeline.
@@ -824,8 +823,6 @@ public:
 	// vblanks is only relevant in FIFO present mode.
 	// NOTE: Not all backends support vblanks > 1. Some backends also can't change presentation mode immediately.
 	virtual void Present(PresentMode presentMode, int vblanks) = 0;
-
-	virtual void WipeQueue() {}
 
 	// This should be avoided as much as possible, in favor of clearing when binding a render target, which is native
 	// on Vulkan.

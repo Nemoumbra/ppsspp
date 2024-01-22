@@ -393,32 +393,26 @@ std::vector<std::string> ShaderManagerVulkan::DebugGetShaderIDs(DebugShaderType 
 	std::vector<std::string> ids;
 	switch (type) {
 	case SHADER_TYPE_VERTEX:
-	{
 		vsCache_.Iterate([&](const VShaderID &id, VulkanVertexShader *shader) {
 			std::string idstr;
 			id.ToString(&idstr);
 			ids.push_back(idstr);
 		});
 		break;
-	}
 	case SHADER_TYPE_FRAGMENT:
-	{
 		fsCache_.Iterate([&](const FShaderID &id, VulkanFragmentShader *shader) {
 			std::string idstr;
 			id.ToString(&idstr);
 			ids.push_back(idstr);
 		});
 		break;
-	}
 	case SHADER_TYPE_GEOMETRY:
-	{
 		gsCache_.Iterate([&](const GShaderID &id, VulkanGeometryShader *shader) {
 			std::string idstr;
 			id.ToString(&idstr);
 			ids.push_back(idstr);
 		});
 		break;
-	}
 	default:
 		break;
 	}

@@ -383,6 +383,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return !g_Config.bDisableHTTPS;
 	case SYSPROP_DEBUGGER_PRESENT:
 		return IsDebuggerPresent();
+	case SYSPROP_OK_BUTTON_LEFT:
+		return true;
 	default:
 		return false;
 	}
@@ -566,6 +568,9 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 			break;
 		case BrowseFileType::INI:
 			filter = MakeFilter(L"Ini files (*.ini)|*.ini|All files (*.*)|*.*||");
+			break;
+		case BrowseFileType::ZIP:
+			filter = MakeFilter(L"ZIP files (*.zip)|*.zip|All files (*.*)|*.*||");
 			break;
 		case BrowseFileType::DB:
 			filter = MakeFilter(L"Cheat db files (*.db)|*.db|All files (*.*)|*.*||");

@@ -83,6 +83,7 @@ enum class SystemRequestType {
 	// High-level hardware control
 	CAMERA_COMMAND,
 	GPS_COMMAND,
+	INFRARED_COMMAND,
 	MICROPHONE_COMMAND,
 };
 
@@ -130,6 +131,7 @@ enum SystemProperty {
 	SYSPROP_HAS_IMAGE_BROWSER,
 	SYSPROP_HAS_BACK_BUTTON,
 	SYSPROP_HAS_KEYBOARD,
+	SYSPROP_HAS_ACCELEROMETER,  // Used to enable/disable tilt input settings
 	SYSPROP_HAS_OPEN_DIRECTORY,
 	SYSPROP_HAS_LOGIN_DIALOG,
 	SYSPROP_HAS_TEXT_INPUT_DIALOG,  // Indicates that System_InputBoxGetString is available.
@@ -187,6 +189,8 @@ enum SystemProperty {
 	SYSPROP_SKIP_UI,
 
 	SYSPROP_USER_DOCUMENTS_DIR,
+
+	SYSPROP_OK_BUTTON_LEFT,
 };
 
 enum class SystemNotification {
@@ -221,6 +225,7 @@ enum class UIMessage {
 	REQUEST_GAME_PAUSE,
 	REQUEST_GAME_RESET,
 	REQUEST_GAME_STOP,
+	GAME_SELECTED,
 	SHOW_CONTROL_MAPPING,
 	SHOW_CHAT_SCREEN,
 	SHOW_DISPLAY_LAYOUT_EDITOR,
@@ -241,6 +246,7 @@ enum class UIMessage {
 	SAVESTATE_DISPLAY_SLOT,
 	GAMESETTINGS_SEARCH,
 	SAVEDATA_SEARCH,
+	RESTART_GRAPHICS,
 };
 
 std::string System_GetProperty(SystemProperty prop);

@@ -917,13 +917,15 @@ void __IoCopyDate(ScePspDateTime& date_out, const tm& date_in)
 
 static void __IoGetStat(SceIoStat *stat, PSPFileInfo &info) {
 	memset(stat, 0xfe, sizeof(SceIoStat));
-	stat->st_size = (s64) info.size;
 
 	int type, attr;
-	if (info.type & FILETYPE_DIRECTORY)
-		type = SCE_STM_FDIR, attr = TYPE_DIR;
-	else
-		type = SCE_STM_FREG, attr = TYPE_FILE;
+	if (info.type & FILETYPE_DIRECTORY) {
+		type = SCE_STM_FDIR;
+		attr = TYPE_DIR;
+	} else {
+		type = SCE_STM_FREG;
+		attr = TYPE_FILE;
+	}
 
 	stat->st_mode = type | info.access;
 	stat->st_attr = attr;
@@ -1552,6 +1554,11 @@ static FileNode *__IoOpen(int &error, const char *filename, int flags, int mode)
 
 static u32 sceIoOpen(const char *filename, int flags, int mode) {
 	hleEatCycles(18000);
+
+	if (!filename) {
+		// Not tested on the PSP.
+		return hleLogError(SCEIO, SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND, "nullptr file not found");
+	}
 
 	if (!__KernelIsDispatchEnabled()) {
 		hleEatCycles(48000);
@@ -2188,6 +2195,10 @@ static u32 sceIoSetAsyncCallback(int id, u32 clbckId, u32 clbckArg)
 
 static u32 sceIoOpenAsync(const char *filename, int flags, int mode) {
 	hleEatCycles(18000);
+	if (!filename) {
+		// Not tested on the PSP.
+		return hleLogError(SCEIO, SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND, "nullptr file not found");
+	}
 
 	// TODO: Use an internal method so as not to pollute the log?
 	// Intentionally does not work when interrupts disabled.
@@ -2504,6 +2515,8 @@ static u32 sceIoDread(int id, u32 dirent_addr) {
 		bool isFAT = pspFileSystem.FlagsFromFilename(dir->name) & FileSystemFlags::SIMULATE_FAT32;
 		// Only write d_private for memory stick
 		if (isFAT) {
+			// All files look like they're executable on FAT. This is required for Beats, see issue #14812
+			entry->d_stat.st_mode |= 0111;
 			// write d_private for supporting Custom BGM
 			// ref JPCSP https://code.google.com/p/jpcsp/source/detail?r=3468
 			if (Memory::IsValidAddress(entry->d_private)){

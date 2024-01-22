@@ -117,19 +117,15 @@ private:
 	float startDisplayOffsetY_ = -1.0f;
 };
 
-DisplayLayoutScreen::DisplayLayoutScreen(const Path &filename) : UIDialogScreenWithGameBackground(filename) {
-	// Show background at full brightness
-	darkenGameBackground_ = false;
-	forceTransparent_ = true;
-}
+DisplayLayoutScreen::DisplayLayoutScreen(const Path &filename) : UIDialogScreenWithGameBackground(filename) {}
 
 void DisplayLayoutScreen::DrawBackground(UIContext &dc) {
 	if (PSP_IsInited() && !g_Config.bSkipBufferEffects) {
-		// We normally rely on the PSP screen.
-		UIDialogScreenWithGameBackground::DrawBackground(dc);
+		// We normally rely on the PSP screen showing through.
 	} else {
 		// But if it's not present (we're not in game, or skip buffer effects is used),
 		// we have to draw a substitute ourselves.
+		UIContext &dc = *screenManager()->getUIContext();
 
 		// TODO: Clean this up a bit, this GetScreenFrame/CenterDisplay combo is too common.
 		FRect screenFrame = GetScreenFrame(g_display.pixel_xres, g_display.pixel_yres);
@@ -138,6 +134,7 @@ void DisplayLayoutScreen::DrawBackground(UIContext &dc) {
 
 		dc.Flush();
 		ImageID bg = ImageID("I_PSP_DISPLAY");
+		dc.Draw()->DrawImageStretch(bg, dc.GetBounds(), 0x7F000000);
 		dc.Draw()->DrawImageStretch(bg, FRectToBounds(rc), 0x7FFFFFFF);
 	}
 }
@@ -166,15 +163,15 @@ UI::EventReturn DisplayLayoutScreen::OnPostProcShaderChange(UI::EventParams &e) 
 }
 
 static std::string PostShaderTranslateName(const char *value) {
-	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
-	auto ps = GetI18NCategory(I18NCat::POSTSHADERS);
 	if (!strcmp(value, "Off")) {
+		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 		// Off is a legacy fake item (gonna migrate off it later).
 		return gr->T("Add postprocessing shader");
 	}
 
 	const ShaderInfo *info = GetPostShaderInfo(value);
 	if (info) {
+		auto ps = GetI18NCategory(I18NCat::POSTSHADERS);
 		return ps->T(value, info ? info->name.c_str() : value);
 	} else {
 		return value;

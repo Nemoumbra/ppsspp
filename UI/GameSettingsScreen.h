@@ -27,6 +27,8 @@
 #include "UI/MiscScreens.h"
 #include "UI/TabbedDialogScreen.h"
 
+class Path;
+
 // Per-game settings screen - enables you to configure graphic options, control options, etc
 // per game.
 class GameSettingsScreen : public TabbedUIDialogScreenWithGameBackground {
@@ -42,6 +44,7 @@ protected:
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
 
 	void CreateTabs() override;
+	bool ShowSearchControls() const override { return true; }
 
 private:
 	void PreCreateViews() override;
@@ -53,8 +56,6 @@ private:
 	void CreateToolsSettings(UI::ViewGroup *tools);
 	void CreateSystemSettings(UI::ViewGroup *systemSettings);
 	void CreateVRSettings(UI::ViewGroup *vrSettings);
-
-	void TriggerRestart(const char *why);
 
 	std::string gameID_;
 	UI::CheckBox *enableReportsCheckbox_ = nullptr;
@@ -155,6 +156,7 @@ private:
 	UI::EventReturn OnMIPSLoggerFlushLogs(UI::EventParams &e);
 	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
 	UI::EventReturn OnFramedumpTest(UI::EventParams &e);
+	UI::EventReturn OnMemstickTest(UI::EventParams &e);
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
 	UI::EventReturn OnCopyStatesToRoot(UI::EventParams &e);
 
@@ -249,3 +251,5 @@ private:
 	void OnCompleted(DialogResult result) override;
 	int restoreFlags_ = (int)(RestoreSettingsBits::SETTINGS);  // RestoreSettingsBits enum
 };
+
+void TriggerRestart(const char *why, bool editThenRestore, const Path &gamePath);

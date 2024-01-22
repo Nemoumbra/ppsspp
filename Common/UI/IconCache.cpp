@@ -105,7 +105,7 @@ bool IconCache::LoadFromFile(FILE *file) {
 		entry.format = entryHeader.format;
 		entry.insertedTimeStamp = entryHeader.insertedTimestamp;
 		entry.usedTimeStamp = now;
-		cache_.insert(std::pair<std::string, Entry>(key, entry));
+		cache_.emplace(key, entry);
 	}
 
 	return true;
@@ -172,6 +172,7 @@ void IconCache::Decimate(int64_t maxSize) {
 	};
 
 	std::vector<SortEntry> sortEntries;
+	sortEntries.reserve(cache_.size());
 	for (auto iter : cache_) {
 		sortEntries.push_back({ iter.first, iter.second.usedTimeStamp, iter.second.data.size() });
 	}

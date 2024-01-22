@@ -111,6 +111,7 @@ public abstract class NativeActivity extends Activity {
 	private PowerSaveModeReceiver mPowerSaveModeReceiver = null;
 	private SizeManager sizeManager = null;
 	private static LocationHelper mLocationHelper;
+	private static InfraredHelper mInfraredHelper;
 	private static CameraHelper mCameraHelper;
 
 	private static final String[] permissionsForStorage = {
@@ -401,6 +402,7 @@ public abstract class NativeActivity extends Activity {
 		String extStorageDir = Environment.getExternalStorageDirectory().getAbsolutePath();
 		File externalFiles = this.getExternalFilesDir(null);
 		String externalFilesDir = externalFiles == null ? "" : externalFiles.getAbsolutePath();
+		String nativeLibDir = getApplicationLibraryDir(appInfo);
 
 		Log.i(TAG, "Ext storage: " + extStorageState + " " + extStorageDir);
 		Log.i(TAG, "Ext files dir: " + externalFilesDir);
@@ -443,7 +445,7 @@ public abstract class NativeActivity extends Activity {
 		overrideShortcutParam = null;
 
 		NativeApp.audioConfig(optimalFramesPerBuffer, optimalSampleRate);
-		NativeApp.init(model, deviceType, languageRegion, apkFilePath, dataDir, extStorageDir, externalFilesDir, additionalStorageDirs, cacheDir, shortcut, Build.VERSION.SDK_INT, Build.BOARD);
+		NativeApp.init(model, deviceType, languageRegion, apkFilePath, dataDir, extStorageDir, externalFilesDir, nativeLibDir, additionalStorageDirs, cacheDir, shortcut, Build.VERSION.SDK_INT, Build.BOARD);
 
 		// Allow C++ to tell us to use JavaGL or not.
 		javaGL = "true".equalsIgnoreCase(NativeApp.queryConfig("androidJavaGL"));
@@ -471,6 +473,14 @@ public abstract class NativeActivity extends Activity {
 		}
 
 		mLocationHelper = new LocationHelper(this);
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+			try {
+				mInfraredHelper = new InfraredHelper(this);
+			} catch (Exception e) {
+				mInfraredHelper = null;
+				Log.i(TAG, "InfraredHelper exception: " + e);
+			}
+		}
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
 			// android.graphics.SurfaceTexture is not available before version 11.
 			mCameraHelper = new CameraHelper(this);
@@ -636,6 +646,7 @@ public abstract class NativeActivity extends Activity {
 					// mGLSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 8);
 				// }
 			}
+
 			mGLSurfaceView.setRenderer(nativeRenderer);
 			setContentView(mGLSurfaceView);
 		} else {
@@ -661,6 +672,37 @@ public abstract class NativeActivity extends Activity {
 		}
 	}
 
+	private void applyFrameRate(Surface surface, float frameRateHz) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+			return;
+		if (mSurface != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			try {
+				int method = NativeApp.getDisplayFramerateMode();
+				if (method > 0) {
+					Log.i(TAG, "Setting desired framerate to " + frameRateHz + " Hz method=" + method);
+					switch (method) {
+						case 1:
+							mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+							break;
+						case 2:
+							mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+							break;
+						case 3:
+							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+								mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS);
+							}
+							break;
+						default:
+							break;
+					}
+
+				}
+			} catch (Exception e) {
+				Log.e(TAG, "Failed to set framerate: " + e.toString());
+			}
+		}
+	}
+
 	public void notifySurface(Surface surface) {
 		mSurface = surface;
 
@@ -676,6 +718,8 @@ public abstract class NativeActivity extends Activity {
 			} else {
 				startRenderLoopThread();
 			}
+		} else if (mSurface != null) {
+			applyFrameRate(mSurface, 60.0f);
 		}
 		updateSustainedPerformanceMode();
 	}
@@ -692,6 +736,8 @@ public abstract class NativeActivity extends Activity {
 		}
 
 		Log.w(TAG, "startRenderLoopThread: Starting thread");
+
+		applyFrameRate(mSurface, 60.0f);
 		runVulkanRenderLoop(mSurface);
 	}
 
@@ -1019,12 +1065,18 @@ public abstract class NativeActivity extends Activity {
 		}
 
 		if ((event.getSource() & InputDevice.SOURCE_CLASS_POINTER) != 0) {
+			if ((event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE) {
+				float dx = event.getAxisValue(MotionEvent.AXIS_RELATIVE_X);
+				float dy = event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y);
+				NativeApp.mouseDelta(dx, dy);
+			}
+
 			switch (event.getAction()) {
 			case MotionEvent.ACTION_HOVER_MOVE:
 				// process the mouse hover movement...
 				return true;
 			case MotionEvent.ACTION_SCROLL:
-				NativeApp.mouseWheelEvent(event.getX(), event.getY());
+				NativeApp.mouseWheelEvent(event.getAxisValue(MotionEvent.AXIS_HSCROLL), event.getAxisValue(MotionEvent.AXIS_VSCROLL));
 				return true;
 			}
 		}
@@ -1296,7 +1348,11 @@ public abstract class NativeActivity extends Activity {
 		AlertDialog dlg = builder.create();
 
 		dlg.setCancelable(true);
-		dlg.show();
+		try {
+			dlg.show();
+		} catch (Exception e) {
+			NativeApp.reportException(e, "AlertDialog");
+		}
 	}
 
 	public boolean processCommand(String command, String params) {
@@ -1357,7 +1413,7 @@ public abstract class NativeActivity extends Activity {
 				Log.e(TAG, e.toString());
 				return false;
 			}
-		} else if (command.equals("browse_file") || command.equals("browse_file_audio")) {
+		} else if (command.equals("browse_file") || command.equals("browse_file_audio") || command.equals("browse_file_zip")) {
 			try {
 				int requestId = Integer.parseInt(params);
 				int packedResultCode = packResultCode(RESULT_OPEN_DOCUMENT, requestId);
@@ -1366,13 +1422,12 @@ public abstract class NativeActivity extends Activity {
 				intent.addCategory(Intent.CATEGORY_OPENABLE);
 				if (command.equals("browse_file_audio")) {
 					intent.setType("audio/x-wav");
+				} else if (command.equals("browse_file_zip")) {
+					intent.setType("application/zip");
 				} else {
 					intent.setType("*/*");
 				}
 				intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-				// Possible alternative approach:
-				// String[] mimeTypes = {"application/octet-stream", "/x-iso9660-image"};
-				// intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
 				startActivityForResult(intent, packedResultCode);
 				// intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, pickerInitialUri);
 			} catch (Exception e) {
@@ -1520,7 +1575,25 @@ public abstract class NativeActivity extends Activity {
 			} else if (params.equals("close")) {
 				mLocationHelper.stopLocationUpdates();
 			}
+		} else if (command.equals("infrared_command")) {
+			if (mInfraredHelper == null) {
+				return false;
+			}
+			if (params.startsWith("sircs")) {
+				Pattern pattern = Pattern.compile("sircs_(\\d+)_(\\d+)_(\\d+)_(\\d+)");
+				Matcher matcher = pattern.matcher(params);
+				if (!matcher.matches())
+					return false;
+				int ir_version = Integer.parseInt(matcher.group(1));
+				int ir_command = Integer.parseInt(matcher.group(2));
+				int ir_address = Integer.parseInt(matcher.group(3));
+				int ir_count   = Integer.parseInt(matcher.group(4));
+				mInfraredHelper.sendSircCommand(ir_version, ir_command, ir_address, ir_count);
+			}
 		} else if (command.equals("camera_command")) {
+			if (mCameraHelper == null) {
+				return false;
+			}
 			if (params.startsWith("startVideo")) {
 				Pattern pattern = Pattern.compile("startVideo_(\\d+)x(\\d+)");
 				Matcher matcher = pattern.matcher(params);
@@ -1529,7 +1602,7 @@ public abstract class NativeActivity extends Activity {
 				int width = Integer.parseInt(matcher.group(1));
 				int height = Integer.parseInt(matcher.group(2));
 				mCameraHelper.setCameraSize(width, height);
-				if (mCameraHelper != null && !askForPermissions(permissionsForCamera, REQUEST_CODE_CAMERA_PERMISSION)) {
+				if (!askForPermissions(permissionsForCamera, REQUEST_CODE_CAMERA_PERMISSION)) {
 					mCameraHelper.startCamera();
 				}
 			} else if (mCameraHelper != null && params.equals("stopVideo")) {
@@ -1560,6 +1633,25 @@ public abstract class NativeActivity extends Activity {
 				throw new Exception();
 			} catch (Exception e) {
 				NativeApp.reportException(e, params);
+			}
+		} else if (command.equals("show_folder")) {
+			try {
+				Uri selectedUri = Uri.parse(params);
+				Intent intent = new Intent(Intent.ACTION_VIEW);
+				intent.setDataAndType(selectedUri, "resource/folder");
+				if (intent.resolveActivityInfo(getPackageManager(), 0) != null) {
+					startActivity(intent);
+					Log.i(TAG, "Started activity for " + params);
+					return true;
+				} else {
+					Log.w(TAG, "No file explorer installed");
+					// if you reach this place, it means there is no any file
+					// explorer app installed on your device
+					return false;
+				}
+			} catch (Exception e) {
+				NativeApp.reportException(e, params);
+				return false;
 			}
 		}
 		return false;

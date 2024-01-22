@@ -81,7 +81,7 @@ ServerRequest::~ServerRequest() {
 	}
 	delete in_;
 	if (!out_->Empty()) {
-		ERROR_LOG(IO, "Output not empty - connection abort? (%s)", this->header_.resource);
+		WARN_LOG(IO, "Output not empty - connection abort? (%s) (%d bytes)", this->header_.resource, (int)out_->BytesRemaining());
 	}
 	delete out_;
 }
@@ -118,7 +118,7 @@ void ServerRequest::WriteHttpResponseHeader(const char *ver, int status, int64_t
 		buffer->Printf("Content-Length: %llu\r\n", size);
 	}
 	if (otherHeaders) {
-		buffer->Push(otherHeaders, (int)strlen(otherHeaders));
+		buffer->Push(otherHeaders, strlen(otherHeaders));
 	}
 	buffer->Push("\r\n");
 }

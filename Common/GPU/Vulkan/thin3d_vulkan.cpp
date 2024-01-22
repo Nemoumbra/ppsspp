@@ -247,7 +247,7 @@ bool VKShaderModule::Compile(VulkanContext *vulkan, ShaderLanguage language, con
 
 class VKInputLayout : public InputLayout {
 public:
-	std::vector<VkVertexInputBindingDescription> bindings;
+	VkVertexInputBindingDescription binding;
 	std::vector<VkVertexInputAttributeDescription> attributes;
 	VkPipelineVertexInputStateCreateInfo visc;
 };
@@ -290,7 +290,7 @@ public:
 
 	std::vector<VKShaderModule *> deps;
 
-	int stride[4]{};
+	int stride = 0;
 	int dynamicUniformSize = 0;
 
 	bool usesStencil = false;
@@ -331,8 +331,8 @@ public:
 		: vulkan_(vulkan), mipLevels_(desc.mipLevels) {
 		format_ = desc.format;
 	}
-	bool Create(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const TextureDesc &desc);
-	void Update(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const uint8_t *const *data, TextureCallback callback, int numLevels);
+	bool Create(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, VulkanPushPool *pushBuffer, const TextureDesc &desc);
+	void Update(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, VulkanPushPool *pushBuffer, const uint8_t *const *data, TextureCallback callback, int numLevels);
 
 	~VKTexture() {
 		Destroy();
@@ -381,6 +381,9 @@ public:
 	~VKContext();
 
 	void DebugAnnotate(const char *annotation) override;
+	void Wait() override {
+		vkDeviceWaitIdle(vulkan_->GetDevice());
+	}
 
 	const DeviceCaps &GetDeviceCaps() const override {
 		return caps_;
@@ -392,6 +395,26 @@ public:
 		}
 		return list;
 	}
+	std::vector<std::string> GetPresentModeList(const char *currentMarkerString) const override {
+		std::vector<std::string> list;
+		for (auto mode : vulkan_->GetAvailablePresentModes()) {
+			std::string str = VulkanPresentModeToString(mode);
+			if (mode == vulkan_->GetPresentMode()) {
+				str += std::string(" (") + currentMarkerString + ")";
+			}
+			list.push_back(str);
+		}
+		return list;
+	}
+	std::vector<std::string> GetSurfaceFormatList() const override {
+		std::vector<std::string> list;
+		for (auto &format : vulkan_->SurfaceFormats()) {
+			std::string str = StringFromFormat("%s : %s", VulkanFormatToString(format.format), VulkanColorSpaceToString(format.colorSpace));
+			list.push_back(str);
+		}
+		return list;
+	}
+
 	uint32_t GetSupportedShaderLanguages() const override {
 		return (uint32_t)ShaderLanguage::GLSL_VULKAN;
 	}
@@ -446,13 +469,9 @@ public:
 		curPipeline_ = (VKPipeline *)pipeline;
 	}
 
-	// TODO: Make VKBuffers proper buffers, and do a proper binding model. This is just silly.
-	void BindVertexBuffers(int start, int count, Buffer **buffers, const int *offsets) override {
-		_assert_(start + count <= ARRAY_SIZE(curVBuffers_));
-		for (int i = 0; i < count; i++) {
-			curVBuffers_[i + start] = (VKBuffer *)buffers[i];
-			curVBufferOffsets_[i + start] = offsets ? offsets[i] : 0;
-		}
+	void BindVertexBuffer(Buffer *vertexBuffer, int offset) override {
+		curVBuffer_ = (VKBuffer *)vertexBuffer;
+		curVBufferOffset_ = offset;
 	}
 	void BindIndexBuffer(Buffer *indexBuffer, int offset) override {
 		curIBuffer_ = (VKBuffer *)indexBuffer;
@@ -474,8 +493,6 @@ public:
 	void BeginFrame(DebugFlags debugFlags) override;
 	void EndFrame() override;
 	void Present(PresentMode presentMode, int vblanks) override;
-
-	void WipeQueue() override;
 
 	int GetFrameCount() override {
 		return frameCount_;
@@ -535,8 +552,8 @@ private:
 	VulkanTexture *nullTexture_ = nullptr;
 
 	AutoRef<VKPipeline> curPipeline_;
-	AutoRef<VKBuffer> curVBuffers_[4];
-	int curVBufferOffsets_[4]{};
+	AutoRef<VKBuffer> curVBuffer_;
+	int curVBufferOffset_ = 0;
 	AutoRef<VKBuffer> curIBuffer_;
 	int curIBufferOffset_ = 0;
 
@@ -743,7 +760,7 @@ enum class TextureState {
 	PENDING_DESTRUCTION,
 };
 
-bool VKTexture::Create(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const TextureDesc &desc) {
+bool VKTexture::Create(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, VulkanPushPool *pushBuffer, const TextureDesc &desc) {
 	// Zero-sized textures not allowed.
 	_assert_(desc.width * desc.height * desc.depth > 0);  // remember to set depth to 1!
 	if (desc.width * desc.height * desc.depth <= 0) {
@@ -783,25 +800,24 @@ bool VKTexture::Create(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const Te
 	return true;
 }
 
-void VKTexture::Update(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const uint8_t * const *data, TextureCallback initDataCallback, int numLevels) {
+void VKTexture::Update(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, VulkanPushPool *pushBuffer, const uint8_t * const *data, TextureCallback initDataCallback, int numLevels) {
 	// Before we can use UpdateInternal, we need to transition the image to the same state as after CreateDirect,
 	// making it ready for writing.
 	vkTex_->PrepareForTransferDst(cmd, numLevels);
 	UpdateInternal(cmd, pushBuffer, data, initDataCallback, numLevels);
-	vkTex_->RestoreAfterTransferDst(cmd, numLevels);
+	vkTex_->RestoreAfterTransferDst(numLevels, postBarriers);
 }
 
 void VKTexture::UpdateInternal(VkCommandBuffer cmd, VulkanPushPool *pushBuffer, const uint8_t * const *data, TextureCallback initDataCallback, int numLevels) {
 	int w = width_;
 	int h = height_;
 	int d = depth_;
-	int i;
 	VkFormat vulkanFormat = DataFormatToVulkan(format_);
 	int bpp = GetBpp(vulkanFormat);
 	int bytesPerPixel = bpp / 8;
 	TextureCopyBatch batch;
 	batch.reserve(numLevels);
-	for (i = 0; i < numLevels; i++) {
+	for (int i = 0; i < numLevels; i++) {
 		uint32_t offset;
 		VkBuffer buf;
 		size_t size = w * h * d * bytesPerPixel;
@@ -936,22 +952,15 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 
 	// VkSampleCountFlagBits is arranged correctly for our purposes.
 	// Only support MSAA levels that have support for all three of color, depth, stencil.
-	if (!caps_.isTilingGPU) {
-		// Check for depth stencil resolve. Without it, depth textures won't work, and we don't want that mess
-		// of compatibility reports, so we'll just disable multisampling in this case for now.
-		// There are potential workarounds for devices that don't support it, but those are nearly non-existent now.
-		const auto &resolveProperties = vulkan->GetPhysicalDeviceProperties().depthStencilResolve;
-		if (vulkan->Extensions().KHR_depth_stencil_resolve &&
-			((resolveProperties.supportedDepthResolveModes & resolveProperties.supportedStencilResolveModes) & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0) {
-			caps_.multiSampleLevelsMask = (limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts);
-		} else {
-			caps_.multiSampleLevelsMask = 1;
-		}
-	} else {
-		caps_.multiSampleLevelsMask = 1;
-	}
 
-	if (caps_.vendor == GPUVendor::VENDOR_QUALCOMM) {
+	bool multisampleAllowed = true;
+
+    caps_.deviceID = deviceProps.deviceID;
+
+    if (caps_.vendor == GPUVendor::VENDOR_QUALCOMM) {
+		if (caps_.deviceID < 0x6000000)  // On sub 6xx series GPUs, disallow multisample.
+			multisampleAllowed = false;
+
 		// Adreno 5xx devices, all known driver versions, fail to discard stencil when depth write is off.
 		// See: https://github.com/hrydgard/ppsspp/pull/11684
 		if (deviceProps.deviceID >= 0x05000000 && deviceProps.deviceID < 0x06000000) {
@@ -1011,13 +1020,38 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 				bugs_.Infest(Bugs::UNIFORM_INDEXING_BROKEN);
 			}
 		}
+
+		if (isOldVersion) {
+			// Very rough heuristic.
+			multisampleAllowed = false;
+		}
+	}
+
+	if (!vulkan->Extensions().KHR_depth_stencil_resolve) {
+		INFO_LOG(G3D, "KHR_depth_stencil_resolve not supported, disabling multisampling");
+	}
+
+	// We limit multisampling functionality to reasonably recent and known-good tiling GPUs.
+	if (multisampleAllowed) {
+		// Check for depth stencil resolve. Without it, depth textures won't work, and we don't want that mess
+		// of compatibility reports, so we'll just disable multisampling in this case for now.
+		// There are potential workarounds for devices that don't support it, but those are nearly non-existent now.
+		const auto &resolveProperties = vulkan->GetPhysicalDeviceProperties().depthStencilResolve;
+		if (((resolveProperties.supportedDepthResolveModes & resolveProperties.supportedStencilResolveModes) & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0) {
+			caps_.multiSampleLevelsMask = (limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts & limits.framebufferStencilSampleCounts);
+			INFO_LOG(G3D, "Multisample levels mask: %d", caps_.multiSampleLevelsMask);
+		} else {
+			INFO_LOG(G3D, "Not enough depth/stencil resolve modes supported, disabling multisampling.");
+			caps_.multiSampleLevelsMask = 1;
+		}
+	} else {
+		caps_.multiSampleLevelsMask = 1;
 	}
 
 	// Vulkan can support this through input attachments and various extensions, but not worth
 	// the trouble.
 	caps_.framebufferFetchSupported = false;
 
-	caps_.deviceID = deviceProps.deviceID;
 	device_ = vulkan->GetDevice();
 
 	VkBufferUsageFlags usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
@@ -1085,10 +1119,6 @@ void VKContext::Invalidate(InvalidationFlags flags) {
 	}
 }
 
-void VKContext::WipeQueue() {
-	renderManager_.Wipe();
-}
-
 void VKContext::BindDescriptors(VkBuffer buf, PackedDescriptor descriptors[4]) {
 	descriptors[0].buffer.buffer = buf;
 	descriptors[0].buffer.offset = 0;  // dynamic
@@ -1149,13 +1179,11 @@ Pipeline *VKContext::CreateGraphicsPipeline(const PipelineDesc &desc, const char
 		}
 	}
 
-	_dbg_assert_(input && input->bindings.size() == 1);
+	_dbg_assert_(input);
 	_dbg_assert_((int)input->attributes.size() == (int)input->visc.vertexAttributeDescriptionCount);
 
-	for (int i = 0; i < (int)input->bindings.size(); i++) {
-		pipeline->stride[i] = input->bindings[i].stride;
-	}
-	gDesc.ibd = input->bindings[0];
+	pipeline->stride = input->binding.stride;
+	gDesc.ibd = input->binding;
 	for (size_t i = 0; i < input->attributes.size(); i++) {
 		gDesc.attrs[i] = input->attributes[i];
 	}
@@ -1237,23 +1265,20 @@ InputLayout *VKContext::CreateInputLayout(const InputLayoutDesc &desc) {
 	VKInputLayout *vl = new VKInputLayout();
 	vl->visc = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
 	vl->visc.flags = 0;
+	vl->visc.vertexBindingDescriptionCount = 1;
 	vl->visc.vertexAttributeDescriptionCount = (uint32_t)desc.attributes.size();
-	vl->visc.vertexBindingDescriptionCount = (uint32_t)desc.bindings.size();
-	vl->bindings.resize(vl->visc.vertexBindingDescriptionCount);
 	vl->attributes.resize(vl->visc.vertexAttributeDescriptionCount);
-	vl->visc.pVertexBindingDescriptions = vl->bindings.data();
+	vl->visc.pVertexBindingDescriptions = &vl->binding;
 	vl->visc.pVertexAttributeDescriptions = vl->attributes.data();
 	for (size_t i = 0; i < desc.attributes.size(); i++) {
-		vl->attributes[i].binding = (uint32_t)desc.attributes[i].binding;
+		vl->attributes[i].binding = 0;
 		vl->attributes[i].format = DataFormatToVulkan(desc.attributes[i].format);
 		vl->attributes[i].location = desc.attributes[i].location;
 		vl->attributes[i].offset = desc.attributes[i].offset;
 	}
-	for (size_t i = 0; i < desc.bindings.size(); i++) {
-		vl->bindings[i].inputRate = desc.bindings[i].instanceRate ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX;
-		vl->bindings[i].binding = (uint32_t)i;
-		vl->bindings[i].stride = desc.bindings[i].stride;
-	}
+	vl->binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+	vl->binding.binding = 0;
+	vl->binding.stride = desc.stride;
 	return vl;
 }
 
@@ -1265,11 +1290,11 @@ Texture *VKContext::CreateTexture(const TextureDesc &desc) {
 		return nullptr;
 	}
 	VKTexture *tex = new VKTexture(vulkan_, initCmd, push_, desc);
-	if (tex->Create(initCmd, push_, desc)) {
+	if (tex->Create(initCmd, &renderManager_.PostInitBarrier(), push_, desc)) {
 		return tex;
 	} else {
 		ERROR_LOG(G3D,  "Failed to create texture");
-		delete tex;
+		tex->Release();
 		return nullptr;
 	}
 }
@@ -1285,7 +1310,7 @@ void VKContext::UpdateTextureLevels(Texture *texture, const uint8_t **data, Text
 	VKTexture *tex = (VKTexture *)texture;
 
 	_dbg_assert_(numLevels <= tex->NumLevels());
-	tex->Update(initCmd, push_, data, initDataCallback, numLevels);
+	tex->Update(initCmd, &renderManager_.PostInitBarrier(), push_, data, initDataCallback, numLevels);
 }
 
 static inline void CopySide(VkStencilOpState &dest, const StencilSetup &src) {
@@ -1408,7 +1433,7 @@ void VKContext::ApplyDynamicState() {
 }
 
 void VKContext::Draw(int vertexCount, int offset) {
-	VKBuffer *vbuf = curVBuffers_[0];
+	VKBuffer *vbuf = curVBuffer_;
 
 	VkBuffer vulkanVbuf;
 	VkBuffer vulkanUBObuf;
@@ -1420,12 +1445,12 @@ void VKContext::Draw(int vertexCount, int offset) {
 	int descSetIndex;
 	PackedDescriptor *descriptors = renderManager_.PushDescriptorSet(4, &descSetIndex);
 	BindDescriptors(vulkanUBObuf, descriptors);
-	renderManager_.Draw(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffsets_[0], vertexCount, offset);
+	renderManager_.Draw(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffset_, vertexCount, offset);
 }
 
 void VKContext::DrawIndexed(int vertexCount, int offset) {
 	VKBuffer *ibuf = curIBuffer_;
-	VKBuffer *vbuf = curVBuffers_[0];
+	VKBuffer *vbuf = curVBuffer_;
 
 	VkBuffer vulkanVbuf, vulkanIbuf, vulkanUBObuf;
 	uint32_t ubo_offset = (uint32_t)curPipeline_->PushUBO(push_, vulkan_, &vulkanUBObuf);
@@ -1437,7 +1462,7 @@ void VKContext::DrawIndexed(int vertexCount, int offset) {
 	int descSetIndex;
 	PackedDescriptor *descriptors = renderManager_.PushDescriptorSet(4, &descSetIndex);
 	BindDescriptors(vulkanUBObuf, descriptors);
-	renderManager_.DrawIndexed(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffsets_[0], vulkanIbuf, (int)ibBindOffset + offset * sizeof(uint32_t), vertexCount, 1);
+	renderManager_.DrawIndexed(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffset_, vulkanIbuf, (int)ibBindOffset + offset * sizeof(uint32_t), vertexCount, 1);
 }
 
 void VKContext::DrawUP(const void *vdata, int vertexCount) {
@@ -1447,7 +1472,7 @@ void VKContext::DrawUP(const void *vdata, int vertexCount) {
 	}
 
 	VkBuffer vulkanVbuf, vulkanUBObuf;
-	size_t dataSize = vertexCount * curPipeline_->stride[0];
+	size_t dataSize = vertexCount * curPipeline_->stride;
 	uint32_t vbBindOffset;
 	uint8_t *dataPtr = push_->Allocate(dataSize, 4, &vulkanVbuf, &vbBindOffset);
 	_assert_(dataPtr != nullptr);
@@ -1460,7 +1485,7 @@ void VKContext::DrawUP(const void *vdata, int vertexCount) {
 	int descSetIndex;
 	PackedDescriptor *descriptors = renderManager_.PushDescriptorSet(4, &descSetIndex);
 	BindDescriptors(vulkanUBObuf, descriptors);
-	renderManager_.Draw(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffsets_[0], vertexCount);
+	renderManager_.Draw(descSetIndex, 1, &ubo_offset, vulkanVbuf, (int)vbBindOffset + curVBufferOffset_, vertexCount);
 }
 
 void VKContext::BindCurrentPipeline() {
@@ -1521,11 +1546,15 @@ std::vector<std::string> VKContext::GetFeatureList() const {
 std::vector<std::string> VKContext::GetExtensionList(bool device, bool enabledOnly) const {
 	std::vector<std::string> extensions;
 	if (enabledOnly) {
-		for (auto &iter : (device ? vulkan_->GetDeviceExtensionsEnabled() : vulkan_->GetInstanceExtensionsEnabled())) {
+		const auto& enabled = (device ? vulkan_->GetDeviceExtensionsEnabled() : vulkan_->GetInstanceExtensionsEnabled());
+		extensions.reserve(enabled.size());
+		for (auto &iter : enabled) {
 			extensions.push_back(iter);
 		}
 	} else {
-		for (auto &iter : (device ? vulkan_->GetDeviceExtensionsAvailable() : vulkan_->GetInstanceExtensionsAvailable())) {
+		const auto& available = (device ? vulkan_->GetDeviceExtensionsAvailable() : vulkan_->GetInstanceExtensionsAvailable());
+		extensions.reserve(available.size());
+		for (auto &iter : available) {
 			extensions.push_back(iter.extensionName);
 		}
 	}
@@ -1594,7 +1623,7 @@ Framebuffer *VKContext::CreateFramebuffer(const FramebufferDesc &desc) {
 	_assert_(desc.height > 0);
 
 	VkCommandBuffer cmd = renderManager_.GetInitCmd();
-	VKRFramebuffer *vkrfb = new VKRFramebuffer(vulkan_, cmd, renderManager_.GetQueueRunner()->GetCompatibleRenderPass(), desc.width, desc.height, desc.numLayers, desc.multiSampleLevel, desc.z_stencil, desc.tag);
+	VKRFramebuffer *vkrfb = new VKRFramebuffer(vulkan_, &renderManager_.PostInitBarrier(), cmd, renderManager_.GetQueueRunner()->GetCompatibleRenderPass(), desc.width, desc.height, desc.numLayers, desc.multiSampleLevel, desc.z_stencil, desc.tag);
 	return new VKFramebuffer(vkrfb, desc.multiSampleLevel);
 }
 
@@ -1676,7 +1705,7 @@ void VKContext::BindFramebufferAsTexture(Framebuffer *fbo, int binding, FBChanne
 		break;
 	}
 
-	boundTextures_[binding].clear();
+	boundTextures_[binding].reset(nullptr);
 	boundImageView_[binding] = renderManager_.BindFramebufferAsTexture(fb->GetFB(), binding, aspect, layer);
 }
 

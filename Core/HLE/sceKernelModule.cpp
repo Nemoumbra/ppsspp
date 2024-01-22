@@ -354,7 +354,7 @@ public:
 				bool foundBroken = false;
 				auto importedFuncsState = importedFuncs;
 				importedFuncs.clear();
-				for (auto func : importedFuncsState) {
+				for (const auto &func : importedFuncsState) {
 					if (func.moduleName[KERNELOBJECT_MAX_NAME_LENGTH] != '\0' || !Memory::IsValidAddress(func.stubAddr)) {
 						foundBroken = true;
 					} else {
@@ -1405,10 +1405,6 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 
 	if (!module->isFake) {
 		bool scan = true;
-#if defined(MOBILE_DEVICE)
-		scan = g_Config.bFuncReplacements;
-#endif
-
 		// If the ELF has debug symbols, don't add entries to the symbol table.
 		bool insertSymbols = scan && !reader.LoadSymbols();
 		std::vector<SectionID> codeSections = reader.GetCodeSections();
@@ -1916,7 +1912,7 @@ bool __KernelLoadGEDump(const std::string &base_filename, std::string *error_str
 	};
 
 	for (size_t i = 0; i < ARRAY_SIZE(runDumpCode); ++i) {
-		Memory::WriteUnchecked_U32(runDumpCode[i], mipsr4k.pc + (int)i * sizeof(u32_le));
+		Memory::WriteUnchecked_U32(runDumpCode[i], mipsr4k.pc + (u32)i * sizeof(u32_le));
 	}
 
 	PSPModule *module = new PSPModule();
@@ -2168,7 +2164,6 @@ int KernelStartModule(SceUID moduleId, u32 argsize, u32 argAddr, u32 returnValue
 
 static void sceKernelStartModule(u32 moduleId, u32 argsize, u32 argAddr, u32 returnValueAddr, u32 optionAddr)
 {
-	auto smoption = PSPPointer<SceKernelSMOption>::Create(optionAddr);
 	u32 error;
 	PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
 	if (!module) {
@@ -2194,6 +2189,7 @@ static void sceKernelStartModule(u32 moduleId, u32 argsize, u32 argAddr, u32 ret
 		moduleId,argsize,argAddr,returnValueAddr,optionAddr);
 
 		bool needsWait;
+		auto smoption = PSPPointer<SceKernelSMOption>::Create(optionAddr);
 		int ret = KernelStartModule(moduleId, argsize, argAddr, returnValueAddr, smoption.PtrOrNull(), &needsWait);
 
 		if (needsWait) {
