@@ -136,6 +136,7 @@ VkSampler SamplerCache::GetOrCreateSampler(const SamplerCacheKey &key) {
 	samp.magFilter = key.magFilt ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 	samp.minFilter = key.minFilt ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 	samp.mipmapMode = key.mipFilt ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
 	if (key.aniso) {
 		// Docs say the min of this value and the supported max are used.
 		samp.maxAnisotropy = 1 << g_Config.iAnisotropyLevel;
@@ -159,7 +160,7 @@ VkSampler SamplerCache::GetOrCreateSampler(const SamplerCacheKey &key) {
 	return sampler;
 }
 
-std::string SamplerCache::DebugGetSamplerString(std::string id, DebugShaderStringType stringType) {
+std::string SamplerCache::DebugGetSamplerString(const std::string &id, DebugShaderStringType stringType) {
 	SamplerCacheKey key;
 	key.FromString(id);
 	return StringFromFormat("%s/%s mag:%s min:%s mip:%s maxLod:%f minLod:%f bias:%f",
@@ -228,6 +229,7 @@ void TextureCacheVulkan::DeviceLost() {
 
 	nextTexture_ = nullptr;
 	draw_ = nullptr;
+	Unbind();
 }
 
 void TextureCacheVulkan::DeviceRestore(Draw::DrawContext *draw) {
@@ -371,8 +373,7 @@ void TextureCacheVulkan::UpdateCurrentClut(GEPaletteFormat clutFormat, u32 clutB
 
 void TextureCacheVulkan::BindTexture(TexCacheEntry *entry) {
 	if (!entry || !entry->vkTex) {
-		imageView_ = VK_NULL_HANDLE;
-		curSampler_ = VK_NULL_HANDLE;
+		Unbind();
 		return;
 	}
 
@@ -429,7 +430,11 @@ void TextureCacheVulkan::BuildTexture(TexCacheEntry *const entry) {
 	plan.hardwareScaling = g_Config.bTexHardwareScaling && uploadCS_ != VK_NULL_HANDLE;
 	plan.slowScaler = !plan.hardwareScaling || vulkan->DevicePerfClass() == PerfClass::SLOW;
 	if (!PrepareBuildTexture(plan, entry)) {
-		// We're screwed?
+		// We're screwed (invalid size or something, corrupt display list), let's just zap it.
+		if (entry->vkTex) {
+			delete entry->vkTex;
+			entry->vkTex = nullptr;
+		}
 		return;
 	}
 
@@ -499,11 +504,11 @@ void TextureCacheVulkan::BuildTexture(TexCacheEntry *const entry) {
 	case VULKAN_4444_FORMAT: mapping = &VULKAN_4444_SWIZZLE; break;
 	case VULKAN_1555_FORMAT: mapping = &VULKAN_1555_SWIZZLE; break;
 	case VULKAN_565_FORMAT:  mapping = &VULKAN_565_SWIZZLE;  break;
-	default:                 mapping = &VULKAN_8888_SWIZZLE; break;  // no swizzle
+	default:                 mapping = &VULKAN_8888_SWIZZLE; break;  // no channel swizzle
 	}
 
-	char texName[64]{};
-	snprintf(texName, sizeof(texName), "tex_%08x_%s", entry->addr, GeTextureFormatToString((GETextureFormat)entry->format, gstate.getClutPaletteFormat()));
+	char texName[64];
+	snprintf(texName, sizeof(texName), "tex_%08x_%s_%s", entry->addr, GeTextureFormatToString((GETextureFormat)entry->format, gstate.getClutPaletteFormat()), gstate.isTextureSwizzled() ? "swz" : "lin");
 	entry->vkTex = new VulkanTexture(vulkan, texName);
 	VulkanTexture *image = entry->vkTex;
 	bool allocSuccess = image->CreateDirect(cmdInit, plan.createW, plan.createH, plan.depth, plan.levelsToCreate, actualFmt, imageLayout, usage, mapping);
@@ -511,7 +516,8 @@ void TextureCacheVulkan::BuildTexture(TexCacheEntry *const entry) {
 		WARN_LOG_REPORT(G3D, "Texture cache ran out of GPU memory; switching to low memory mode");
 		lowMemoryMode_ = true;
 		decimationCounter_ = 0;
-		Decimate();
+		Decimate(entry, true);
+
 		// TODO: We should stall the GPU here and wipe things out of memory.
 		// As is, it will almost definitely fail the second time, but next frame it may recover.
 
@@ -847,7 +853,7 @@ std::vector<std::string> TextureCacheVulkan::DebugGetSamplerIDs() const {
 	return samplerCache_.DebugGetSamplerIDs();
 }
 
-std::string TextureCacheVulkan::DebugGetSamplerString(std::string id, DebugShaderStringType stringType) {
+std::string TextureCacheVulkan::DebugGetSamplerString(const std::string &id, DebugShaderStringType stringType) {
 	return samplerCache_.DebugGetSamplerString(id, stringType);
 }
 

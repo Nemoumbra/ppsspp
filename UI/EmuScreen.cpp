@@ -55,7 +55,6 @@ using namespace std::placeholders;
 #include "Core/CoreTiming.h"
 #include "Core/CoreParameter.h"
 #include "Core/Core.h"
-#include "Core/CwCheat.h"
 #include "Core/KeyMap.h"
 #include "Core/MemFault.h"
 #include "Core/Reporting.h"
@@ -71,10 +70,8 @@ using namespace std::placeholders;
 #include "Core/Debugger/SymbolMap.h"
 #include "Core/RetroAchievements.h"
 #include "Core/SaveState.h"
-#include "Core/MIPS/MIPS.h"
 #include "Core/HLE/__sceAudio.h"
 #include "Core/HLE/proAdhoc.h"
-#include "Core/HLE/Plugins.h"
 #include "Core/HW/Display.h"
 
 #include "UI/BackgroundAudio.h"
@@ -232,8 +229,6 @@ bool EmuScreen::bootAllowStorage(const Path &filename) {
 }
 
 void EmuScreen::bootGame(const Path &filename) {
-	auto sc = GetI18NCategory(I18NCat::SCREEN);
-
 	if (Achievements::IsBlockingExecution()) {
 		// Keep waiting.
 		return;
@@ -278,7 +273,13 @@ void EmuScreen::bootGame(const Path &filename) {
 	if (!info || info->pending)
 		return;
 
-	SetExtraAssertInfo((info->id + " " + info->GetTitle()).c_str());
+	auto sc = GetI18NCategory(I18NCat::SCREEN);
+	if (info->fileType == IdentifiedFileType::PSP_DISC_DIRECTORY) {
+		g_OSD.Show(OSDType::MESSAGE_CENTERED_WARNING, sc->T("ExtractedIsoWarning", "Extracted ISOs often don't work.\nPlay the ISO file directly."), gamePath_.ToVisualString(), 7.0f);
+	}
+
+	extraAssertInfoStr_ = info->id + " " + info->GetTitle();
+	SetExtraAssertInfo(extraAssertInfoStr_.c_str());
 
 	if (!info->id.empty()) {
 		g_Config.loadGameConfig(info->id, info->GetTitle());
@@ -346,9 +347,9 @@ void EmuScreen::bootGame(const Path &filename) {
 		g_OSD.Show(OSDType::MESSAGE_WARNING, gr->T("BufferedRenderingRequired", "Warning: This game requires Rendering Mode to be set to Buffered."), 10.0f);
 	}
 
-	if (PSP_CoreParameter().compat.flags().RequireBlockTransfer && g_Config.bSkipGPUReadbacks) {
+	if (PSP_CoreParameter().compat.flags().RequireBlockTransfer && g_Config.iSkipGPUReadbackMode != (int)SkipGPUReadbackMode::NO_SKIP) {
 		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
-		g_OSD.Show(OSDType::MESSAGE_WARNING, gr->T("BlockTransferRequired", "Warning: This game requires Simulate Block Transfer Mode to be set to On."), 10.0f);
+		g_OSD.Show(OSDType::MESSAGE_WARNING, gr->T("BlockTransferRequired", "Warning: This game requires Skip GPU Readbacks be set to No."), 10.0f);
 	}
 
 	if (PSP_CoreParameter().compat.flags().RequireDefaultCPUClock && g_Config.iLockedCPUSpeed != 0) {
@@ -360,6 +361,10 @@ void EmuScreen::bootGame(const Path &filename) {
 	loadingViewVisible_->Divert(UI::V_VISIBLE, 0.75f);
 
 	screenManager()->getDrawContext()->ResetStats();
+
+	if (bootPending_) {
+		System_PostUIMessage(UIMessage::GAME_SELECTED, filename.c_str());
+	}
 }
 
 void EmuScreen::bootComplete() {
@@ -368,8 +373,8 @@ void EmuScreen::bootComplete() {
 	System_Notify(SystemNotification::DISASSEMBLY);
 
 	NOTICE_LOG(BOOT, "Booted %s...", PSP_CoreParameter().fileToStart.c_str());
-	if (!Achievements::ChallengeModeActive()) {
-		// Don't auto-load savestates in challenge mode.
+	if (!Achievements::HardcoreModeActive()) {
+		// Don't auto-load savestates in hardcore mode.
 		autoLoad();
 	}
 
@@ -405,17 +410,34 @@ void EmuScreen::bootComplete() {
 #endif
 	}
 
+	if (g_Config.bStereoRendering) {
+		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		// Stereo rendering is experimental, so let's notify the user it's being used.
+		// Carefully reuse translations for this rare warning.
+		g_OSD.Show(OSDType::MESSAGE_WARNING, std::string(gr->T("Stereo rendering")) + ": " + di->T("Enabled"));
+	}
+
 	saveStateSlot_ = SaveState::GetCurrentSlot();
 
 	loadingViewColor_->Divert(0x00FFFFFF, 0.2f);
 	loadingViewVisible_->Divert(UI::V_INVISIBLE, 0.2f);
+
+	std::string gameID = g_paramSFO.GetValueString("DISC_ID");
+	g_Config.TimeTracker().Start(gameID);
 }
 
 EmuScreen::~EmuScreen() {
+	std::string gameID = g_paramSFO.GetValueString("DISC_ID");
+	g_Config.TimeTracker().Stop(gameID);
+
 	// If we were invalid, it would already be shutdown.
 	if (!invalid_ || bootPending_) {
 		PSP_Shutdown();
 	}
+
+	System_PostUIMessage(UIMessage::GAME_SELECTED, "");
+
 	g_OSD.ClearAchievementStuff();
 
 	SetExtraAssertInfo(nullptr);
@@ -447,6 +469,7 @@ void EmuScreen::dialogFinished(const Screen *dialog, DialogResult result) {
 	if (Core_IsActive())
 		UI::EnableFocusMovement(false);
 	RecreateViews();
+	SetExtraAssertInfo(extraAssertInfoStr_.c_str());
 }
 
 static void AfterSaveStateAction(SaveState::Status status, const std::string &message, void *) {
@@ -459,6 +482,24 @@ static void AfterStateBoot(SaveState::Status status, const std::string &message,
 	AfterSaveStateAction(status, message, ignored);
 	Core_EnableStepping(false);
 	System_Notify(SystemNotification::DISASSEMBLY);
+}
+
+void EmuScreen::focusChanged(ScreenFocusChange focusChange) {
+	Screen::focusChanged(focusChange);
+
+	std::string gameID = g_paramSFO.GetValueString("DISC_ID");
+	if (gameID.empty()) {
+		// startup or shutdown
+		return;
+	}
+	switch (focusChange) {
+	case ScreenFocusChange::FOCUS_LOST_TOP:
+		g_Config.TimeTracker().Stop(gameID);
+		break;
+	case ScreenFocusChange::FOCUS_BECAME_TOP:
+		g_Config.TimeTracker().Start(gameID);
+		break;
+	}
 }
 
 void EmuScreen::sendMessage(UIMessage message, const char *value) {
@@ -579,8 +620,10 @@ bool EmuScreen::UnsyncTouch(const TouchInput &touch) {
 		}
 	}
 
+	GamepadTouch();
+
 	if (root_) {
-		root_->Touch(touch);
+		UIScreen::UnsyncTouch(touch);
 	}
 	return true;
 }
@@ -655,7 +698,7 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 
 	case VIRTKEY_FRAME_ADVANCE:
-		if (!Achievements::WarnUserIfChallengeModeActive()) {
+		if (!Achievements::WarnUserIfHardcoreModeActive(false)) {
 			if (down) {
 				// If game is running, pause emulation immediately. Otherwise, advance a single frame.
 				if (Core_IsStepping()) {
@@ -713,7 +756,7 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 #endif
 
 	case VIRTKEY_REWIND:
-		if (down && !Achievements::WarnUserIfChallengeModeActive()) {
+		if (down && !Achievements::WarnUserIfHardcoreModeActive(false)) {
 			if (SaveState::CanRewind()) {
 				SaveState::Rewind(&AfterSaveStateAction);
 			} else {
@@ -722,21 +765,23 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		}
 		break;
 	case VIRTKEY_SAVE_STATE:
-		if (down && !Achievements::WarnUserIfChallengeModeActive())
+		if (down && !Achievements::WarnUserIfHardcoreModeActive(true)) {
 			SaveState::SaveSlot(gamePath_, g_Config.iCurrentStateSlot, &AfterSaveStateAction);
+		}
 		break;
 	case VIRTKEY_LOAD_STATE:
-		if (down && !Achievements::WarnUserIfChallengeModeActive())
+		if (down && !Achievements::WarnUserIfHardcoreModeActive(false)) {
 			SaveState::LoadSlot(gamePath_, g_Config.iCurrentStateSlot, &AfterSaveStateAction);
+		}
 		break;
 	case VIRTKEY_PREVIOUS_SLOT:
-		if (down && !Achievements::WarnUserIfChallengeModeActive()) {
+		if (down && !Achievements::WarnUserIfHardcoreModeActive(true)) {
 			SaveState::PrevSlot();
 			System_PostUIMessage(UIMessage::SAVESTATE_DISPLAY_SLOT);
 		}
 		break;
 	case VIRTKEY_NEXT_SLOT:
-		if (down && !Achievements::WarnUserIfChallengeModeActive()) {
+		if (down && !Achievements::WarnUserIfHardcoreModeActive(true)) {
 			SaveState::NextSlot();
 			System_PostUIMessage(UIMessage::SAVESTATE_DISPLAY_SLOT);
 		}
@@ -745,7 +790,29 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		if (down)
 			System_ToggleFullscreenState("");
 		break;
-
+	case VIRTKEY_TOGGLE_TOUCH_CONTROLS:
+		if (down) {
+			if (g_Config.bShowTouchControls) {
+				// This just messes with opacity if enabled, so you can touch the screen again to bring them back.
+				if (GamepadGetOpacity() < 0.01f) {
+					GamepadTouch();
+				} else {
+					// Reset.
+					GamepadTouch(true);
+				}
+			} else {
+				// If touch controls are disabled though, they'll get enabled.
+				g_Config.bShowTouchControls = true;
+				RecreateViews();
+				GamepadTouch();
+			}
+		}
+		break;
+	case VIRTKEY_TOGGLE_MOUSE:
+		if (down) {
+			g_Config.bMouseControl = !g_Config.bMouseControl;
+		}
+		break;
 	case VIRTKEY_SCREENSHOT:
 		if (down)
 			g_TakeScreenshot = true;
@@ -870,6 +937,11 @@ bool EmuScreen::key(const KeyInput &key) {
 
 void EmuScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
 	System_Notify(SystemNotification::ACTIVITY);
+
+	if (UI::IsFocusMovementEnabled()) {
+		return UIScreen::UnsyncAxis(axes, count);
+	}
+
 	return controlMapper_.Axis(axes, count);
 }
 
@@ -885,7 +957,7 @@ public:
 
 		// PIC1 is the loading image, so let's only draw if it's available.
 		if (ginfo && ginfo->pic1.texture) {
-			Draw::Texture *texture = ginfo->pic1.texture->GetTexture();
+			Draw::Texture *texture = ginfo->pic1.texture;
 			if (texture) {
 				dc.GetDrawContext()->BindTexture(0, texture);
 
@@ -931,7 +1003,6 @@ void EmuScreen::CreateViews() {
 	using namespace UI;
 
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
 	auto sc = GetI18NCategory(I18NCat::SCREEN);
 
 	const Bounds &bounds = screenManager()->getUIContext()->GetLayoutBounds();
@@ -964,12 +1035,13 @@ void EmuScreen::CreateViews() {
 
 	if (g_Config.bEnableNetworkChat) {
 		if (g_Config.iChatButtonPosition != 8) {
+			auto n = GetI18NCategory(I18NCat::NETWORKING);
 			AnchorLayoutParams *layoutParams = AnchorInCorner(bounds, g_Config.iChatButtonPosition, 80.0f, 50.0f);
 			ChoiceWithValueDisplay *btn = new ChoiceWithValueDisplay(&newChatMessages_, n->T("Chat"), layoutParams);
 			root_->Add(btn)->OnClick.Handle(this, &EmuScreen::OnChat);
 			chatButton_ = btn;
 		}
-		chatMenu_ = root_->Add(new ChatMenu(screenManager()->getUIContext()->GetBounds(), new LayoutParams(FILL_PARENT, FILL_PARENT)));
+		chatMenu_ = root_->Add(new ChatMenu(GetRequesterToken(), screenManager()->getUIContext()->GetBounds(), new LayoutParams(FILL_PARENT, FILL_PARENT)));
 		chatMenu_->SetVisibility(UI::V_GONE);
 	} else {
 		chatButton_ = nullptr;
@@ -1196,248 +1268,107 @@ bool EmuScreen::checkPowerDown() {
 	return false;
 }
 
-static const char *CPUCoreAsString(int core) {
-	switch (core) {
-	case 0: return "Interpreter";
-	case 1: return "JIT";
-	case 2: return "IR Interpreter";
-	case 3: return "JIT Using IR";
-	default: return "N/A";
+bool EmuScreen::canBeBackground(bool isTop) const {
+	if (g_Config.bSkipBufferEffects) {
+		return isTop || (g_Config.bTransparentBackground && Core_ShouldRunBehind());
+	}
+
+	if (!g_Config.bTransparentBackground && !isTop) {
+		if (Core_ShouldRunBehind() || screenManager()->topScreen()->wantBrightBackground())
+			return true;
+		return false;
+	}
+	return true;
+}
+
+void EmuScreen::darken() {
+	if (!screenManager()->topScreen()->wantBrightBackground()) {
+		UIContext &dc = *screenManager()->getUIContext();
+		uint32_t color = GetBackgroundColorWithAlpha(dc);
+		dc.Begin();
+		dc.RebindTexture();
+		dc.FillRect(UI::Drawable(color), dc.GetBounds());
+		dc.Flush();
 	}
 }
 
-static void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
-	const MIPSExceptionInfo &info = Core_GetExceptionInfo();
-
-	auto sy = GetI18NCategory(I18NCat::SYSTEM);
-	FontID ubuntu24("UBUNTU24");
-
-	int x = 20 + System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT);
-	int y = 20 + System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP);
-
-	ctx->Flush();
-	if (ctx->Draw()->GetFontAtlas()->getFont(ubuntu24))
-		ctx->BindFontTexture();
-	ctx->Draw()->SetFontScale(1.1f, 1.1f);
-	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T("Game crashed"), x, y, 0xFFFFFFFF);
-
-	char statbuf[4096];
-	char versionString[256];
-	snprintf(versionString, sizeof(versionString), "%s", PPSSPP_GIT_VERSION);
-
-	char crcStr[16]{};
-	if (Reporting::HasCRC(gamePath)) {
-		u32 crc = Reporting::RetrieveCRC(gamePath);
-		snprintf(crcStr, sizeof(crcStr), "CRC: %08x\n", crc);
-	} else {
-		// Queue it for calculation, we want it!
-		// It's OK to call this repeatedly until we have it, which is natural here.
-		Reporting::QueueCRC(gamePath);
-	}
-
-	// TODO: Draw a lot more information. Full register set, and so on.
-
-#ifdef _DEBUG
-	char build[] = "debug";
-#else
-	char build[] = "release";
-#endif
-
-	std::string sysName = System_GetProperty(SYSPROP_NAME);
-	int sysVersion = System_GetPropertyInt(SYSPROP_SYSTEMVERSION);
-
-	// First column
-	y += 65;
-
-	int columnWidth = (ctx->GetBounds().w - x - 10) / 2;
-	int height = ctx->GetBounds().h;
-
-	ctx->PushScissor(Bounds(x, y, columnWidth, height));
-
-	// INFO_LOG(SYSTEM, "DrawCrashDump (%d %d %d %d)", x, y, columnWidth, height);
-
-	snprintf(statbuf, sizeof(statbuf), R"(%s
-%s (%s)
-%s (%s)
-%s v%d (%s)
-%s
-)",
-		ExceptionTypeAsString(info.type),
-		g_paramSFO.GetDiscID().c_str(), g_paramSFO.GetValueString("TITLE").c_str(),
-		versionString, build,
-		sysName.c_str(), sysVersion, GetCompilerABI(),
-		crcStr
-	);
-
-	ctx->Draw()->SetFontScale(.7f, .7f);
-	ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-	y += 160;
-
-	if (info.type == MIPSExceptionType::MEMORY) {
-		snprintf(statbuf, sizeof(statbuf), R"(
-Access: %s at %08x (sz: %d)
-PC: %08x
-%s)",
-			MemoryExceptionTypeAsString(info.memory_type),
-			info.address,
-			info.accessSize,
-			info.pc,
-			info.info.c_str());
-		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-		y += 180;
-	} else if (info.type == MIPSExceptionType::BAD_EXEC_ADDR) {
-		snprintf(statbuf, sizeof(statbuf), R"(
-Destination: %s to %08x
-PC: %08x
-RA: %08x)",
-			ExecExceptionTypeAsString(info.exec_type),
-			info.address,
-			info.pc,
-			info.ra);
-		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-		y += 180;
-	} else if (info.type == MIPSExceptionType::BREAK) {
-		snprintf(statbuf, sizeof(statbuf), R"(
-BREAK
-PC: %08x
-)", info.pc);
-		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-		y += 180;
-	} else {
-		snprintf(statbuf, sizeof(statbuf), R"(
-Invalid / Unknown (%d)
-)", (int)info.type);
-		ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-		y += 180;
-	}
-
-	std::string kernelState = __KernelStateSummary();
-
-	ctx->Draw()->DrawTextShadow(ubuntu24, kernelState.c_str(), x, y, 0xFFFFFFFF);
-
-	y += 40;
-
-	ctx->Draw()->SetFontScale(.5f, .5f);
-
-	ctx->Draw()->DrawTextShadow(ubuntu24, info.stackTrace.c_str(), x, y, 0xFFFFFFFF);
-
-	ctx->Draw()->SetFontScale(.7f, .7f);
-
-	ctx->PopScissor();
-
-	// Draw some additional stuff to the right.
-
-	x += columnWidth + 10;
-	y = 85;
-	snprintf(statbuf, sizeof(statbuf),
-		"CPU Core: %s (flags: %08x)\n"
-		"Locked CPU freq: %d MHz\n"
-		"Cheats: %s, Plugins: %s\n",
-		CPUCoreAsString(g_Config.iCpuCore), g_Config.uJitDisableFlags,
-		g_Config.iLockedCPUSpeed,
-		CheatsInEffect() ? "Y" : "N", HLEPlugins::HasEnabled() ? "Y" : "N");
-
-	ctx->Draw()->DrawTextShadow(ubuntu24, statbuf, x, y, 0xFFFFFFFF);
-	ctx->Flush();
-	ctx->Draw()->SetFontScale(1.0f, 1.0f);
-	ctx->RebindTexture();
-}
-
-static void DrawFPS(UIContext *ctx, const Bounds &bounds) {
-	FontID ubuntu24("UBUNTU24");
-	float vps, fps, actual_fps;
-	__DisplayGetFPS(&vps, &fps, &actual_fps);
-
-	char fpsbuf[256]{};
-	if (g_Config.iShowStatusFlags == ((int)ShowStatusFlags::FPS_COUNTER | (int)ShowStatusFlags::SPEED_COUNTER)) {
-		snprintf(fpsbuf, sizeof(fpsbuf), "%0.0f/%0.0f (%0.1f%%)", actual_fps, fps, vps / (59.94f / 100.0f));
-	} else {
-		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) {
-			snprintf(fpsbuf, sizeof(fpsbuf), "FPS: %0.1f", actual_fps);
-		}
-		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::SPEED_COUNTER) {
-			snprintf(fpsbuf, sizeof(fpsbuf), "%s Speed: %0.1f%%", fpsbuf, vps / (59.94f / 100.0f));
-		}
-	}
-
-#ifdef CAN_DISPLAY_CURRENT_BATTERY_CAPACITY
-	if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::BATTERY_PERCENT) {
-		snprintf(fpsbuf, sizeof(fpsbuf), "%s Battery: %d%%", fpsbuf, getCurrentBatteryCapacity());
-	}
-#endif
-
-	ctx->Flush();
-	ctx->BindFontTexture();
-	ctx->Draw()->SetFontScale(0.7f, 0.7f);
-	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 8, 20, 0xc0000000, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
-	ctx->Draw()->DrawText(ubuntu24, fpsbuf, bounds.x2() - 10, 19, 0xFF3fFF3f, ALIGN_TOPRIGHT | FLAG_DYNAMIC_ASCII);
-	ctx->Draw()->SetFontScale(1.0f, 1.0f);
-	ctx->Flush();
-	ctx->RebindTexture();
-}
-
-void EmuScreen::preRender() {
+ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
+	ScreenRenderFlags flags = ScreenRenderFlags::NONE;
+	Draw::Viewport viewport{ 0.0f, 0.0f, (float)g_display.pixel_xres, (float)g_display.pixel_yres, 0.0f, 1.0f };
 	using namespace Draw;
+
 	DrawContext *draw = screenManager()->getDrawContext();
-	// Here we do NOT bind the backbuffer or clear the screen, unless non-buffered.
-	// The emuscreen is different than the others - we really want to allow the game to render to framebuffers
-	// before we ever bind the backbuffer for rendering. On mobile GPUs, switching back and forth between render
-	// targets is a mortal sin so it's very important that we don't bind the backbuffer unnecessarily here.
-	// We only bind it in FramebufferManager::CopyDisplayToOutput (unless non-buffered)...
-	// We do, however, start the frame in other ways.
-
-	if ((g_Config.bSkipBufferEffects && !g_Config.bSoftwareRendering) || Core_IsStepping()) {
-		// We need to clear here already so that drawing during the frame is done on a clean slate.
-		if (Core_IsStepping() && gpuStats.numFlips != 0) {
-			draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::KEEP, RPAction::DONT_CARE, RPAction::DONT_CARE }, "EmuScreen_BackBuffer");
-		} else {
-			draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, 0xFF000000 }, "EmuScreen_BackBuffer");
-		}
-
-		Viewport viewport;
-		viewport.TopLeftX = 0;
-		viewport.TopLeftY = 0;
-		viewport.Width = g_display.pixel_xres;
-		viewport.Height = g_display.pixel_yres;
-		viewport.MaxDepth = 1.0;
-		viewport.MinDepth = 0.0;
-		draw->SetViewport(viewport);
+	if (!draw) {
+		return flags;  // shouldn't really happen but I've seen a suspicious stack trace..
 	}
-	draw->SetTargetSize(g_display.pixel_xres, g_display.pixel_yres);
-}
 
-void EmuScreen::postRender() {
-	Draw::DrawContext *draw = screenManager()->getDrawContext();
-	if (!draw)
-		return;
-	if (stopRender_)
-		draw->WipeQueue();
-}
+	GamepadUpdateOpacity();
 
-void EmuScreen::render() {
-	using namespace Draw;
+	bool skipBufferEffects = g_Config.bSkipBufferEffects;
 
-	DrawContext *thin3d = screenManager()->getDrawContext();
-	if (!thin3d)
-		return;  // shouldn't really happen but I've seen a suspicious stack trace..
+	if (mode & ScreenRenderMode::FIRST) {
+		// Actually, always gonna be first when it exists (?)
+
+		// Here we do NOT bind the backbuffer or clear the screen, unless non-buffered.
+		// The emuscreen is different than the others - we really want to allow the game to render to framebuffers
+		// before we ever bind the backbuffer for rendering. On mobile GPUs, switching back and forth between render
+		// targets is a mortal sin so it's very important that we don't bind the backbuffer unnecessarily here.
+		// We only bind it in FramebufferManager::CopyDisplayToOutput (unless non-buffered)...
+		// We do, however, start the frame in other ways.
+
+		if ((g_Config.bSkipBufferEffects && !g_Config.bSoftwareRendering) || Core_IsStepping()) {
+			// We need to clear here already so that drawing during the frame is done on a clean slate.
+			if (Core_IsStepping() && gpuStats.numFlips != 0) {
+				draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::KEEP, RPAction::CLEAR, RPAction::CLEAR }, "EmuScreen_BackBuffer");
+			} else {
+				draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, 0xFF000000 }, "EmuScreen_BackBuffer");
+			}
+
+			draw->SetViewport(viewport);
+			draw->SetScissorRect(0, 0, g_display.pixel_xres, g_display.pixel_yres);
+			skipBufferEffects = true;
+		}
+		draw->SetTargetSize(g_display.pixel_xres, g_display.pixel_yres);
+	}
 
 	g_OSD.NudgeSidebar();
 
-	if (screenManager()->topScreen() == this) {
+	if (mode & ScreenRenderMode::TOP) {
 		System_Notify(SystemNotification::KEEP_SCREEN_AWAKE);
+	} else if (!Core_ShouldRunBehind() && strcmp(screenManager()->topScreen()->tag(), "DevMenu") != 0) {
+		// Not on top. Let's not execute, only draw the image.
+		draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, }, "EmuScreen_Stepping");
+		// Just to make sure.
+		if (PSP_IsInited() && !g_Config.bSkipBufferEffects) {
+			PSP_BeginHostFrame();
+			gpu->CopyDisplayToOutput(true);
+			PSP_EndHostFrame();
+		}
+		// Need to make sure the UI texture is available, for "darken".
+		screenManager()->getUIContext()->BeginFrame();
+		draw->SetViewport(viewport);
+		draw->SetScissorRect(0, 0, g_display.pixel_xres, g_display.pixel_yres);
+		darken();
+		return flags;
 	}
 
 	if (invalid_) {
 		// Loading, or after shutdown?
-		if (loadingTextView_->GetVisibility() == UI::V_VISIBLE)
+		if (loadingTextView_ && loadingTextView_->GetVisibility() == UI::V_VISIBLE)
 			loadingTextView_->SetText(PSP_GetLoading());
 
 		// It's possible this might be set outside PSP_RunLoopFor().
 		// In this case, we need to double check it here.
-		checkPowerDown();
-		thin3d->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR }, "EmuScreen_Invalid");
+		if (mode & ScreenRenderMode::TOP) {
+			checkPowerDown();
+		}
+		draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR }, "EmuScreen_Invalid");
+		// Need to make sure the UI texture is available, for "darken".
+		screenManager()->getUIContext()->BeginFrame();
+		draw->SetViewport(viewport);
+		draw->SetScissorRect(0, 0, g_display.pixel_xres, g_display.pixel_yres);
 		renderUI();
-		return;
+		return flags;
 	}
 
 	// Freeze-frame functionality (loads a savestate on every frame).
@@ -1457,9 +1388,12 @@ void EmuScreen::render() {
 
 	bool blockedExecution = Achievements::IsBlockingExecution();
 	bool rebind = false;
+	uint32_t clearColor = 0;
 	if (!blockedExecution) {
 		PSP_BeginHostFrame();
 		PSP_RunLoopWhileState();
+
+		flags |= ScreenRenderFlags::HANDLED_THROTTLING;
 
 		// Hopefully coreState is now CORE_NEXTFRAME
 		switch (coreState) {
@@ -1475,13 +1409,13 @@ void EmuScreen::render() {
 			if (info.type != MIPSExceptionType::NONE) {
 				// Clear to blue background screen
 				bool dangerousSettings = !Reporting::IsSupported();
-				uint32_t color = dangerousSettings ? 0xFF900050 : 0xFF900000;
-				thin3d->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::DONT_CARE, RPAction::DONT_CARE, color }, "EmuScreen_RuntimeError");
+				clearColor = dangerousSettings ? 0xFF900050 : 0xFF900000;
+				draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, clearColor }, "EmuScreen_RuntimeError");
 				// The info is drawn later in renderUI
 			} else {
 				// If we're stepping, it's convenient not to clear the screen entirely, so we copy display to output.
 				// This won't work in non-buffered, but that's fine.
-				thin3d->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::DONT_CARE, RPAction::DONT_CARE }, "EmuScreen_Stepping");
+				draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, clearColor }, "EmuScreen_Stepping");
 				// Just to make sure.
 				if (PSP_IsInited()) {
 					gpu->CopyDisplayToOutput(true);
@@ -1500,15 +1434,32 @@ void EmuScreen::render() {
 		PSP_EndHostFrame();
 	}
 
-	// This must happen after PSP_EndHostFrame so that things like push buffers are end-frame'd before we start destroying stuff.
-	if (checkPowerDown() || rebind) {
-		// Shutting down can end up ending the current render pass
-		thin3d->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR }, "EmuScreen_NoFrame");
+
+	if (gpu && !gpu->PresentedThisFrame() && !skipBufferEffects) {
+		draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, clearColor }, "EmuScreen_NoFrame");
+		draw->SetViewport(viewport);
+		draw->SetScissorRect(0, 0, g_display.pixel_xres, g_display.pixel_yres);
 	}
+
+	screenManager()->getUIContext()->BeginFrame();
+
+	if (!(mode & ScreenRenderMode::TOP)) {
+		// We're in run-behind mode, but we don't want to draw chat, debug UI and stuff.
+		// So, darken and bail here.
+		// Reset viewport/scissor to be sure.
+		draw->SetViewport(viewport);
+		draw->SetScissorRect(0, 0, g_display.pixel_xres, g_display.pixel_yres);
+		darken();
+		return flags;
+	}
+
+	// NOTE: We don't check for powerdown if we're not the top screen.
+	checkPowerDown();
 
 	if (hasVisibleUI()) {
 		// In most cases, this should already be bound and a no-op.
-		thin3d->BindFramebufferAsRenderTarget(nullptr, { RPAction::KEEP, RPAction::DONT_CARE, RPAction::DONT_CARE }, "EmuScreen_UI");
+		draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::KEEP, RPAction::CLEAR, RPAction::CLEAR }, "EmuScreen_UI");
+		draw->SetViewport(viewport);
 		cardboardDisableButton_->SetVisibility(g_Config.bEnableCardboardVR ? UI::V_VISIBLE : UI::V_GONE);
 		screenManager()->getUIContext()->BeginFrame();
 		renderUI();
@@ -1519,6 +1470,11 @@ void EmuScreen::render() {
 	} else {
 		SetVRAppMode(screenManager()->topScreen() == this ? VRAppMode::VR_GAME_MODE : VRAppMode::VR_DIALOG_MODE);
 	}
+
+	if (!(mode & ScreenRenderMode::TOP)) {
+		darken();
+	}
+	return flags;
 }
 
 bool EmuScreen::hasVisibleUI() {

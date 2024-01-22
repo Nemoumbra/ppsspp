@@ -104,6 +104,9 @@ struct CompatFlags {
 	bool Fontltn12Hack;
 	bool LoadCLUTFromCurrentFrameOnly;
 	bool ForceUMDReadSpeed;
+	bool AllowDelayedReadbacks;
+	bool TacticsOgreEliminateDebugReadback;
+	bool FramebufferAllowLargeVerticalOffset;
 };
 
 struct VRCompat {

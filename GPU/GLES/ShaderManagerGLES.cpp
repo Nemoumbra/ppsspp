@@ -591,8 +591,8 @@ void LinkedShader::UpdateUniforms(const ShaderID &vsid, bool useBufferedRenderin
 		float vpZCenter = gstate.getViewportZCenter();
 
 		// These are just the reverse of the formulas in GPUStateUtils.
-		float halfActualZRange = gstate_c.vpDepthScale != 0.0f ? vpZScale / gstate_c.vpDepthScale : 0.0f;
-		float inverseDepthScale = gstate_c.vpDepthScale != 0.0f ? 1.0f / gstate_c.vpDepthScale : 0.0f;
+		float halfActualZRange = InfToZero(gstate_c.vpDepthScale != 0.0f ? vpZScale / gstate_c.vpDepthScale : 0.0f);
+		float inverseDepthScale = InfToZero(gstate_c.vpDepthScale != 0.0f ? 1.0f / gstate_c.vpDepthScale : 0.0f);
 		float minz = -((gstate_c.vpZOffset * halfActualZRange) - vpZCenter) - halfActualZRange;
 		float viewZScale = halfActualZRange;
 		float viewZCenter = minz + halfActualZRange;
@@ -804,9 +804,9 @@ Shader *ShaderManagerGLES::ApplyVertexShader(bool useHWTransform, bool useHWTess
 	// Vertex shader not in cache. Let's compile it.
 	vs = CompileVertexShader(*VSID);
 	if (!vs) {
-		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 		ERROR_LOG(G3D, "Vertex shader generation failed, falling back to software transform");
 		if (!g_Config.bHideSlowWarnings) {
+			auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 			g_OSD.Show(OSDType::MESSAGE_ERROR, gr->T("hardware transform error - falling back to software"), 2.5f);
 		}
 
@@ -914,22 +914,18 @@ std::vector<std::string> ShaderManagerGLES::DebugGetShaderIDs(DebugShaderType ty
 	std::vector<std::string> ids;
 	switch (type) {
 	case SHADER_TYPE_VERTEX:
-		{
-			vsCache_.Iterate([&](const VShaderID &id, Shader *shader) {
-				std::string idstr;
-				id.ToString(&idstr);
-				ids.push_back(idstr);
-			});
-		}
+		vsCache_.Iterate([&](const VShaderID &id, Shader *shader) {
+			std::string idstr;
+			id.ToString(&idstr);
+			ids.push_back(idstr);
+		});
 		break;
 	case SHADER_TYPE_FRAGMENT:
-		{
-			fsCache_.Iterate([&](const FShaderID &id, Shader *shader) {
-				std::string idstr;
-				id.ToString(&idstr);
-				ids.push_back(idstr);
-			});
-		}
+		fsCache_.Iterate([&](const FShaderID &id, Shader *shader) {
+			std::string idstr;
+			id.ToString(&idstr);
+			ids.push_back(idstr);
+		});
 		break;
 	default:
 		break;
@@ -1141,6 +1137,7 @@ bool ShaderManagerGLES::LoadCache(File::IOFile &f) {
 		}
 	}
 
+	linkedShaderCache_.reserve(pending.link.size() - pending.linkPos);
 	for (size_t &i = pending.linkPos; i < pending.link.size(); i++) {
 		const VShaderID &vsid = pending.link[i].first;
 		const FShaderID &fsid = pending.link[i].second;
@@ -1191,7 +1188,7 @@ void ShaderManagerGLES::SaveCache(const Path &filename, DrawEngineGLES *drawEngi
 	fsCache_.Iterate([&](const ShaderID &id, Shader *shader) {
 		fwrite(&id, 1, sizeof(id), f);
 	});
-	for (auto iter : linkedShaderCache_) {
+	for (const auto &iter : linkedShaderCache_) {
 		ShaderID vsid, fsid;
 		vsCache_.Iterate([&](const ShaderID &id, Shader *shader) {
 			if (iter.vs == shader)

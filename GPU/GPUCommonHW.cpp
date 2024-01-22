@@ -501,9 +501,8 @@ void GPUCommonHW::UpdateCmdInfo() {
 	}
 }
 
-void GPUCommonHW::BeginFrame() {
-	GPUCommon::BeginFrame();
-
+void GPUCommonHW::BeginHostFrame() {
+	GPUCommon::BeginHostFrame();
 	if (drawEngineCommon_->EverUsedExactEqualDepth() && !sawExactEqualDepth_) {
 		sawExactEqualDepth_ = true;
 		gstate_c.SetUseFlags(CheckGPUFeatures());
@@ -604,7 +603,7 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 
 	bool canClipOrCull = draw_->GetDeviceCaps().clipDistanceSupported || draw_->GetDeviceCaps().cullDistanceSupported;
 	bool canDiscardVertex = !draw_->GetBugs().Has(Draw::Bugs::BROKEN_NAN_IN_CONDITIONAL);
-	if (canClipOrCull || canDiscardVertex) {
+	if ((canClipOrCull || canDiscardVertex) && !g_Config.bDisableRangeCulling) {
 		// We'll dynamically use the parts that are supported, to reduce artifacts as much as possible.
 		features |= GPU_USE_VS_RANGE_CULLING;
 	}
@@ -727,7 +726,7 @@ bool GPUCommonHW::GetOutputFramebuffer(GPUDebugBuffer &buffer) {
 	return framebufferManager_ ? framebufferManager_->GetOutputFramebuffer(buffer) : false;
 }
 
-std::vector<FramebufferInfo> GPUCommonHW::GetFramebufferList() const {
+std::vector<const VirtualFramebuffer *> GPUCommonHW::GetFramebufferList() const {
 	return framebufferManager_->GetFramebufferList();
 }
 
@@ -773,7 +772,7 @@ void GPUCommonHW::InvalidateCache(u32 addr, int size, GPUInvalidationType type) 
 	else
 		textureCache_->InvalidateAll(type);
 
-	if (type != GPU_INVALIDATE_ALL && framebufferManager_->MayIntersectFramebuffer(addr)) {
+	if (type != GPU_INVALIDATE_ALL && framebufferManager_->MayIntersectFramebufferColor(addr)) {
 		// Vempire invalidates (with writeback) after drawing, but before blitting.
 		// TODO: Investigate whether we can get this to work some other way.
 		if (type == GPU_INVALIDATE_SAFE) {
@@ -983,15 +982,51 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	}
 
 	int bytesRead = 0;
-	UpdateUVScaleOffset();
+	gstate_c.UpdateUVScaleOffset();
 
 	// cull mode
 	int cullMode = gstate.getCullMode();
 
 	uint32_t vertTypeID = GetVertTypeID(vertexType, gstate.getUVGenMode(), g_Config.bSoftwareSkinning);
-	if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, vertTypeID, true, &bytesRead)) {
+
+#define MAX_CULL_CHECK_COUNT 6
+
+// For now, turn off culling on platforms where we don't have SIMD bounding box tests, like RISC-V.
+#if PPSSPP_ARCH(ARM_NEON) || PPSSPP_ARCH(SSE2)
+
+#define PASSES_CULLING ((vertexType & (GE_VTYPE_THROUGH_MASK | GE_VTYPE_MORPHCOUNT_MASK | GE_VTYPE_WEIGHT_MASK | GE_VTYPE_IDX_MASK)) || count > MAX_CULL_CHECK_COUNT)
+
+#else
+
+#define PASSES_CULLING true
+
+#endif
+
+	// If certain conditions are true, do frustum culling.
+	bool passCulling = PASSES_CULLING;
+	if (!passCulling) {
+		// Do software culling.
+		if (drawEngineCommon_->TestBoundingBoxFast(verts, count, vertexType)) {
+			passCulling = true;
+		} else {
+			gpuStats.numCulledDraws++;
+		}
+	}
+
+	// If the first one in a batch passes, let's assume the whole batch passes.
+	// Cuts down on checking, while not losing that much efficiency.
+	bool onePassed = false;
+	if (passCulling) {
+		if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, vertTypeID, true, &bytesRead)) {
+			canExtend = false;
+		}
+		onePassed = true;
+	} else {
+		// Still need to advance bytesRead.
+		drawEngineCommon_->SkipPrim(prim, count, vertTypeID, &bytesRead);
 		canExtend = false;
 	}
+
 	// After drawing, we advance the vertexAddr (when non indexed) or indexAddr (when indexed).
 	// Some games rely on this, they don't bother reloading VADDR and IADDR.
 	// The VADDR/IADDR registers are NOT updated.
@@ -1027,7 +1062,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 			bool clockwise = !gstate.isCullEnabled() || gstate.getCullMode() == cullMode;
 			if (canExtend) {
 				// Non-indexed draws can be cheaply merged if vertexAddr hasn't changed, that means the vertices
-				// are consecutive in memory.
+				// are consecutive in memory. We also ignore culling here.
 				_dbg_assert_((vertexType & GE_VTYPE_IDX_MASK) == GE_VTYPE_IDX_NONE);
 				int commandsExecuted = drawEngineCommon_->ExtendNonIndexedPrim(src, stall, vertTypeID, clockwise, &bytesRead, isTriangle);
 				if (!commandsExecuted) {
@@ -1047,7 +1082,26 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 				// We can extend again after submitting a normal draw.
 				canExtend = isTriangle;
 			}
-			if (!drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, vertTypeID, clockwise, &bytesRead)) {
+
+			bool passCulling = onePassed || PASSES_CULLING;
+			if (!passCulling) {
+				// Do software culling.
+				_dbg_assert_((vertexType & GE_VTYPE_IDX_MASK) == GE_VTYPE_IDX_NONE);
+				if (drawEngineCommon_->TestBoundingBoxFast(verts, count, vertexType)) {
+					passCulling = true;
+				} else {
+					gpuStats.numCulledDraws++;
+				}
+			}
+			if (passCulling) {
+				if (!drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, vertTypeID, clockwise, &bytesRead)) {
+					canExtend = false;
+				}
+				// As soon as one passes, assume we don't need to check the rest of this batch.
+				onePassed = true;
+			} else {
+				// Still need to advance bytesRead.
+				drawEngineCommon_->SkipPrim(newPrim, count, vertTypeID, &bytesRead);
 				canExtend = false;
 			}
 			AdvanceVerts(vertexType, count, bytesRead);
@@ -1108,20 +1162,27 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 			gstate.cmdmem[GE_CMD_BONEMATRIXNUMBER] = data;
 			break;
 		case GE_CMD_TEXSCALEU:
+			// We don't "dirty-check" - we could avoid getFloat24 and setting canExtend=false, but usually
+			// when texscale commands are in line with the prims like this, they actually have an effect
+			// and requires us to stop extending strips anyway.
 			gstate.cmdmem[GE_CMD_TEXSCALEU] = data;
 			gstate_c.uv.uScale = getFloat24(data);
+			canExtend = false;
 			break;
 		case GE_CMD_TEXSCALEV:
 			gstate.cmdmem[GE_CMD_TEXSCALEV] = data;
 			gstate_c.uv.vScale = getFloat24(data);
+			canExtend = false;
 			break;
 		case GE_CMD_TEXOFFSETU:
 			gstate.cmdmem[GE_CMD_TEXOFFSETU] = data;
 			gstate_c.uv.uOff = getFloat24(data);
+			canExtend = false;
 			break;
 		case GE_CMD_TEXOFFSETV:
 			gstate.cmdmem[GE_CMD_TEXOFFSETV] = data;
 			gstate_c.uv.vOff = getFloat24(data);
+			canExtend = false;
 			break;
 		case GE_CMD_TEXLEVEL:
 			// Same Gran Turismo hack from Execute_TexLevel
@@ -1246,7 +1307,7 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 	}
 
 	int bytesRead = 0;
-	UpdateUVScaleOffset();
+	gstate_c.UpdateUVScaleOffset();
 	drawEngineCommon_->SubmitCurve(control_points, indices, surface, gstate.vertType, &bytesRead, "bezier");
 
 	gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_UVSCALEOFFSET);
@@ -1320,7 +1381,7 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 	}
 
 	int bytesRead = 0;
-	UpdateUVScaleOffset();
+	gstate_c.UpdateUVScaleOffset();
 	drawEngineCommon_->SubmitCurve(control_points, indices, surface, gstate.vertType, &bytesRead, "spline");
 
 	gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_UVSCALEOFFSET);
@@ -1405,7 +1466,7 @@ void GPUCommonHW::Execute_WorldMtxNum(u32 op, u32 diff) {
 			if (dst[i] != newVal) {
 				Flush();
 				dst[i] = newVal;
-				gstate_c.Dirty(DIRTY_WORLDMATRIX | DIRTY_CULL_PLANES);
+				gstate_c.Dirty(DIRTY_WORLDMATRIX);
 			}
 			if (++i >= end) {
 				break;
@@ -1428,7 +1489,7 @@ void GPUCommonHW::Execute_WorldMtxData(u32 op, u32 diff) {
 	if (num < 12 && newVal != ((const u32 *)gstate.worldMatrix)[num]) {
 		Flush();
 		((u32 *)gstate.worldMatrix)[num] = newVal;
-		gstate_c.Dirty(DIRTY_WORLDMATRIX | DIRTY_CULL_PLANES);
+		gstate_c.Dirty(DIRTY_WORLDMATRIX);
 	}
 	num++;
 	gstate.worldmtxnum = (GE_CMD_WORLDMATRIXNUMBER << 24) | (num & 0x00FFFFFF);
@@ -1684,11 +1745,11 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 	float vertexAverageCycles = gpuStats.numVertsSubmitted > 0 ? (float)gpuStats.vertexGPUCycles / (float)gpuStats.numVertsSubmitted : 0.0f;
 	return snprintf(buffer, size,
 		"DL processing time: %0.2f ms, %d drawsync, %d listsync\n"
-		"Draw: %d (%d dec), flushes %d, clears %d, bbox jumps %d (%d updates)\n"
+		"Draw: %d (%d dec, %d culled), flushes %d, clears %d, bbox jumps %d (%d updates)\n"
 		"Vertices: %d drawn: %d\n"
 		"FBOs active: %d (evaluations: %d)\n"
 		"Textures: %d, dec: %d, invalidated: %d, hashed: %d kB\n"
-		"readbacks %d (%d non-block), uploads %d, depal %d\n"
+		"readbacks %d (%d non-block), upload %d (cached %d), depal %d\n"
 		"block transfers: %d\n"
 		"replacer: tracks %d references, %d unique textures\n"
 		"Cpy: depth %d, color %d, reint %d, blend %d, self %d\n"
@@ -1698,6 +1759,7 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numListSyncs,
 		gpuStats.numDrawCalls,
 		gpuStats.numVertexDecodes,
+		gpuStats.numCulledDraws,
 		gpuStats.numFlushes,
 		gpuStats.numClears,
 		gpuStats.numBBOXJumps,
@@ -1713,6 +1775,7 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numBlockingReadbacks,
 		gpuStats.numReadbacks,
 		gpuStats.numUploads,
+		gpuStats.numCachedUploads,
 		gpuStats.numDepal,
 		gpuStats.numBlockTransfers,
 		gpuStats.numReplacerTrackedTex,

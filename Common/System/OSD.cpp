@@ -48,7 +48,7 @@ void OnScreenDisplay::DismissEntry(size_t index, double now) {
 	}
 }
 
-void OnScreenDisplay::Show(OSDType type, const std::string &text, const std::string &text2, const std::string &icon, float duration_s, const char *id) {
+void OnScreenDisplay::Show(OSDType type, std::string_view text, std::string_view text2, std::string_view icon, float duration_s, const char *id) {
 	// Automatic duration based on type.
 	if (duration_s <= 0.0f) {
 		switch (type) {
@@ -103,9 +103,12 @@ void OnScreenDisplay::Show(OSDType type, const std::string &text, const std::str
 	entries_.insert(entries_.begin(), msg);
 }
 
-void OnScreenDisplay::ShowOnOff(const std::string &message, bool on, float duration_s) {
+void OnScreenDisplay::ShowOnOff(std::string_view message, bool on, float duration_s) {
+	std::string msg(message);
+	msg += ": ";
+	msg += on ? "on" : "off";
 	// TODO: translate "on" and "off"? Or just get rid of this whole thing?
-	Show(OSDType::MESSAGE_INFO, message + ": " + (on ? "on" : "off"), duration_s);
+	Show(OSDType::MESSAGE_INFO, msg, duration_s);
 }
 
 void OnScreenDisplay::ShowAchievementUnlocked(int achievementID) {
@@ -224,7 +227,7 @@ void OnScreenDisplay::ShowLeaderboardSubmitted(const std::string &title, const s
 	g_OSD.Show(OSDType::LEADERBOARD_SUBMITTED, title, value, 3.0f);
 }
 
-void OnScreenDisplay::SetProgressBar(std::string id, std::string &&message, float minValue, float maxValue, float progress, float delay) {
+void OnScreenDisplay::SetProgressBar(const std::string &id, std::string &&message, float minValue, float maxValue, float progress, float delay) {
 	_dbg_assert_(!my_isnanorinf(progress));
 	_dbg_assert_(!my_isnanorinf(minValue));
 	_dbg_assert_(!my_isnanorinf(maxValue));
@@ -256,7 +259,7 @@ void OnScreenDisplay::SetProgressBar(std::string id, std::string &&message, floa
 	entries_.push_back(bar);
 }
 
-void OnScreenDisplay::RemoveProgressBar(std::string id, bool success, float delay_s) {
+void OnScreenDisplay::RemoveProgressBar(const std::string &id, bool success, float delay_s) {
 	std::lock_guard<std::mutex> guard(mutex_);
 	for (auto iter = entries_.begin(); iter != entries_.end(); iter++) {
 		if (iter->type == OSDType::PROGRESS_BAR && iter->id == id) {

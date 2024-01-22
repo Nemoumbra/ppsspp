@@ -86,11 +86,11 @@ bool CreateDir(const Path &filename);
 // Creates the full path of fullPath returns true on success
 bool CreateFullPath(const Path &fullPath);
 
-// Deletes a given filename, return true on success
-// Doesn't supports deleting a directory
+// Deletes a given file by name, return true on success
+// Doesn't support deleting a directory (although it will work on some platforms - ideally shouldn't)
 bool Delete(const Path &filename);
 
-// Deletes a directory filename, returns true on success
+// Deletes a directory by name, returns true on success
 // Directory must be empty.
 bool DeleteDir(const Path &filename);
 
@@ -122,6 +122,8 @@ bool OpenFileInEditor(const Path &fileName);
 
 // TODO: Belongs in System or something.
 const Path &GetExeDirectory();
+
+const Path GetCurDirectory();
 
 // simple wrapper for cstdlib file functions to
 // hopefully will make error checking easier
@@ -201,7 +203,7 @@ private:
 
 // Whole-file reading/writing
 bool WriteStringToFile(bool text_file, const std::string &str, const Path &filename);
-bool WriteDataToFile(bool text_file, const void* data, const unsigned int size, const Path &filename);
+bool WriteDataToFile(bool text_file, const void* data, size_t size, const Path &filename);
 
 bool ReadFileToString(bool text_file, const Path &filename, std::string &str);
 // Return value must be delete[]-d.

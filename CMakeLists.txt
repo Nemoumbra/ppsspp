@@ -737,6 +737,7 @@ add_library(Common STATIC
 	Common/Input/InputState.cpp
 	Common/Input/InputState.h
 	Common/Math/fast/fast_matrix.c
+	Common/Math/CrossSIMD.h
 	Common/Math/curves.cpp
 	Common/Math/curves.h
 	Common/Math/expression_parser.cpp
@@ -872,6 +873,12 @@ include_directories(Common)
 setup_target_project(Common Common)
 
 target_link_libraries(Common Ext::Snappy cpu_features)
+
+if(ARM64)
+    if(ANDROID)
+        target_link_libraries(Common adrenotools)
+    endif()
+endif()
 
 if(USING_GLES2 OR (USING_EGL AND NOT USING_FBDEV))
 	find_package(X11)
@@ -1448,6 +1455,8 @@ list(APPEND NativeAppSource
 	UI/GameScreen.cpp
 	UI/GameSettingsScreen.h
 	UI/GameSettingsScreen.cpp
+	UI/DriverManagerScreen.h
+	UI/DriverManagerScreen.cpp
 	UI/GPUDriverTestScreen.h
 	UI/GPUDriverTestScreen.cpp
 	UI/TiltAnalogSettingsScreen.h
@@ -2153,6 +2162,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/sceSfmt19937.h
 	Core/HLE/sceSha256.cpp
 	Core/HLE/sceSha256.h
+	Core/HLE/sceSircs.cpp
+	Core/HLE/sceSircs.h
 	Core/HLE/sceSsl.cpp
 	Core/HLE/sceSsl.h
 	Core/HLE/sceUmd.cpp
@@ -2267,6 +2278,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/Util/AudioFormat.h
 	Core/Util/GameManager.cpp
 	Core/Util/GameManager.h
+	Core/Util/MemStick.cpp
+	Core/Util/MemStick.h
 	Core/Util/GameDB.cpp
 	Core/Util/GameDB.h
 	Core/Util/PortManager.cpp

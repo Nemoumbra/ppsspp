@@ -7,6 +7,8 @@
 
 GameDB g_gameDB;
 
+static const char *const g_gameDBFilename = "redump.csv";
+
 static void SplitCSVLine(const std::string_view str, std::vector<std::string_view> &result) {
 	result.clear();
 
@@ -34,39 +36,51 @@ static void SplitCSVLine(const std::string_view str, std::vector<std::string_vie
 	result.push_back(finalColumn);
 }
 
-static std::vector<std::string_view> splitSV(std::string_view strv, char delim, bool removeWhiteSpace) {
-	std::vector<std::string_view> output;
+static void SplitSV(std::string_view strv, char delim, bool removeWhiteSpace, std::vector<std::string_view> *output) {
 	size_t first = 0;
 	while (first < strv.size()) {
 		const auto second = strv.find(delim, first);
 		if (first != second) {
 			std::string_view line = strv.substr(first, second - first);
+			_dbg_assert_(!line.empty());
 			if (line.back() == '\r') {
-				line = strv.substr(first, second - first - 1);
+				line.remove_suffix(1);
 			}
 			if (removeWhiteSpace) {
 				line = StripSpaces(line);
 			}
-			output.emplace_back(line);
+			if (!line.empty()) {
+				output->emplace_back(line);
+			}
 		}
 		if (second == std::string_view::npos)
 			break;
 		first = second + 1;
 	}
-	return output;
 }
 
-bool GameDB::LoadFromVFS(VFSInterface &vfs, const char *filename) {
+void GameDB::LoadIfNeeded() {
+	if (loaded_) {
+		// Already loaded
+		return;
+	}
+
+	loaded_ = true;
+
 	size_t size;
-	uint8_t *data = vfs.ReadFile(filename, &size);
+	uint8_t *data = g_VFS.ReadFile(g_gameDBFilename, &size);
 	if (!data)
-		return false;
+		return;
+
 	contents_ = std::string((const char *)data, size);
 	delete[] data;
 
-	// Split the string into views of each line, keeping the original.
-	std::vector<std::string_view> lines = splitSV(contents_, '\n', false);
+	const size_t RESERVE_COUNT = 2820;  // ~ known current line count
 
+	// Split the string into views of each line, keeping the original.
+	std::vector<std::string_view> lines;
+	lines.reserve(RESERVE_COUNT);
+	SplitSV(contents_, '\n', false, &lines);
 	SplitCSVLine(lines[0], columns_);
 
 	const size_t titleColumn = GetColumnIndex("Title");
@@ -76,6 +90,8 @@ bool GameDB::LoadFromVFS(VFSInterface &vfs, const char *filename) {
 	const size_t sizeColumn = GetColumnIndex("Size");
 
 	std::vector<std::string_view> items;
+	items.reserve(8);
+	lines_.reserve(RESERVE_COUNT);
 	for (size_t i = 1; i < lines.size(); i++) {
 		auto &lineString = lines[i];
 		SplitCSVLine(lineString, items);
@@ -88,12 +104,11 @@ bool GameDB::LoadFromVFS(VFSInterface &vfs, const char *filename) {
 		Line line;
 		line.title = items[titleColumn];
 		line.foreignTitle = items[foreignTitleColumn];
-		line.serials = splitSV(items[serialColumn], ',', true);
+		SplitSV(items[serialColumn], ',', true, &line.serials);
 		line.crc = items[crcColumn];
 		line.size = items[sizeColumn];
 		lines_.push_back(line);
 	}
-	return true;
 }
 
 size_t GameDB::GetColumnIndex(std::string_view name) const {
@@ -122,19 +137,31 @@ bool GameDB::GetGameInfos(std::string_view id, std::vector<GameDBInfo> *infos) {
 		// Not a game.
 		return false;
 	}
-	
+
+	std::lock_guard<std::mutex> guard(loadMutex_);
+
+	LoadIfNeeded();
+
 	for (auto &line : lines_) {
-		for (auto serial : line.serials) {
+		for (auto &serial : line.serials) {
 			// Ignore version and stuff for now
 			if (IDMatches(id, serial)) {
 				GameDBInfo info;
-				sscanf(line.crc.data(), "%08x", &info.crc);
-				sscanf(line.size.data(), "%llu", &info.size);
+				// zero-terminate before sscanf
+				std::string crc(line.crc);
+				if (1 != sscanf(crc.c_str(), "%08x", &info.crc)) {
+					continue;
+				}
+				std::string size(line.size);
+				if (1 != sscanf(size.c_str(), "%llu", (long long *)&info.size)) {
+					continue;
+				}
 				info.title = line.title;
 				info.foreignTitle = line.foreignTitle;
 				infos->push_back(info);
 			}
 		}
 	}
+
 	return !infos->empty();
 }

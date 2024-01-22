@@ -258,17 +258,12 @@ void DrawEngineDX9::DoFlush() {
 		LPDIRECT3DVERTEXBUFFER9 vb_ = nullptr;
 		LPDIRECT3DINDEXBUFFER9 ib_ = nullptr;
 
+		int vertexCount;
+		int maxIndex;
+		bool useElements;
 		DecodeVerts(decoded_);
-		DecodeInds();
-
-		bool useElements = !indexGen.SeenOnlyPurePrims();
-		int vertexCount = indexGen.VertexCount();
+		DecodeIndsAndGetData(&prim, &vertexCount, &maxIndex, &useElements, false);
 		gpuStats.numUncachedVertsDrawn += vertexCount;
-		int maxIndex = MaxIndex();
-		if (!useElements && indexGen.PureCount()) {
-			vertexCount = indexGen.PureCount();
-		}
-		prim = indexGen.Prim();
 
 		_dbg_assert_((int)prim > 0);
 
@@ -293,7 +288,7 @@ void DrawEngineDX9::DoFlush() {
 			device_->SetVertexDeclaration(pHardwareVertexDecl);
 			if (vb_ == NULL) {
 				if (useElements) {
-					device_->DrawIndexedPrimitiveUP(d3d_prim[prim], 0, maxIndex + 1, D3DPrimCount(d3d_prim[prim], vertexCount), decIndex_, D3DFMT_INDEX16, decoded_, dec_->GetDecVtxFmt().stride);
+					device_->DrawIndexedPrimitiveUP(d3d_prim[prim], 0, numDecodedVerts_, D3DPrimCount(d3d_prim[prim], vertexCount), decIndex_, D3DFMT_INDEX16, decoded_, dec_->GetDecVtxFmt().stride);
 				} else {
 					device_->DrawPrimitiveUP(d3d_prim[prim], D3DPrimCount(d3d_prim[prim], vertexCount), decoded_, dec_->GetDecVtxFmt().stride);
 				}
@@ -303,7 +298,7 @@ void DrawEngineDX9::DoFlush() {
 				if (useElements) {
 					device_->SetIndices(ib_);
 
-					device_->DrawIndexedPrimitive(d3d_prim[prim], 0, 0, maxIndex + 1, 0, D3DPrimCount(d3d_prim[prim], vertexCount));
+					device_->DrawIndexedPrimitive(d3d_prim[prim], 0, 0, numDecodedVerts_, 0, D3DPrimCount(d3d_prim[prim], vertexCount));
 				} else {
 					device_->DrawPrimitive(d3d_prim[prim], 0, D3DPrimCount(d3d_prim[prim], vertexCount));
 				}
@@ -316,7 +311,8 @@ void DrawEngineDX9::DoFlush() {
 			dec_ = GetVertexDecoder(lastVType_);
 		}
 		DecodeVerts(decoded_);
-		DecodeInds();
+		int vertexCount = DecodeInds();
+
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && (hasColor || gstate.getMaterialAmbientA() == 255);
@@ -324,12 +320,9 @@ void DrawEngineDX9::DoFlush() {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && ((hasColor && (gstate.materialupdate & 1)) || gstate.getMaterialAmbientA() == 255) && (!gstate.isLightingEnabled() || gstate.getAmbientA() == 255);
 		}
 
-		gpuStats.numUncachedVertsDrawn += indexGen.VertexCount();
-		prim = indexGen.Prim();
-		// Undo the strip optimization, not supported by the SW code yet.
-		if (prim == GE_PRIM_TRIANGLE_STRIP)
-			prim = GE_PRIM_TRIANGLES;
-		VERBOSE_LOG(G3D, "Flush prim %i SW! %i verts in one go", prim, indexGen.VertexCount());
+		gpuStats.numUncachedVertsDrawn += vertexCount;
+		prim = IndexGenerator::GeneralPrim((GEPrimitiveType)drawInds_[0].prim);
+		VERBOSE_LOG(G3D, "Flush prim %i SW! %i verts in one go", prim, vertexCount);
 
 		u16 *inds = decIndex_;
 		SoftwareTransformResult result{};
@@ -355,7 +348,7 @@ void DrawEngineDX9::DoFlush() {
 			UpdateCachedViewportState(vpAndScissor);
 		}
 
-		int maxIndex = MaxIndex();
+		int maxIndex = numDecodedVerts_;
 		SoftwareTransform swTransform(params);
 
 		// Half pixel offset hack.
@@ -366,22 +359,22 @@ void DrawEngineDX9::DoFlush() {
 		const Lin::Vec3 scale(gstate_c.vpWidthScale, gstate_c.vpHeightScale, gstate_c.vpDepthScale * 0.5f);
 		swTransform.SetProjMatrix(gstate.projMatrix, gstate_c.vpWidth < 0, gstate_c.vpHeight > 0, trans, scale);
 
-		swTransform.Decode(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), maxIndex, &result);
+		swTransform.Transform(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), numDecodedVerts_, &result);
 		// Non-zero depth clears are unusual, but some drivers don't match drawn depth values to cleared values.
 		// Games sometimes expect exact matches (see #12626, for example) for equal comparisons.
 		if (result.action == SW_CLEAR && everUsedEqualDepth_ && gstate.isClearModeDepthMask() && result.depth > 0.0f && result.depth < 1.0f)
 			result.action = SW_NOT_READY;
-		if (result.action == SW_NOT_READY) {
-			swTransform.DetectOffsetTexture(maxIndex);
-		}
 
-		if (textureNeedsApply)
+		if (textureNeedsApply) {
+			gstate_c.pixelMapped = result.pixelMapped;
 			textureCache_->ApplyTexture();
+			gstate_c.pixelMapped = false;
+		}
 
 		ApplyDrawState(prim);
 
 		if (result.action == SW_NOT_READY)
-			swTransform.BuildDrawingParams(prim, indexGen.VertexCount(), dec_->VertexType(), inds, maxIndex, &result);
+			swTransform.BuildDrawingParams(prim, vertexCount, dec_->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, &result);
 		if (result.setSafeSize)
 			framebufferManager_->SetSafeSize(result.safeWidth, result.safeHeight);
 
@@ -401,7 +394,7 @@ void DrawEngineDX9::DoFlush() {
 
 			device_->SetVertexDeclaration(transformedVertexDecl_);
 			if (result.drawIndexed) {
-				device_->DrawIndexedPrimitiveUP(d3d_prim[prim], 0, maxIndex, D3DPrimCount(d3d_prim[prim], result.drawNumTrans), inds, D3DFMT_INDEX16, result.drawBuffer, sizeof(TransformedVertex));
+				device_->DrawIndexedPrimitiveUP(d3d_prim[prim], 0, numDecodedVerts_, D3DPrimCount(d3d_prim[prim], result.drawNumTrans), inds, D3DFMT_INDEX16, result.drawBuffer, sizeof(TransformedVertex));
 			} else {
 				device_->DrawPrimitiveUP(d3d_prim[prim], D3DPrimCount(d3d_prim[prim], result.drawNumTrans), result.drawBuffer, sizeof(TransformedVertex));
 			}

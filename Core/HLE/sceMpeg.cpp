@@ -111,7 +111,11 @@ extern "C" {
 #include "libavformat/avformat.h"
 #include "libavutil/imgutils.h"
 #include "libswscale/swscale.h"
+#include "libavcodec/avcodec.h"
 }
+#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(59, 16, 100)
+#define AVCodec const AVCodec
+#endif
 static AVPixelFormat pmp_want_pix_fmt;
 
 #endif
@@ -1514,7 +1518,7 @@ void PostPutAction::run(MipsCall &call) {
 	// It seems validation is done only by older mpeg libs.
 	if (mpegLibVersion < 0x0105 && packetsAddedThisRound > 0) {
 		// TODO: Faster / less wasteful validation.
-		std::unique_ptr<MpegDemux> demuxer(new MpegDemux(packetsAddedThisRound * 2048, 0));
+		auto demuxer = std::make_unique<MpegDemux>(packetsAddedThisRound * 2048, 0);
 		int readOffset = ringbuffer->packetsRead % (s32)ringbuffer->packets;
 		uint32_t bufSize = Memory::ValidSize(ringbuffer->data + readOffset * 2048, packetsAddedThisRound * 2048);
 		const u8 *buf = Memory::GetPointer(ringbuffer->data + readOffset * 2048);

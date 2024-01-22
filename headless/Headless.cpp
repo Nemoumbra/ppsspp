@@ -135,7 +135,6 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 		return false;
 	}
 }
-void System_InputBoxGetString(const std::string &title, const std::string &defaultValue, std::function<void(bool, const std::string &)> cb) { cb(false, ""); }
 void System_AskForPermission(SystemPermission permission) {}
 PermissionStatus System_GetPermissionStatus(SystemPermission permission) { return PERMISSION_STATUS_GRANTED; }
 void System_AudioGetDebugStats(char *buf, size_t bufSize) { if (buf) buf[0] = '\0'; }
@@ -468,7 +467,7 @@ int main(int argc, const char* argv[])
 	g_Config.sReportHost.clear();
 	g_Config.bAutoSaveSymbolMap = false;
 	g_Config.bSkipBufferEffects = false;
-	g_Config.bSkipGPUReadbacks = false;
+	g_Config.iSkipGPUReadbackMode = (int)SkipGPUReadbackMode::NO_SKIP;
 	g_Config.bHardwareTransform = true;
 	g_Config.iAnisotropyLevel = 0;  // When testing mipmapping we really don't want this.
 	g_Config.iMultiSampleLevel = 0;

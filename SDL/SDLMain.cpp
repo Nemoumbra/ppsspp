@@ -563,9 +563,9 @@ bool System_GetPropertyBool(SystemProperty prop) {
 #if PPSSPP_PLATFORM(SWITCH)
 	case SYSPROP_HAS_TEXT_INPUT_DIALOG:
 		return __nx_applet_type == AppletType_Application || __nx_applet_type != AppletType_SystemApplication;
+#endif
 	case SYSPROP_HAS_KEYBOARD:
 		return true;
-#endif
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
 		return true;
@@ -584,6 +584,12 @@ bool System_GetPropertyBool(SystemProperty prop) {
 	case SYSPROP_HAS_FOLDER_BROWSER:
 	case SYSPROP_HAS_FILE_BROWSER:
 		return true;
+#endif
+	case SYSPROP_HAS_ACCELEROMETER:
+#if defined(MOBILE_DEVICE)
+		return true;
+#else
+		return false;
 #endif
 	default:
 		return false;
@@ -702,53 +708,6 @@ static void EmuThreadJoin() {
 }
 
 struct InputStateTracker {
-	void TranslateMouseWheel() {
-		// SDL2 doesn't consider the mousewheel a button anymore
-		// so let's send the KEY_UP if it was moved after some frames
-		if (mouseWheelMovedUpFrames > 0) {
-			mouseWheelMovedUpFrames--;
-			if (mouseWheelMovedUpFrames == 0) {
-				KeyInput key;
-				key.deviceId = DEVICE_ID_MOUSE;
-				key.keyCode = NKCODE_EXT_MOUSEWHEEL_UP;
-				key.flags = KEY_UP;
-				NativeKey(key);
-			}
-		}
-		if (mouseWheelMovedDownFrames > 0) {
-			mouseWheelMovedDownFrames--;
-			if (mouseWheelMovedDownFrames == 0) {
-				KeyInput key;
-				key.deviceId = DEVICE_ID_MOUSE;
-				key.keyCode = NKCODE_EXT_MOUSEWHEEL_DOWN;
-				key.flags = KEY_UP;
-				NativeKey(key);
-			}
-		}
-	}
-
-	void MouseControl() {
-		// Disabled by default, needs a workaround to map to psp keys.
-		if (g_Config.bMouseControl) {
-			float scaleFactor_x = g_display.dpi_scale_x * 0.1 * g_Config.fMouseSensitivity;
-			float scaleFactor_y = g_display.dpi_scale_y * 0.1 * g_Config.fMouseSensitivity;
-
-			AxisInput axis[2];
-			axis[0].axisId = JOYSTICK_AXIS_MOUSE_REL_X;
-			axis[0].deviceId = DEVICE_ID_MOUSE;
-			axis[0].value = std::max(-1.0f, std::min(1.0f, mouseDeltaX * scaleFactor_x));
-			axis[1].axisId = JOYSTICK_AXIS_MOUSE_REL_Y;
-			axis[1].deviceId = DEVICE_ID_MOUSE;
-			axis[1].value = std::max(-1.0f, std::min(1.0f, mouseDeltaY * scaleFactor_y));
-
-			if (GetUIState() == UISTATE_INGAME || g_Config.bMapMouse) {
-				NativeAxis(axis, 2);
-			}
-			mouseDeltaX *= g_Config.fMouseSmoothing;
-			mouseDeltaY *= g_Config.fMouseSmoothing;
-		}
-	}
-
 	void MouseCaptureControl() {
 		bool captureMouseCondition = g_Config.bMouseControl && ((GetUIState() == UISTATE_INGAME && g_Config.bMouseConfine) || g_Config.bMapMouse);
 		if (mouseCaptured != captureMouseCondition) {
@@ -761,10 +720,6 @@ struct InputStateTracker {
 	}
 
 	bool mouseDown;
-	float mouseDeltaX;
-	float mouseDeltaY;
-	int mouseWheelMovedUpFrames;
-	int mouseWheelMovedDownFrames;
 	bool mouseCaptured;
 };
 
@@ -912,7 +867,7 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 	case SDL_TEXTINPUT:
 		{
 			int pos = 0;
-			int c = u8_nextchar(event.text.text, &pos);
+			int c = u8_nextchar(event.text.text, &pos, strlen(event.text.text));
 			KeyInput key;
 			key.flags = KEY_CHAR;
 			key.unicodeChar = c;
@@ -1037,11 +992,9 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 #endif
 			if (event.wheel.y > 0) {
 				key.keyCode = NKCODE_EXT_MOUSEWHEEL_UP;
-				inputTracker->mouseWheelMovedUpFrames = 5;
 				NativeKey(key);
 			} else if (event.wheel.y < 0) {
 				key.keyCode = NKCODE_EXT_MOUSEWHEEL_DOWN;
-				inputTracker->mouseWheelMovedDownFrames = 5;
 				NativeKey(key);
 			}
 			break;
@@ -1055,8 +1008,7 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			input.id = 0;
 			NativeTouch(input);
 		}
-		inputTracker->mouseDeltaX += event.motion.xrel;
-		inputTracker->mouseDeltaY += event.motion.yrel;
+		NativeMouseDelta(event.motion.xrel, event.motion.yrel);
 		break;
 	case SDL_MOUSEBUTTONUP:
 		switch (event.button.button) {
@@ -1467,8 +1419,6 @@ int main(int argc, char *argv[]) {
 	if (!mainThreadIsRender) {
 		// We should only be a message pump
 		while (true) {
-			inputTracker.TranslateMouseWheel();
-
 			SDL_Event event;
 			while (SDL_PollEvent(&event)) {
 				ProcessSDLEvent(window, event, &inputTracker);
@@ -1478,9 +1428,7 @@ int main(int argc, char *argv[]) {
 
 			UpdateSDLCursor();
 
-			inputTracker.MouseControl();
 			inputTracker.MouseCaptureControl();
-
 
 			{
 				std::lock_guard<std::mutex> guard(g_mutexWindow);
@@ -1490,8 +1438,6 @@ int main(int argc, char *argv[]) {
 			}
 		}
 	} else while (true) {
-		inputTracker.TranslateMouseWheel();
-
 		{
 			SDL_Event event;
 			while (SDL_PollEvent(&event)) {
@@ -1508,7 +1454,6 @@ int main(int argc, char *argv[]) {
 
 		UpdateSDLCursor();
 
-		inputTracker.MouseControl();
 		inputTracker.MouseCaptureControl();
 
 		bool renderThreadPaused = Core_IsWindowHidden() && g_Config.bPauseWhenMinimized && emuThreadState != (int)EmuThreadState::DISABLED;

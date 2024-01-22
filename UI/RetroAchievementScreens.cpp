@@ -20,14 +20,14 @@ static inline const char *DeNull(const char *ptr) {
 // Compound view, creating a FileChooserChoice inside.
 class AudioFileChooser : public UI::LinearLayout {
 public:
-	AudioFileChooser(std::string *value, const std::string &title, UI::UISound sound, UI::LayoutParams *layoutParams = nullptr);
+	AudioFileChooser(RequesterToken token, std::string *value, const std::string &title, UI::UISound sound, UI::LayoutParams *layoutParams = nullptr);
 
 	UI::UISound sound_;
 };
 
 static constexpr UI::Size ITEM_HEIGHT = 64.f;
 
-AudioFileChooser::AudioFileChooser(std::string *value, const std::string &title, UI::UISound sound, UI::LayoutParams *layoutParams) : UI::LinearLayout(UI::ORIENT_HORIZONTAL, layoutParams), sound_(sound) {
+AudioFileChooser::AudioFileChooser(RequesterToken token, std::string *value, const std::string &title, UI::UISound sound, UI::LayoutParams *layoutParams) : UI::LinearLayout(UI::ORIENT_HORIZONTAL, layoutParams), sound_(sound) {
 	using namespace UI;
 	SetSpacing(2.0f);
 	if (!layoutParams) {
@@ -38,7 +38,7 @@ AudioFileChooser::AudioFileChooser(std::string *value, const std::string &title,
 		g_BackgroundAudio.SFX().Play(sound_, 0.6f);
 		return UI::EVENT_DONE;
 	});
-	Add(new FileChooserChoice(value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([=](UI::EventParams &e) {
+	Add(new FileChooserChoice(token, value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([=](UI::EventParams &e) {
 		std::string path = e.s;
 		Sample *sample = Sample::Load(path);
 		if (sample) {
@@ -299,7 +299,7 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 			});
 		} else if (System_GetPropertyBool(SYSPROP_HAS_LOGIN_DIALOG)) {
 			viewGroup->Add(new Choice(di->T("Log in")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
-				System_AskUsernamePassword(di->T("Log in"), [](const std::string &value, int) {
+				System_AskUsernamePassword(GetRequesterToken(), StringFromFormat("RetroAchievements: %s", di->T("Log in")), [](const std::string &value, int) {
 					std::vector<std::string> parts;
 					SplitString(value, '\n', parts);
 					if (parts.size() == 2 && !parts[0].empty() && !parts[1].empty()) {
@@ -310,8 +310,8 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 			});
 		} else {
 			// Hack up a temporary quick login-form-ish-thing
-			viewGroup->Add(new PopupTextInputChoice(&username_, di->T("Username"), "", 128, screenManager()));
-			viewGroup->Add(new PopupTextInputChoice(&password_, di->T("Password"), "", 128, screenManager()))->SetPasswordDisplay();
+			viewGroup->Add(new PopupTextInputChoice(GetRequesterToken(), &username_, di->T("Username"), "", 128, screenManager()));
+			viewGroup->Add(new PopupTextInputChoice(GetRequesterToken(), &password_, di->T("Password"), "", 128, screenManager()))->SetPasswordDisplay();
 			Choice *loginButton = viewGroup->Add(new Choice(di->T("Log in")));
 			loginButton->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
 				if (!username_.empty() && !password_.empty()) {
@@ -338,7 +338,7 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		RecreateViews();
 		return UI::EVENT_DONE;
 	});
-	viewGroup->Add(new CheckBox(&g_Config.bAchievementsChallengeMode, ac->T("Challenge Mode (no savestates)")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new CheckBox(&g_Config.bAchievementsChallengeMode, ac->T("Hardcore Mode (no savestates)")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSoundEffects, ac->T("Sound Effects")))->SetEnabledPtr(&g_Config.bAchievementsEnable);  // not yet implemented
 
 	viewGroup->Add(new ItemHeader(di->T("Links")));
@@ -357,8 +357,8 @@ void RetroAchievementsSettingsScreen::CreateCustomizeTab(UI::ViewGroup *viewGrou
 
 	using namespace UI;
 	viewGroup->Add(new ItemHeader(ac->T("Sound Effects")));
-	viewGroup->Add(new AudioFileChooser(&g_Config.sAchievementsUnlockAudioFile, ac->T("Achievement unlocked"), UISound::ACHIEVEMENT_UNLOCKED));
-	viewGroup->Add(new AudioFileChooser(&g_Config.sAchievementsLeaderboardSubmitAudioFile, ac->T("Leaderboard score submission"), UISound::LEADERBOARD_SUBMITTED));
+	viewGroup->Add(new AudioFileChooser(GetRequesterToken(), &g_Config.sAchievementsUnlockAudioFile, ac->T("Achievement unlocked"), UISound::ACHIEVEMENT_UNLOCKED));
+	viewGroup->Add(new AudioFileChooser(GetRequesterToken(), &g_Config.sAchievementsLeaderboardSubmitAudioFile, ac->T("Leaderboard score submission"), UISound::LEADERBOARD_SUBMITTED));
 
 	static const char *positions[] = { "None", "Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right" };
 
@@ -380,6 +380,7 @@ void RetroAchievementsSettingsScreen::CreateDeveloperToolsTab(UI::ViewGroup *vie
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsEncoreMode, ac->T("Encore Mode")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsUnofficial, ac->T("Unofficial achievements")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsLogBadMemReads, ac->T("Log bad memory accesses")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSaveStateInHardcoreMode, ac->T("Allow Save State in Hardcore Mode (but not Load State)")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 }
 
 void MeasureAchievement(const UIContext &dc, const rc_client_achievement_t *achievement, AchievementRenderStyle style, float *w, float *h) {
@@ -438,7 +439,7 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 
 	if (!achievement->unlocked && !hasFocus) {
 		// Make the background color gray.
-		// TODO: Different colors in challenge mode, or even in the "re-take achievements" mode when we add that?
+		// TODO: Different colors in hardcore mode, or even in the "re-take achievements" mode when we add that?
 		background.color = (background.color & 0xFF000000) | 0x706060;
 	}
 

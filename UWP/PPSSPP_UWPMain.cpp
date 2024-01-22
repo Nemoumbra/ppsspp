@@ -241,8 +241,10 @@ void PPSSPP_UWPMain::OnMouseWheel(float delta) {
 	KeyInput keyInput{};
 	keyInput.keyCode = key;
 	keyInput.deviceId = DEVICE_ID_MOUSE;
-	keyInput.flags = KEY_DOWN | KEY_UP;
+	keyInput.flags = KEY_DOWN;
 	NativeKey(keyInput);
+
+	// KEY_UP is now sent automatically afterwards for mouse wheel events, see NativeKey.
 }
 
 bool PPSSPP_UWPMain::OnHardwareButton(HardwareButton button) {
@@ -416,6 +418,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return true;  // we just use the file browser
 	case SYSPROP_HAS_BACK_BUTTON:
 		return true;
+	case SYSPROP_HAS_ACCELEROMETER:
+		return IsMobile();
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
 		return true;
@@ -433,6 +437,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 	}
 	case SYSPROP_DEBUGGER_PRESENT:
 		return IsDebuggerPresent();
+	case SYSPROP_OK_BUTTON_LEFT:
+		return true;
 	default:
 		return false;
 	}
@@ -500,6 +506,9 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 			break;
 		case BrowseFileType::INI:
 			supportedExtensions = { ".ini" };
+			break;
+		case BrowseFileType::ZIP:
+			supportedExtensions = { ".zip" };
 			break;
 		case BrowseFileType::DB:
 			supportedExtensions = { ".db" };

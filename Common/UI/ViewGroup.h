@@ -9,6 +9,8 @@
 #include "Common/Input/GestureDetector.h"
 #include "Common/UI/View.h"
 
+class UIScreen;
+
 namespace UI {
 
 class AnchorTranslateTween;
@@ -45,7 +47,6 @@ public:
 	// Takes ownership! DO NOT add a view to multiple parents!
 	template <class T>
 	T *Add(T *view) {
-		std::lock_guard<std::mutex> guard(modifyLock_);
 		views_.push_back(view);
 		return view;
 	}
@@ -76,9 +77,6 @@ public:
 	void SetExclusiveTouch(bool exclusive) { exclusiveTouch_ = exclusive; }
 	void SetClickableBackground(bool clickableBackground) { clickableBackground_ = clickableBackground; }
 
-	void Lock() { modifyLock_.lock(); }
-	void Unlock() { modifyLock_.unlock(); }
-
 	void SetClip(bool clip) { clip_ = clip; }
 	std::string DescribeLog() const override { return "ViewGroup: " + View::DescribeLog(); }
 	std::string DescribeText() const override;
@@ -87,7 +85,6 @@ protected:
 	std::string DescribeListUnordered(const char *heading) const;
 	std::string DescribeListOrdered(const char *heading) const;
 
-	std::mutex modifyLock_;  // Hold this when changing the subviews.
 	std::vector<View *> views_;
 	View *defaultFocusView_ = nullptr;
 	Drawable bg_;
@@ -275,7 +272,6 @@ public:
 	bool Key(const KeyInput &input) override;
 
 	void SetTopTabs(bool tabs) { topTabs_ = tabs; }
-	void Draw(UIContext &dc) override;
 
 	std::string DescribeLog() const override { return "ChoiceStrip: " + View::DescribeLog(); }
 	std::string DescribeText() const override;
@@ -303,6 +299,8 @@ public:
 		tabStrip_->EnableChoice(tab, enabled);
 	}
 
+	void AddBack(UIScreen *parent);
+
 	void SetCurrentTab(int tab, bool skipTween = false);
 
 	int GetCurrentTab() const { return currentTab_; }
@@ -314,6 +312,7 @@ private:
 	void AddTabContents(const std::string &title, View *tabContents);
 	EventReturn OnTabClick(EventParams &e);
 
+	LinearLayout *tabContainer_ = nullptr;
 	ChoiceStrip *tabStrip_ = nullptr;
 	ScrollView *tabScroll_ = nullptr;
 	AnchorLayout *contents_ = nullptr;
@@ -332,7 +331,13 @@ public:
 
 	void Update() override;
 
+	void SetOpen(bool open) {
+		open_ = open;
+		UpdateVisibility();
+	}
+
 private:
+	void UpdateVisibility();
 	bool open_ = true;
 	CollapsibleHeader *heading_;
 };

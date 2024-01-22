@@ -38,10 +38,6 @@ include $(BUILD_STATIC_LIBRARY)
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
 
-LOCAL_C_INCLUDES += \
-  $(LOCAL_PATH)/../../ext/cpu_features/include \
-  $(LOCAL_PATH)/../../ext/rcheevos/include
-
 LOCAL_CFLAGS += -DSTACK_LINE_READER_BUFFER_SIZE=1024 -DHAVE_DLFCN_H -DRC_DISABLE_LUA -D_7ZIP_ST
 
 # http://software.intel.com/en-us/articles/getting-started-on-optimizing-ndk-project-for-multiple-cpu-architectures
@@ -138,7 +134,19 @@ RCHEEVOS_FILES := \
   ${SRC}/ext/rcheevos/src/rcheevos/value.c \
   ${SRC}/ext/rcheevos/src/rhash/cdreader.c \
   ${SRC}/ext/rcheevos/src/rhash/hash.c \
-  ${SRC}/ext/rcheevos/src/rhash/md5.c
+  ${SRC}/ext/rcheevos/src/rhash/md5.c \
+  ${SRC}/ext/rcheevos/src/rhash/aes.c
+
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+	ADRENOTOOLS_FILES := \
+	  ${SRC}/ext/libadrenotools/src/driver.cpp \
+	  ${SRC}/ext/libadrenotools/src/hook/hook_impl.cpp \
+	  ${SRC}/ext/libadrenotools/src/hook/file_redirect_hook.c \
+	  ${SRC}/ext/libadrenotools/src/hook/gsl_alloc_hook.c \
+	  ${SRC}/ext/libadrenotools/src/hook/main_hook.c \
+	  ${SRC}/ext/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp \
+	  ${SRC}/ext/libadrenotools/lib/linkernsbypass/elf_soname_patcher.cpp
+endif
 
 VR_FILES := \
   $(SRC)/Common/VR/OpenXRLoader.cpp \
@@ -316,6 +324,10 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/StringUtils.cpp \
   $(SRC)/Common/SysError.cpp \
   $(SRC)/Common/TimeUtil.cpp
+
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+    EXEC_AND_LIB_FILES += $(ADRENOTOOLS_FILES)
+endif
 
 LOCAL_MODULE := ppsspp_common
 LOCAL_SRC_FILES := $(EXEC_AND_LIB_FILES)
@@ -638,6 +650,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/sceSas.cpp \
   $(SRC)/Core/HLE/sceSfmt19937.cpp \
   $(SRC)/Core/HLE/sceSha256.cpp \
+  $(SRC)/Core/HLE/sceSircs.cpp \
   $(SRC)/Core/HLE/sceSsl.cpp \
   $(SRC)/Core/HLE/sceUmd.cpp \
   $(SRC)/Core/HLE/sceUsb.cpp \
@@ -664,6 +677,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/JitCommon/JitBlockCache.cpp \
   $(SRC)/Core/MIPS/JitCommon/JitState.cpp \
   $(SRC)/Core/Util/AudioFormat.cpp \
+  $(SRC)/Core/Util/MemStick.cpp \
   $(SRC)/Core/Util/PortManager.cpp \
   $(SRC)/Core/Util/GameDB.cpp \
   $(SRC)/Core/Util/GameManager.cpp \
@@ -801,6 +815,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/ChatScreen.cpp \
   $(SRC)/UI/DebugOverlay.cpp \
   $(SRC)/UI/DevScreens.cpp \
+  $(SRC)/UI/DriverManagerScreen.cpp \
   $(SRC)/UI/DisplayLayoutScreen.cpp \
   $(SRC)/UI/EmuScreen.cpp \
   $(SRC)/UI/MainScreen.cpp \
