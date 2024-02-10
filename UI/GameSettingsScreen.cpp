@@ -2045,13 +2045,13 @@ UI::EventReturn DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 }
 
 UI::EventReturn DeveloperToolsScreen::OnVtableCrackerEnable(UI::EventParams &e) {
-	// INFO_LOG(SYSTEM, "VtableCracker enabled");
+	INFO_LOG(EXTENSIONS, "VtableCracker enabled");
 	vtableCracker.Enable();
 	return UI::EVENT_DONE;
 }
 
 UI::EventReturn DeveloperToolsScreen::OnVtableCrackerDisable(UI::EventParams &e) {
-	// INFO_LOG(SYSTEM, "VtableCracker disabled");
+	INFO_LOG(EXTENSIONS, "VtableCracker disabled");
 	vtableCracker.Disable();
 	return UI::EVENT_DONE;
 }
@@ -2062,6 +2062,7 @@ UI::EventReturn DeveloperToolsScreen::OnVtableCrackerFlush(UI::EventParams &e) {
 }
 
 UI::EventReturn DeveloperToolsScreen::OnVtableCrackerReset(UI::EventParams &e) {
+	INFO_LOG(EXTENSIONS, "VtableCracker reset");
 	vtableCracker.Reset();
 	return UI::EVENT_DONE;
 }

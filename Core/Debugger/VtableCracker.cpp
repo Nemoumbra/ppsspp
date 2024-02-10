@@ -92,7 +92,7 @@ void VtableCracker::Disable() {
 }
 
 void VtableCracker::SetFlushPath(const std::string& path) {
-	// INFO_LOG(SYSTEM, "Vtable cracker: new flush path %s", path.c_str());
+	INFO_LOG(EXTENSIONS, "Vtable cracker: new flush path is '%s'", path.c_str());
 	current_path = path;
 }
 
@@ -115,9 +115,19 @@ void VtableCracker::flush_branches(std::ofstream& output, const BranchesMapping&
 
 
 bool VtableCracker::Flush() {
-	// INFO_LOG(SYSTEM, "Vtable cracker: flush to %s", current_path.c_str());
+	if (current_path.empty()) {
+		WARN_LOG(EXTENSIONS, "Vtable cracker: cannot flush (no path specified)");
+		return false;
+	}
+
+	
 	std::ofstream output(current_path);
-	if (!output) return false;
+	if (!output) {
+		WARN_LOG(EXTENSIONS, "Vtable cracker: cannot access the file '%s'", current_path.c_str());
+		return false;
+	}
+
+	INFO_LOG(EXTENSIONS, "Vtable cracker: flush to '%s'", current_path.c_str());
 	output << std::hex;
 
 	// Dump jrs
