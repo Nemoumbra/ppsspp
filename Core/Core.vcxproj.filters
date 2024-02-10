@@ -1309,6 +1309,9 @@
     <ClCompile Include="Util\MemStick.cpp">
       <Filter>Util</Filter>
     </ClCompile>
+    <ClCompile Include="Debugger\VtableCracker.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ELF\ElfReader.h">
@@ -2093,6 +2096,9 @@
     </ClInclude>
     <ClInclude Include="Util\MemStick.h">
       <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\VtableCracker.h">
+      <Filter>Debugger</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

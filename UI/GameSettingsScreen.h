@@ -156,6 +156,12 @@ private:
 	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
 	UI::EventReturn OnCopyStatesToRoot(UI::EventParams &e);
 
+	UI::EventReturn OnVtableCrackerEnable(UI::EventParams &e);
+	UI::EventReturn OnVtableCrackerDisable(UI::EventParams &e);
+	UI::EventReturn OnVtableCrackerPathChanged(UI::EventParams &e);
+	UI::EventReturn OnVtableCrackerFlush(UI::EventParams &e);
+	UI::EventReturn OnVtableCrackerReset(UI::EventParams &e);
+
 	bool allowDebugger_ = false;
 	bool canAllowDebugger_ = true;
 	enum class HasIni {
@@ -164,6 +170,9 @@ private:
 		MAYBE,
 	};
 	HasIni hasTexturesIni_ = HasIni::MAYBE;
+
+	std::string VtableCrackerPath_ = "";
+	UI::InfoItem* VtableCrackerPath = nullptr;
 };
 
 class HostnameSelectScreen : public PopupScreen {

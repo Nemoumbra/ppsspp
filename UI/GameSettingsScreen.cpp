@@ -79,6 +79,8 @@
 #include "GPU/GPUInterface.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 
+#include "Core/Debugger/VtableCracker.h"
+
 #if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
 #include "UI/DarwinFileSystemServices.h"
 #endif
@@ -1839,6 +1841,27 @@ void DeveloperToolsScreen::CreateViews() {
 	ffMode->SetEnabledFunc([]() { return !g_Config.bVSync; });
 	ffMode->HideChoice(1);  // not used
 
+	list->Add(new ItemHeader(dev->T("VtableCracker")));
+	Button *enable_vtable_cracker = list->Add(new Button(dev->T("Enable VtableCracker")));
+	enable_vtable_cracker->OnClick.Handle(this, &DeveloperToolsScreen::OnVtableCrackerEnable);
+
+	Button *disable_vtable_cracker = list->Add(new Button(dev->T("Disable VtableCracker")));
+	disable_vtable_cracker->OnClick.Handle(this, &DeveloperToolsScreen::OnVtableCrackerDisable);
+
+	Button *flush_vtable_cracker = list->Add(new Button(dev->T("Flush VtableCracker")));
+	flush_vtable_cracker->OnClick.Handle(this, &DeveloperToolsScreen::OnVtableCrackerFlush);
+
+	Button *reset_vtable_cracker = list->Add(new Button(dev->T("Reset VtableCracker")));
+	reset_vtable_cracker->OnClick.Handle(this, &DeveloperToolsScreen::OnVtableCrackerReset);
+
+	Choice *vtable_cracking_path = list->Add(new Choice(dev->T("Select the output file")));
+	vtable_cracking_path->OnClick.Handle(this, &DeveloperToolsScreen::OnVtableCrackerPathChanged);
+
+	// We gotta retain the value as the user goes in and out of the menu
+	VtableCrackerPath_ = vtableCracker.GetFlushPath();
+	VtableCrackerPath = list->Add(new InfoItem(dev->T("Current log file"), VtableCrackerPath_));
+
+
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
 
 	list->Add(new ItemHeader(dev->T("Ubershaders")));
@@ -2020,6 +2043,41 @@ UI::EventReturn DeveloperToolsScreen::OnRemoteDebugger(UI::EventParams &e) {
 	g_Config.bRemoteDebuggerOnStartup = allowDebugger_;
 	return UI::EVENT_DONE;
 }
+
+UI::EventReturn DeveloperToolsScreen::OnVtableCrackerEnable(UI::EventParams &e) {
+	// INFO_LOG(SYSTEM, "VtableCracker enabled");
+	vtableCracker.Enable();
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnVtableCrackerDisable(UI::EventParams &e) {
+	// INFO_LOG(SYSTEM, "VtableCracker disabled");
+	vtableCracker.Disable();
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnVtableCrackerFlush(UI::EventParams &e) {
+	vtableCracker.Flush();
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnVtableCrackerReset(UI::EventParams &e) {
+	vtableCracker.Reset();
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn DeveloperToolsScreen::OnVtableCrackerPathChanged(UI::EventParams &e) {
+#if PPSSPP_PLATFORM(WINDOWS)
+	std::string fn;
+	if (W32Util::BrowseForFileName(false, nullptr, L"Select the log file", 0, L"Text files\0*.*\0\0", L"txt", fn)) {
+		vtableCracker.SetFlushPath(fn);
+		VtableCrackerPath_ = std::move(fn);
+		VtableCrackerPath->SetRightText(VtableCrackerPath_);
+	}
+#endif
+	return UI::EVENT_DONE;
+}
+
 
 void DeveloperToolsScreen::update() {
 	UIDialogScreenWithBackground::update();
