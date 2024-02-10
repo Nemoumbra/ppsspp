@@ -1957,6 +1957,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/Debugger/DisassemblyManager.h
 	Core/Debugger/WebSocket.cpp
 	Core/Debugger/WebSocket.h
+	Core/Debugger/VtableCracker.cpp
+	Core/Debugger/VtableCracker.h
 	Core/Debugger/WebSocket/BreakpointSubscriber.cpp
 	Core/Debugger/WebSocket/BreakpointSubscriber.h
 	Core/Debugger/WebSocket/CPUCoreSubscriber.cpp

@@ -558,6 +558,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/Debugger/Breakpoints.cpp \
   $(SRC)/Core/Debugger/DisassemblyManager.cpp \
   $(SRC)/Core/Debugger/MemBlockInfo.cpp \
+  $(SRC)/Core/Debugger/VtableCracker.cpp \
   $(SRC)/Core/Debugger/SymbolMap.cpp \
   $(SRC)/Core/Debugger/WebSocket.cpp \
   $(SRC)/Core/Debugger/WebSocket/BreakpointSubscriber.cpp \

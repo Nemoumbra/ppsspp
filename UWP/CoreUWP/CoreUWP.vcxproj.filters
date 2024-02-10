@@ -695,6 +695,9 @@
     <ClCompile Include="..\..\Core\HLE\sceUsbMic.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\Debugger\VtableCracker.cpp">
+      <Filter>Debugger</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Core\Debugger\WebSocket.cpp">
       <Filter>Debugger</Filter>
     </ClCompile>
@@ -1763,6 +1766,9 @@
     </ClInclude>
     <ClInclude Include="..\..\Core\HLE\sceUsbMic.h">
       <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\Debugger\VtableCracker.h">
+      <Filter>Debugger</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\Debugger\WebSocket.h">
       <Filter>Debugger</Filter>
