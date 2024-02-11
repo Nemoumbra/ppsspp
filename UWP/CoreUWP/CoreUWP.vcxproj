@@ -578,7 +578,7 @@
     <ClCompile Include="..\..\Core\MIPS\MIPSIntVFPU.cpp" />
     <ClCompile Include="..\..\Core\MIPS\MIPSStackWalk.cpp" />
     <ClCompile Include="..\..\Core\MIPS\MIPSTables.cpp" />
-    <ClInclude Include="..\..\Core\MIPS\MIPSHooks.cpp" />
+    <ClCompile Include="..\..\Core\MIPS\MIPSHooks.cpp" />
     <ClCompile Include="..\..\Core\MIPS\MIPSVFPUFallbacks.cpp" />
     <ClCompile Include="..\..\Core\MIPS\MIPSVFPUUtils.cpp" />
     <ClCompile Include="..\..\Core\MIPS\x86\Asm.cpp" />
