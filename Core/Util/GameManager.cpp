@@ -244,7 +244,7 @@ ZipFileContents DetectZipFileContents(struct zip *z, ZipFileInfo *info) {
 			} else {
 				INFO_LOG(HLE, "Wrong number of slashes (%i) in '%s'", slashCount, fn);
 			}
-		} else if (endsWith(zippedName, ".iso") || endsWith(zippedName, ".cso")) {
+		} else if (endsWith(zippedName, ".iso") || endsWith(zippedName, ".cso") || endsWith(zippedName, ".chd")) {
 			int slashCount = 0;
 			int slashLocation = -1;
 			countSlashes(zippedName, &slashLocation, &slashCount);
@@ -304,7 +304,7 @@ bool GameManager::InstallGame(const Path &url, const Path &fileName, bool delete
 
 	std::string extension = url.GetFileExtension();
 	// Examine the URL to guess out what we're installing.
-	if (extension == ".cso" || extension == ".iso") {
+	if (extension == ".cso" || extension == ".iso" || extension == ".chd") {
 		// It's a raw ISO or CSO file. We just copy it to the destination.
 		std::string shortFilename = url.GetFilename();
 		bool success = InstallRawISO(fileName, shortFilename, deleteAfter);
@@ -345,6 +345,7 @@ bool GameManager::InstallGame(const Path &url, const Path &fileName, bool delete
 			if (info.stripChars == 0) {
 				success = InstallMemstickZip(z, fileName, dest / "textures.zip", info, deleteAfter);
 			} else {
+				// TODO: Can probably remove this, as we now put .nomedia in /TEXTURES directly.
 				File::CreateEmptyFile(dest / ".nomedia");
 				success = InstallMemstickGame(z, fileName, dest, info, true, deleteAfter);
 			}
@@ -412,7 +413,7 @@ bool GameManager::DetectTexturePackDest(struct zip *z, int iniIndex, Path &dest)
 	return true;
 }
 
-void GameManager::SetInstallError(const std::string &err) {
+void GameManager::SetInstallError(std::string_view err) {
 	installProgress_ = 0.0f;
 	installError_ = err;
 	InstallDone();
@@ -624,7 +625,7 @@ bool GameManager::InstallMemstickGame(struct zip *z, const Path &zipfile, const 
 		g_OSD.SetProgressBar("install", di->T("Installing..."), 0.0f, 1.0f, 0.1f + (i + 1) / (float)info.numFiles * 0.9f, 0.1f);
 	}
 
-	INFO_LOG(HLE, "Extracted %d files from zip (%d bytes / %d).", info.numFiles, (int)bytesCopied, (int)allBytes);
+	INFO_LOG(HLE, "Unzipped %d files (%d bytes / %d).", info.numFiles, (int)bytesCopied, (int)allBytes);
 	zip_close(z);
 	z = nullptr;
 	installProgress_ = 1.0f;
@@ -732,7 +733,7 @@ bool GameManager::InstallZippedISO(struct zip *z, int isoFileIndex, const Path &
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	g_OSD.SetProgressBar("install", di->T("Installing..."), 0.0f, 0.0f, 0.0f, 0.1f);
 	if (ExtractFile(z, isoFileIndex, outputISOFilename, &bytesCopied, allBytes)) {
-		INFO_LOG(IO, "Successfully extracted ISO file to '%s'", outputISOFilename.c_str());
+		INFO_LOG(IO, "Successfully unzipped ISO file to '%s'", outputISOFilename.c_str());
 		success = true;
 	}
 	zip_close(z);

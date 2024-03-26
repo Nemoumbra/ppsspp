@@ -226,12 +226,12 @@ private:
 };
 
 void GameButton::Draw(UIContext &dc) {
-	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath_, 0);
+	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath_, GameInfoFlags::PARAM_SFO | GameInfoFlags::ICON);
 	Draw::Texture *texture = 0;
 	u32 color = 0, shadowColor = 0;
 	using namespace UI;
 
-	if (ginfo->icon.texture) {
+	if (ginfo->Ready(GameInfoFlags::ICON) && ginfo->icon.texture) {
 		texture = ginfo->icon.texture;
 	}
 
@@ -427,10 +427,9 @@ void GameButton::Draw(UIContext &dc) {
 }
 
 std::string GameButton::DescribeText() const {
-	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(nullptr, gamePath_, 0);
-	if (ginfo->pending)
+	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(nullptr, gamePath_, GameInfoFlags::PARAM_SFO);
+	if (!ginfo->Ready(GameInfoFlags::PARAM_SFO))
 		return "...";
-
 	auto u = GetI18NCategory(I18NCat::UI_ELEMENTS);
 	return ApplySafeSubstitutions(u->T("%1 button"), ginfo->GetTitle());
 }
@@ -468,7 +467,7 @@ void DirButton::Draw(UIContext &dc) {
 
 	dc.FillRect(style.background, bounds_);
 
-	const std::string text = GetText();
+	std::string text(GetText());
 
 	ImageID image = ImageID("I_FOLDER");
 	if (text == "..") {
@@ -510,11 +509,11 @@ void DirButton::Draw(UIContext &dc) {
 	}
 }
 
-GameBrowser::GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool *gridStyle, ScreenManager *screenManager, std::string lastText, std::string lastLink, UI::LayoutParams *layoutParams)
+GameBrowser::GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool *gridStyle, ScreenManager *screenManager, std::string_view lastText, std::string_view lastLink, UI::LayoutParams *layoutParams)
 	: LinearLayout(UI::ORIENT_VERTICAL, layoutParams), path_(path), gridStyle_(gridStyle), browseFlags_(browseFlags), lastText_(lastText), lastLink_(lastLink), screenManager_(screenManager), token_(token) {
 	using namespace UI;
 	path_.SetUserAgent(StringFromFormat("PPSSPP/%s", PPSSPP_GIT_VERSION));
-	path_.SetRootAlias("ms:", GetSysDirectory(DIRECTORY_MEMSTICK_ROOT).ToVisualString());
+	path_.SetRootAlias("ms:", GetSysDirectory(DIRECTORY_MEMSTICK_ROOT).ToVisualString() + "/");
 	Refresh();
 }
 
@@ -604,7 +603,7 @@ UI::EventReturn GameBrowser::LastClick(UI::EventParams &e) {
 
 UI::EventReturn GameBrowser::BrowseClick(UI::EventParams &e) {
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
-	System_BrowseForFolder(token_, mm->T("Choose folder"), [this](const std::string &filename, int) {
+	System_BrowseForFolder(token_, mm->T("Choose folder"), path_.GetPath(), [this](const std::string &filename, int) {
 		this->SetPath(Path(filename));
 	});
 	return UI::EVENT_DONE;
@@ -1307,7 +1306,7 @@ void MainScreen::CreateViews() {
 		UI::Margins buttonMargins(0, 0);
 		UI::Drawable solid(0xFFbd9939);
 		upgradeBar_->SetBG(solid);
-		upgradeBar_->Add(new TextView(u->T("New version of PPSSPP available") + std::string(": ") + g_Config.upgradeVersion, new LinearLayoutParams(1.0f, textMargins)));
+		upgradeBar_->Add(new TextView(std::string(u->T("New version of PPSSPP available")) + std::string(": ") + g_Config.upgradeVersion, new LinearLayoutParams(1.0f, textMargins)));
 #if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(WINDOWS)
 		upgradeBar_->Add(new Button(u->T("Download"), new LinearLayoutParams(buttonMargins)))->OnClick.Handle(this, &MainScreen::OnDownloadUpgrade);
 #else
@@ -1443,12 +1442,12 @@ bool MainScreen::DrawBackgroundFor(UIContext &dc, const Path &gamePath, float pr
 
 	std::shared_ptr<GameInfo> ginfo;
 	if (!gamePath.empty()) {
-		ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath, GAMEINFO_WANTBG);
+		ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath, GameInfoFlags::BG);
 		// Loading texture data may bind a texture.
 		dc.RebindTexture();
 
 		// Let's not bother if there's no picture.
-		if (!ginfo || (!ginfo->pic1.texture && !ginfo->pic0.texture)) {
+		if (!ginfo->Ready(GameInfoFlags::BG) || (!ginfo->pic1.texture && !ginfo->pic0.texture)) {
 			return false;
 		}
 	} else {
@@ -1471,11 +1470,10 @@ bool MainScreen::DrawBackgroundFor(UIContext &dc, const Path &gamePath, float pr
 UI::EventReturn MainScreen::OnGameSelected(UI::EventParams &e) {
 	g_Config.Save("MainScreen::OnGameSelected");
 	Path path(e.s);
-	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(nullptr, path, GAMEINFO_WANTBG);
-	if (ginfo && ginfo->fileType == IdentifiedFileType::PSP_SAVEDATA_DIRECTORY) {
+	std::shared_ptr<GameInfo> ginfo = g_gameInfoCache->GetInfo(nullptr, path, GameInfoFlags::FILE_TYPE);
+	if (ginfo->fileType == IdentifiedFileType::PSP_SAVEDATA_DIRECTORY) {
 		return UI::EVENT_DONE;
 	}
-
 	if (g_GameManager.GetState() == GameManagerState::INSTALLING)
 		return UI::EVENT_DONE;
 

@@ -218,15 +218,15 @@ void MemStickScreen::CreateViews() {
 	if (choice_ == CHOICE_BROWSE_FOLDER || choice_ == CHOICE_SET_MANUAL) {
 		UI::View *extraView = nullptr;
 		if (!g_Config.memStickDirectory.empty()) {
-			extraView = new TextView(StringFromFormat("    %s: %s", iz->T("Current"), g_Config.memStickDirectory.ToVisualString().c_str()), ALIGN_LEFT, false);
+			extraView = new TextView(StringFromFormat("    %s: %s", iz->T_cstr("Current"), g_Config.memStickDirectory.ToVisualString().c_str()), ALIGN_LEFT, false);
 		}
 		AddExplanation(leftColumn, (MemStickScreen::Choice)choice_, extraView);
 	}
 
-	std::string privateString = iz->T("Use App Private Data");
+	std::string privateString(iz->T("Use App Private Data"));
 
 	if (initialSetup_) {
-		privateString = StringFromFormat("%s (%s)", iz->T("Skip for now"), privateString.c_str());
+		privateString = StringFromFormat("%s (%s)", iz->T_cstr("Skip for now"), privateString.c_str());
 	}
 
 	leftColumn->Add(new RadioButton(&choice_, CHOICE_PRIVATE_DIRECTORY, privateString))->OnClick.Handle(this, &MemStickScreen::OnChoiceClick);
@@ -236,7 +236,7 @@ void MemStickScreen::CreateViews() {
 
 	leftColumn->Add(new Spacer(new LinearLayoutParams(FILL_PARENT, 12.0f, 0.0f)));
 
-	const char *confirmButtonText = nullptr;
+	std::string_view confirmButtonText = "";
 	ImageID confirmButtonImage = ImageID::invalid();
 	switch (choice_) {
 	case CHOICE_BROWSE_FOLDER:
@@ -418,7 +418,7 @@ UI::EventReturn MemStickScreen::UseStorageRoot(UI::EventParams &params) {
 
 UI::EventReturn MemStickScreen::Browse(UI::EventParams &params) {
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
-	System_BrowseForFolder(GetRequesterToken(), mm->T("Choose folder"), [=](const std::string &value, int) {
+	System_BrowseForFolder(GetRequesterToken(), mm->T("Choose folder"), g_Config.memStickDirectory, [=](const std::string &value, int) {
 		Path pendingMemStickFolder = Path(value);
 		INFO_LOG(SYSTEM, "Got folder: '%s'", pendingMemStickFolder.c_str());
 		// Browse finished. Let's pop up the confirmation dialog.
@@ -518,7 +518,7 @@ void ConfirmMemstickMoveScreen::CreateViews() {
 	}
 
 	if (moveDataTask_) {
-		progressView_ = leftColumn->Add(new TextView(progressReporter_.Get()));
+		progressView_ = leftColumn->Add(new TextView(progressReporter_.Format()));
 	} else {
 		progressView_ = nullptr;
 	}
@@ -545,19 +545,19 @@ void ConfirmMemstickMoveScreen::update() {
 
 	if (moveDataTask_) {
 		if (progressView_) {
-			progressView_->SetText(progressReporter_.Get());
+			progressView_->SetText(progressReporter_.Format());
 		}
 
 		MoveResult *result = moveDataTask_->Poll();
 
 		if (result) {
 			if (result->success) {
-				progressReporter_.Set(iz->T("Done!"));
+				progressReporter_.SetProgress(iz->T("Done!"));
 				INFO_LOG(SYSTEM, "Move data task finished successfully!");
 				// Succeeded!
 				FinishFolderMove();
 			} else {
-				progressReporter_.Set(iz->T("Failed to move some files!"));
+				progressReporter_.SetProgress(iz->T("Failed to move some files!"));
 				INFO_LOG(SYSTEM, "Move data task failed!");
 				// What do we do here? We might be in the middle of a move... Bad.
 				RecreateViews();
@@ -575,7 +575,7 @@ UI::EventReturn ConfirmMemstickMoveScreen::OnConfirm(UI::EventParams &params) {
 	// If the directory itself is called PSP, don't go below.
 
 	if (moveData_) {
-		progressReporter_.Set(T(I18NCat::MEMSTICK, "Starting move..."));
+		progressReporter_.SetProgress(T(I18NCat::MEMSTICK, "Starting move..."));
 
 		moveDataTask_ = Promise<MoveResult *>::Spawn(&g_threadManager, [&]() -> MoveResult * {
 			Path moveSrc = g_Config.memStickDirectory;
@@ -594,6 +594,8 @@ UI::EventReturn ConfirmMemstickMoveScreen::OnConfirm(UI::EventParams &params) {
 void ConfirmMemstickMoveScreen::FinishFolderMove() {
 	auto ms = GetI18NCategory(I18NCat::MEMSTICK);
 
+	Path oldMemstickFolder = g_Config.memStickDirectory;
+
 	// Successful so far, switch the memstick folder.
 	if (!SwitchMemstickFolderTo(newMemstickFolder_)) {
 		// TODO: More precise errors.
@@ -603,6 +605,12 @@ void ConfirmMemstickMoveScreen::FinishFolderMove() {
 
 	// If the chosen folder already had a config, reload it!
 	g_Config.Load();
+
+	// If the current browser directory is the old memstick folder, drop it.
+	if (g_Config.currentDirectory == oldMemstickFolder) {
+		g_Config.currentDirectory = g_Config.defaultCurrentDirectory;
+	}
+
 	PostLoadConfig();
 
 	if (!initialSetup_) {

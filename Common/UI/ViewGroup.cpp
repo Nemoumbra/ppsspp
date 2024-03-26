@@ -189,7 +189,7 @@ std::string ViewGroup::DescribeText() const {
 	return ss.str();
 }
 
-std::string ViewGroup::DescribeListUnordered(const char *heading) const {
+std::string ViewGroup::DescribeListUnordered(std::string_view heading) const {
 	std::stringstream ss;
 	ss << heading << "\n";
 
@@ -206,7 +206,7 @@ std::string ViewGroup::DescribeListUnordered(const char *heading) const {
 	return ss.str();
 }
 
-std::string ViewGroup::DescribeListOrdered(const char *heading) const {
+std::string ViewGroup::DescribeListOrdered(std::string_view heading) const {
 	std::stringstream ss;
 	ss << heading << "\n";
 
@@ -973,7 +973,7 @@ void TabHolder::AddBack(UIScreen *parent) {
 	}
 }
 
-void TabHolder::AddTabContents(const std::string &title, View *tabContents) {
+void TabHolder::AddTabContents(std::string_view title, View *tabContents) {
 	tabContents->ReplaceLayoutParams(new AnchorLayoutParams(FILL_PARENT, FILL_PARENT));
 	tabs_.push_back(tabContents);
 	tabStrip_->AddChoice(title);
@@ -1075,7 +1075,7 @@ ChoiceStrip::ChoiceStrip(Orientation orientation, LayoutParams *layoutParams)
 	SetSpacing(0.0f);
 }
 
-void ChoiceStrip::AddChoice(const std::string &title) {
+void ChoiceStrip::AddChoice(std::string_view title) {
 	StickyChoice *c = new StickyChoice(title, "",
 			orientation_ == ORIENT_HORIZONTAL ?
 			nullptr :
@@ -1174,12 +1174,13 @@ StickyChoice *ChoiceStrip::Choice(int index) {
 	return nullptr;
 }
 
-CollapsibleSection::CollapsibleSection(const std::string &title, LayoutParams *layoutParams) : LinearLayout(ORIENT_VERTICAL, layoutParams) {
+CollapsibleSection::CollapsibleSection(std::string_view title, LayoutParams *layoutParams) : LinearLayout(ORIENT_VERTICAL, layoutParams) {
+	open_ = &localOpen_;
 	SetSpacing(0.0f);
 
-	heading_ = new CollapsibleHeader(&open_, title);
-	views_.push_back(heading_);
-	heading_->OnClick.Add([=](UI::EventParams &) {
+	header_ = new CollapsibleHeader(open_, title);
+	views_.push_back(header_);
+	header_->OnClick.Add([=](UI::EventParams &) {
 		// Change the visibility of all children except the first one.
 		// Later maybe try something more ambitious.
 		UpdateVisibility();
@@ -1189,12 +1190,12 @@ CollapsibleSection::CollapsibleSection(const std::string &title, LayoutParams *l
 
 void CollapsibleSection::Update() {
 	ViewGroup::Update();
-	heading_->SetHasSubitems(views_.size() > 1);
+	header_->SetHasSubitems(views_.size() > 1);
 }
 
 void CollapsibleSection::UpdateVisibility() {
 	for (size_t i = 1; i < views_.size(); i++) {
-		views_[i]->SetVisibility(open_ ? V_VISIBLE : V_GONE);
+		views_[i]->SetVisibility(*open_ ? V_VISIBLE : V_GONE);
 	}
 }
 

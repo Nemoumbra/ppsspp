@@ -318,7 +318,7 @@ static const ConfigSetting achievementSettings[] = {
 	ConfigSetting("AchievementsEncoreMode", &g_Config.bAchievementsEncoreMode, false, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
 	ConfigSetting("AchievementsUnofficial", &g_Config.bAchievementsUnofficial, false, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
 	ConfigSetting("AchievementsLogBadMemReads", &g_Config.bAchievementsLogBadMemReads, false, CfgFlag::DEFAULT),
-	ConfigSetting("bAchievementsSaveStateInChallengeMode", &g_Config.bAchievementsSaveStateInHardcoreMode, false, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsSaveStateInHardcoreMode", &g_Config.bAchievementsSaveStateInHardcoreMode, false, CfgFlag::DEFAULT),
 
 	// Achievements login info. Note that password is NOT stored, only a login token.
 	// And that login token is stored separately from the ini, see NativeSaveSecret, but it can also be loaded
@@ -694,6 +694,7 @@ static const ConfigSetting soundSettings[] = {
 	ConfigSetting("GlobalVolume", &g_Config.iGlobalVolume, VOLUME_FULL, CfgFlag::PER_GAME),
 	ConfigSetting("ReverbVolume", &g_Config.iReverbVolume, VOLUME_FULL, CfgFlag::PER_GAME),
 	ConfigSetting("AltSpeedVolume", &g_Config.iAltSpeedVolume, -1, CfgFlag::PER_GAME),
+	ConfigSetting("AchievementSoundVolume", &g_Config.iAchievementSoundVolume, 6, CfgFlag::PER_GAME),
 	ConfigSetting("AudioDevice", &g_Config.sAudioDevice, "", CfgFlag::DEFAULT),
 	ConfigSetting("AutoAudioDevice", &g_Config.bAutoAudioDevice, true, CfgFlag::DEFAULT),
 };
@@ -835,6 +836,7 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("AnalogTriggerThreshold", &g_Config.fAnalogTriggerThreshold, 0.75f, CfgFlag::DEFAULT),
 
 	ConfigSetting("AllowMappingCombos", &g_Config.bAllowMappingCombos, false, CfgFlag::DEFAULT),
+	ConfigSetting("StrictComboOrder", &g_Config.bStrictComboOrder, false, CfgFlag::DEFAULT),
 
 	ConfigSetting("LeftStickHeadScale", &g_Config.fLeftStickHeadScale, 1.0f, CfgFlag::PER_GAME),
 	ConfigSetting("RightStickHeadScale", &g_Config.fRightStickHeadScale, 1.0f, CfgFlag::PER_GAME),
@@ -1055,7 +1057,7 @@ void Config::LoadLangValuesMapping() {
 	}
 }
 
-const std::map<std::string, std::pair<std::string, int>> &Config::GetLangValuesMapping() {
+const std::map<std::string, std::pair<std::string, int>, std::less<>> &Config::GetLangValuesMapping() {
 	if (langValuesMapping_.empty()) {
 		LoadLangValuesMapping();
 	}
