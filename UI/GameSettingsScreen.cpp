@@ -27,6 +27,7 @@
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
 #include "Common/UI/Context.h"
+#include "Common/Render/ManagedTexture.h"
 #include "Common/VR/PPSSPPVR.h"
 
 #include "Common/System/Display.h"  // Only to check screen aspect ratio with pixel_yres/pixel_xres
@@ -161,13 +162,13 @@ static bool UsingHardwareTextureScaling() {
 	return g_Config.bTexHardwareScaling && GetGPUBackend() == GPUBackend::VULKAN && !g_Config.bSoftwareRendering;
 }
 
-static std::string TextureTranslateName(const char *value) {
+static std::string TextureTranslateName(std::string_view value) {
 	const TextureShaderInfo *info = GetTextureShaderInfo(value);
 	if (info) {
 		auto ts = GetI18NCategory(I18NCat::TEXTURESHADERS);
-		return ts->T(value, info ? info->name.c_str() : value);
+		return std::string(ts->T(value, info ? info->name.c_str() : value));
 	} else {
-		return value;
+		return std::string(value);
 	}
 }
 
@@ -208,13 +209,13 @@ bool PathToVisualUsbPath(Path path, std::string &outPath) {
 	return false;
 }
 
-static std::string PostShaderTranslateName(const char *value) {
+static std::string PostShaderTranslateName(std::string_view value) {
 	const ShaderInfo *info = GetPostShaderInfo(value);
 	if (info) {
 		auto ps = GetI18NCategory(I18NCat::POSTSHADERS);
-		return ps->T(value, info ? info->name.c_str() : value);
+		return std::string(ps->T(value, info ? info->name : value));
 	} else {
-		return value;
+		return std::string(value);
 	}
 }
 
@@ -223,7 +224,7 @@ void GameSettingsScreen::PreCreateViews() {
 	ReloadAllThemeInfo();
 
 	if (editThenRestore_) {
-		std::shared_ptr<GameInfo> info = g_gameInfoCache->GetInfo(nullptr, gamePath_, 0);
+		std::shared_ptr<GameInfo> info = g_gameInfoCache->GetInfo(nullptr, gamePath_, GameInfoFlags::PARAM_SFO);
 		g_Config.loadGameConfig(gameID_, info->GetTitle());
 	}
 
@@ -344,11 +345,13 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 				msaaChoice->SetChoiceIcon(i, ImageID("I_WARNING"));
 			}
 		}
+	} else {
+		g_Config.iMultiSampleLevel = 0;
 	}
 
 #if PPSSPP_PLATFORM(ANDROID)
 	if ((deviceType != DEVICE_TYPE_TV) && (deviceType != DEVICE_TYPE_VR)) {
-		static const char *deviceResolutions[] = { "Native device resolution", "Auto (same as Rendering)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP" };
+		static const char *deviceResolutions[] = { "Native device resolution", "Same as Rendering resolution", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP" };
 		int max_res_temp = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES)) / 480 + 2;
 		if (max_res_temp == 3)
 			max_res_temp = 4;  // At least allow 2x
@@ -610,6 +613,7 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 	using namespace UI;
 
 	auto a = GetI18NCategory(I18NCat::AUDIO);
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 	auto ms = GetI18NCategory(I18NCat::MAINSETTINGS);
 
 	audioSettings->Add(new ItemHeader(ms->T("Audio")));
@@ -627,6 +631,10 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 	reverbVolume->SetEnabledPtr(&g_Config.bEnableSound);
 	reverbVolume->SetZeroLabel(a->T("Disabled"));
 
+	PopupSliderChoice *achievementVolume = audioSettings->Add(new PopupSliderChoice(&g_Config.iAchievementSoundVolume, VOLUME_OFF, VOLUME_FULL, VOLUME_FULL, ac->T("Achievement sound volume"), screenManager()));
+	achievementVolume->SetEnabledPtr(&g_Config.bEnableSound);
+	achievementVolume->SetZeroLabel(a->T("Mute"));
+
 	// Hide the backend selector in UWP builds (we only support XAudio2 there).
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 	if (IsVistaOrHigher()) {
@@ -640,7 +648,7 @@ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
 #if defined(SDL)
 	std::vector<std::string> audioDeviceList;
 	SplitString(System_GetProperty(SYSPROP_AUDIO_DEVICE_LIST), '\0', audioDeviceList);
-	audioDeviceList.insert(audioDeviceList.begin(), a->T("Auto"));
+	audioDeviceList.insert(audioDeviceList.begin(), a->T_cstr("Auto"));
 	PopupMultiChoiceDynamic *audioDevice = audioSettings->Add(new PopupMultiChoiceDynamic(&g_Config.sAudioDevice, a->T("Device"), audioDeviceList, I18NCat::NONE, screenManager()));
 	audioDevice->OnChoice.Handle(this, &GameSettingsScreen::OnAudioDevice);
 	sdlAudio = true;
@@ -695,7 +703,7 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 		Choice *customizeTilt = controlsSettings->Add(new ChoiceWithCallbackValueDisplay(co->T("Tilt control setup"), []() -> std::string {
 			auto co = GetI18NCategory(I18NCat::CONTROLS);
 			if ((u32)g_Config.iTiltInputType < (u32)g_numTiltTypes) {
-				return co->T(g_tiltTypes[g_Config.iTiltInputType]);
+				return std::string(co->T(g_tiltTypes[g_Config.iTiltInputType]));
 			}
 			return "";
 		}));
@@ -814,12 +822,12 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 // Compound view just like the audio file choosers
 class MacAddressChooser : public UI::LinearLayout {
 public:
-	MacAddressChooser(RequesterToken token, Path gamePath, std::string *value, const std::string &title, ScreenManager *screenManager, UI::LayoutParams *layoutParams = nullptr);
+	MacAddressChooser(RequesterToken token, Path gamePath, std::string *value, std::string_view title, ScreenManager *screenManager, UI::LayoutParams *layoutParams = nullptr);
 };
 
 static constexpr UI::Size ITEM_HEIGHT = 64.f;
 
-MacAddressChooser::MacAddressChooser(RequesterToken token, Path gamePath_, std::string *value, const std::string &title, ScreenManager *screenManager, UI::LayoutParams *layoutParams) : UI::LinearLayout(UI::ORIENT_HORIZONTAL, layoutParams) {
+MacAddressChooser::MacAddressChooser(RequesterToken token, Path gamePath_, std::string *value, std::string_view title, ScreenManager *screenManager, UI::LayoutParams *layoutParams) : UI::LinearLayout(UI::ORIENT_HORIZONTAL, layoutParams) {
 	using namespace UI;
 	SetSpacing(5.0f);
 	if (!layoutParams) {
@@ -841,9 +849,9 @@ MacAddressChooser::MacAddressChooser(RequesterToken token, Path gamePath_, std::
 		auto n = GetI18NCategory(I18NCat::NETWORKING);
 		auto di = GetI18NCategory(I18NCat::DIALOG);
 
-		const char *confirmMessage = n->T("ChangeMacSaveConfirm", "Generate a new MAC address?");
-		const char *warningMessage = n->T("ChangeMacSaveWarning", "Some games verify the MAC address when loading savedata, so this may break old saves.");
-		std::string combined = g_Config.sMACAddress + "\n\n" + std::string(confirmMessage) + "\n\n" + warningMessage;
+		std::string_view confirmMessage = n->T("ChangeMacSaveConfirm", "Generate a new MAC address?");
+		std::string_view warningMessage = n->T("ChangeMacSaveWarning", "Some games verify the MAC address when loading savedata, so this may break old saves.");
+		std::string combined = g_Config.sMACAddress + "\n\n" + std::string(confirmMessage) + "\n\n" + std::string(warningMessage);
 
 		auto confirmScreen = new PromptScreen(
 			gamePath_,
@@ -998,13 +1006,13 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 
 	systemSettings->Add(new ItemHeader(sy->T("UI")));
 
-	auto langCodeToName = [](const char *value) -> std::string {
+	auto langCodeToName = [](std::string_view value) -> std::string {
 		auto &mapping = g_Config.GetLangValuesMapping();
 		auto iter = mapping.find(value);
 		if (iter != mapping.end()) {
 			return iter->second.first;
 		}
-		return value;
+		return std::string(value);
 	};
 
 	systemSettings->Add(new ChoiceWithValueDisplay(&g_Config.sLanguageIni, sy->T("Language"), langCodeToName))->OnClick.Add([&](UI::EventParams &e) {
@@ -1214,13 +1222,13 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	systemSettings->Add(new PopupTextInputChoice(GetRequesterToken(), &g_Config.sNickName, sy->T("Change Nickname"), "", 32, screenManager()));
 	systemSettings->Add(new CheckBox(&g_Config.bDayLightSavings, sy->T("Day Light Saving")));
 	static const char *dateFormat[] = { "YYYYMMDD", "MMDDYYYY", "DDMMYYYY" };
-	systemSettings->Add(new PopupMultiChoice(&g_Config.iDateFormat, sy->T("Date Format"), dateFormat, 0, 3, I18NCat::SYSTEM, screenManager()));
+	systemSettings->Add(new PopupMultiChoice(&g_Config.iDateFormat, sy->T("Date Format"), dateFormat, 0, ARRAY_SIZE(dateFormat), I18NCat::SYSTEM, screenManager()));
 	static const char *timeFormat[] = { "24HR", "12HR" };
-	systemSettings->Add(new PopupMultiChoice(&g_Config.iTimeFormat, sy->T("Time Format"), timeFormat, 0, 2, I18NCat::SYSTEM, screenManager()));
+	systemSettings->Add(new PopupMultiChoice(&g_Config.iTimeFormat, sy->T("Time Format"), timeFormat, 0, ARRAY_SIZE(timeFormat), I18NCat::SYSTEM, screenManager()));
 	static const char *buttonPref[] = { "Use O to confirm", "Use X to confirm" };
-	systemSettings->Add(new PopupMultiChoice(&g_Config.iButtonPreference, sy->T("Confirmation Button"), buttonPref, 0, 2, I18NCat::SYSTEM, screenManager()));
+	systemSettings->Add(new PopupMultiChoice(&g_Config.iButtonPreference, sy->T("Confirmation Button"), buttonPref, 0, ARRAY_SIZE(buttonPref), I18NCat::SYSTEM, screenManager()));
 
-	systemSettings->Add(new ItemHeader(sy->T("Recording settings")));
+	systemSettings->Add(new ItemHeader(sy->T("Recording")));
 #if defined(_WIN32) || (defined(USING_QT_UI) && !defined(MOBILE_DEVICE))
 	systemSettings->Add(new CheckBox(&g_Config.bDumpFrames, sy->T("Record Display")));
 	systemSettings->Add(new CheckBox(&g_Config.bUseFFV1, sy->T("Use Lossless Video Codec (FFV1)")));
@@ -1280,7 +1288,8 @@ UI::EventReturn GameSettingsScreen::OnScreenRotation(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnAdhocGuides(UI::EventParams &e) {
 	auto n = GetI18NCategory(I18NCat::NETWORKING);
-	System_LaunchUrl(LaunchUrlType::BROWSER_URL, n->T("MultiplayerHowToURL", "https://github.com/hrydgard/ppsspp/wiki/How-to-play-multiplayer-games-with-PPSSPP"));
+	std::string url(n->T("MultiplayerHowToURL", "https://github.com/hrydgard/ppsspp/wiki/How-to-play-multiplayer-games-with-PPSSPP"));
+	System_LaunchUrl(LaunchUrlType::BROWSER_URL, url.c_str());
 	return UI::EVENT_DONE;
 }
 
@@ -1304,7 +1313,8 @@ UI::EventReturn GameSettingsScreen::OnJitAffectingSetting(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnChangeMemStickDir(UI::EventParams &e) {
 #if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
-	System_BrowseForFolder(GetRequesterToken(), "", [](const std::string &value, int) {
+	auto initialPath = g_Config.memStickDirectory;
+	System_BrowseForFolder(GetRequesterToken(), "", initialPath, [](const std::string &value, int) {
 		DarwinFileSystemServices::setUserPreferredMemoryStickDirectory(Path(value));
 	});
 #else
@@ -1346,7 +1356,8 @@ UI::EventReturn GameSettingsScreen::OnSavePathOther(UI::EventParams &e) {
 	const Path &PPSSPPpath = File::GetExeDirectory();
 	if (otherinstalled_) {
 		auto di = GetI18NCategory(I18NCat::DIALOG);
-		std::string folder = W32Util::BrowseForFolder(MainWindow::GetHWND(), di->T("Choose PPSSPP save folder"));
+		std::string initialPath = g_Config.memStickDirectory.ToCString();
+		std::string folder = W32Util::BrowseForFolder(MainWindow::GetHWND(), di->T("Choose PPSSPP save folder"), initialPath);
 		if (folder.size()) {
 			g_Config.memStickDirectory = Path(folder);
 			FILE *f = File::OpenCFile(PPSSPPpath / "installed.txt", "wb");
@@ -1386,8 +1397,34 @@ UI::EventReturn GameSettingsScreen::OnChangeBackground(UI::EventParams &e) {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
 		System_BrowseForImage(GetRequesterToken(), sy->T("Set UI background..."), [=](const std::string &value, int) {
 			if (!value.empty()) {
-				Path dest = GetSysDirectory(DIRECTORY_SYSTEM) / (endsWithNoCase(value, ".jpg") ? "background.jpg" : "background.png");
-				File::Copy(Path(value), dest);
+				Path path(value);
+
+				// Check the file format. Don't rely on the file extension here due to scoped storage URLs.
+				FILE *f = File::OpenCFile(path, "rb");
+				uint8_t buffer[8];
+				ImageFileType type = ImageFileType::UNKNOWN;
+				if (f != nullptr && 8 == fread(buffer, 1, ARRAY_SIZE(buffer), f)) {
+					type = DetectImageFileType(buffer, ARRAY_SIZE(buffer));
+				}
+
+				std::string filename;
+				switch (type) {
+				case ImageFileType::JPEG:
+					filename = "background.jpg";
+					break;
+				case ImageFileType::PNG:
+					filename = "background.png";
+					break;
+				default:
+					break;
+				}
+
+				if (!filename.empty()) {
+					Path dest = GetSysDirectory(DIRECTORY_SYSTEM) / filename;
+					File::Copy(Path(value), dest);
+				} else {
+					g_OSD.Show(OSDType::MESSAGE_ERROR, sy->T("Only JPG and PNG images are supported"), path.GetFilename(), 5.0);
+				}
 			}
 			// It will init again automatically.  We can't init outside a frame on Vulkan.
 			UIBackgroundShutdown();
@@ -1428,7 +1465,7 @@ void GameSettingsScreen::onFinish(DialogResult result) {
 
 	if (editThenRestore_) {
 		// In case we didn't have the title yet before, try again.
-		std::shared_ptr<GameInfo> info = g_gameInfoCache->GetInfo(nullptr, gamePath_, 0);
+		std::shared_ptr<GameInfo> info = g_gameInfoCache->GetInfo(nullptr, gamePath_, GameInfoFlags::PARAM_SFO);
 		g_Config.changeGameSpecific(gameID_, info->GetTitle());
 		g_Config.unloadGameConfig();
 	}
@@ -1721,8 +1758,8 @@ void DeveloperToolsScreen::CreateViews() {
 	// iOS can now use JIT on all modes, apparently.
 	// The bool may come in handy for future non-jit platforms though (UWP XB1?)
 
-	static const char *cpuCores[] = {"Interpreter", "Dynarec (JIT)", "IR Interpreter", "JIT Using IR"};
-	PopupMultiChoice *core = list->Add(new PopupMultiChoice(&g_Config.iCpuCore, gr->T("CPU Core"), cpuCores, 0, ARRAY_SIZE(cpuCores), I18NCat::SYSTEM, screenManager()));
+	static const char *cpuCores[] = {"Interpreter", "Dynarec/JIT (recommended)", "IR Interpreter", "JIT using IR"};
+	PopupMultiChoice *core = list->Add(new PopupMultiChoice(&g_Config.iCpuCore, sy->T("CPU Core"), cpuCores, 0, ARRAY_SIZE(cpuCores), I18NCat::SYSTEM, screenManager()));
 	core->OnChoice.Handle(this, &DeveloperToolsScreen::OnJitAffectingSetting);
 	core->OnChoice.Add([](UI::EventParams &) {
 		g_Config.NotifyUpdatedCpuCore();
@@ -1939,7 +1976,7 @@ UI::EventReturn GameSettingsScreen::OnRestoreDefaultSettings(UI::EventParams &e)
 			new PromptScreen(gamePath_, dev->T("RestoreGameDefaultSettings", "Are you sure you want to restore the game-specific settings back to the ppsspp defaults?\n"), di->T("OK"), di->T("Cancel"),
 			std::bind(&GameSettingsScreen::CallbackRestoreDefaults, this, std::placeholders::_1)));
 	} else {
-		const char *title = sy->T("Restore Default Settings");
+		std::string_view title = sy->T("Restore Default Settings");
 		screenManager()->push(new RestoreSettingsScreen(title));
 	}
 	return UI::EVENT_DONE;
@@ -1967,7 +2004,7 @@ UI::EventReturn DeveloperToolsScreen::OnOpenTexturesIniFile(UI::EventParams &e) 
 		} else {
 			// Can't do much here, let's send a "toast" so the user sees that something happened.
 			auto dev = GetI18NCategory(I18NCat::DEVELOPER);
-			System_Toast((generatedFilename.ToVisualString() + ": " +  dev->T("Texture ini file created")).c_str());
+			System_Toast((generatedFilename.ToVisualString() + ": " + dev->T_cstr("Texture ini file created")).c_str());
 		}
 
 		hasTexturesIni_ = HasIni::YES;
@@ -2369,7 +2406,7 @@ void GestureMappingScreen::CreateViews() {
 	vert->Add(new PopupSliderChoiceFloat(&g_Config.fAnalogGestureSensibility, 0.01f, 5.0f, 1.0f, co->T("Sensitivity"), 0.01f, screenManager(), "x"))->SetEnabledPtr(&g_Config.bAnalogGesture);
 }
 
-RestoreSettingsScreen::RestoreSettingsScreen(const char *title)
+RestoreSettingsScreen::RestoreSettingsScreen(std::string_view title)
 	: PopupScreen(title, "OK", "Cancel") {}
 
 void RestoreSettingsScreen::CreatePopupContents(UI::ViewGroup *parent) {
@@ -2380,7 +2417,7 @@ void RestoreSettingsScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	const char *text = dev->T(
+	std::string_view text = dev->T(
 		"RestoreDefaultSettings",
 		"Restore these settings back to their defaults?\nYou can't undo this.\nPlease restart PPSSPP after restoring settings.");
 

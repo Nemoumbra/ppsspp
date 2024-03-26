@@ -115,8 +115,6 @@ enum class EmuThreadState {
 static std::thread emuThread;
 static std::atomic<int> emuThreadState((int)EmuThreadState::DISABLED);
 
-void UpdateRunLoopAndroid(JNIEnv *env);
-
 AndroidAudioState *g_audioState;
 
 struct FrameCommand {
@@ -201,6 +199,8 @@ int utimensat(int fd, const char *path, const struct timespec times[2]) {
 }
 }
 #endif
+
+static void ProcessFrameCommands(JNIEnv *env);
 
 void AndroidLogger::Log(const LogMessage &message) {
 	int mode;
@@ -337,8 +337,22 @@ static void EmuThreadFunc() {
 	// We just call the update/render loop here.
 	emuThreadState = (int)EmuThreadState::RUNNING;
 	while (emuThreadState != (int)EmuThreadState::QUIT_REQUESTED) {
-		UpdateRunLoopAndroid(env);
+		{
+			std::lock_guard<std::mutex> renderGuard(renderLock);
+			NativeFrame(graphicsContext);
+		}
+
+		std::lock_guard<std::mutex> guard(frameCommandLock);
+		if (!nativeActivity) {
+			ERROR_LOG(SYSTEM, "No activity, clearing commands");
+			while (!frameCommands.empty())
+				frameCommands.pop();
+			return;
+		}
+		// Still under lock here.
+		ProcessFrameCommands(env);
 	}
+
 	INFO_LOG(SYSTEM, "QUIT_REQUESTED found, left EmuThreadFunc loop. Setting state to STOPPED.");
 	emuThreadState = (int)EmuThreadState::STOPPED;
 
@@ -371,16 +385,14 @@ static void EmuThreadJoin() {
 	INFO_LOG(SYSTEM, "EmuThreadJoin - joined");
 }
 
-static void ProcessFrameCommands(JNIEnv *env);
-
 static void PushCommand(std::string cmd, std::string param) {
 	std::lock_guard<std::mutex> guard(frameCommandLock);
 	frameCommands.push(FrameCommand(cmd, param));
 }
 
 // Android implementation of callbacks to the Java part of the app
-void System_Toast(const char *text) {
-	PushCommand("toast", text);
+void System_Toast(std::string_view text) {
+	PushCommand("toast", std::string(text));
 }
 
 void System_ShowKeyboard() {
@@ -496,12 +508,12 @@ bool System_GetPropertyBool(SystemProperty prop) {
 	case SYSPROP_HAS_FILE_BROWSER:
 		// It's only really needed with scoped storage, but why not make it available
 		// as far back as possible - works just fine.
-		return (androidVersion >= 19) && (deviceType != DEVICE_TYPE_VR);  // when ACTION_OPEN_DOCUMENT was added
+		return (androidVersion >= 19);  // when ACTION_OPEN_DOCUMENT was added
 	case SYSPROP_HAS_FOLDER_BROWSER:
 		// Uses OPEN_DOCUMENT_TREE to let you select a folder.
 		// Doesn't actually mean it's usable though, in many early versions of Android
 		// this dialog is complete garbage and only lets you select subfolders of the Downloads folder.
-		return (androidVersion >= 21) && (deviceType != DEVICE_TYPE_VR);  // when ACTION_OPEN_DOCUMENT_TREE was added
+		return (androidVersion >= 21);  // when ACTION_OPEN_DOCUMENT_TREE was added
 	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
 		return false;  // Update if we add support in FileUtil.cpp: OpenFileInEditor
 	case SYSPROP_APP_GOLD:
@@ -721,6 +733,9 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_init
 	exitRenderLoop = false;
 	androidVersion = jAndroidVersion;
 	deviceType = jdeviceType;
+	if (deviceType == DEVICE_TYPE_VR) {
+		SetVREnabled(true);
+	}
 
 	Path apkPath(GetJavaString(env, japkpath));
 	g_VFS.Register("", ZipFileReader::Create(apkPath, "assets/"));
@@ -1160,25 +1175,6 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendRequestResult(JNIEn
 	} else {
 		g_requestManager.PostSystemFailure(jrequestID);
 	}
-}
-
-void LockedNativeUpdateRender() {
-	std::lock_guard<std::mutex> renderGuard(renderLock);
-	NativeFrame(graphicsContext);
-}
-
-void UpdateRunLoopAndroid(JNIEnv *env) {
-	LockedNativeUpdateRender();
-
-	std::lock_guard<std::mutex> guard(frameCommandLock);
-	if (!nativeActivity) {
-		ERROR_LOG(SYSTEM, "No activity, clearing commands");
-		while (!frameCommands.empty())
-			frameCommands.pop();
-		return;
-	}
-	// Still under lock here.
-	ProcessFrameCommands(env);
 }
 
 extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env, jobject obj) {
@@ -1639,12 +1635,19 @@ static void VulkanEmuThread(ANativeWindow *wnd) {
 		renderer_inited = true;
 
 		while (!exitRenderLoop) {
-			LockedNativeUpdateRender();
-			ProcessFrameCommands(env);
+			{
+				std::lock_guard<std::mutex> renderGuard(renderLock);
+				NativeFrame(graphicsContext);
+			}
+			{
+				std::lock_guard<std::mutex> guard(frameCommandLock);
+				ProcessFrameCommands(env);
+			}
 		}
+		INFO_LOG(G3D, "Leaving Vulkan main loop.");
+	} else {
+		INFO_LOG(G3D, "Not entering main loop.");
 	}
-
-	INFO_LOG(G3D, "Leaving EGL/Vulkan render loop.");
 
 	NativeShutdownGraphics();
 
@@ -1652,7 +1655,7 @@ static void VulkanEmuThread(ANativeWindow *wnd) {
 	graphicsContext->ThreadEnd();
 
 	// Shut the graphics context down to the same state it was in when we entered the render thread.
-	INFO_LOG(G3D, "Shutting down graphics context from render thread...");
+	INFO_LOG(G3D, "Shutting down graphics context...");
 	graphicsContext->ShutdownFromRenderThread();
 	renderLoopRunning = false;
 	exitRenderLoop = false;
@@ -1678,11 +1681,13 @@ extern "C" jstring Java_org_ppsspp_ppsspp_ShortcutActivity_queryGameName(JNIEnv 
 	std::string result = "";
 
 	GameInfoCache *cache = new GameInfoCache();
-	std::shared_ptr<GameInfo> info = cache->GetInfo(nullptr, path, 0);
+	std::shared_ptr<GameInfo> info = cache->GetInfo(nullptr, path, GameInfoFlags::PARAM_SFO);
 	// Wait until it's done: this is synchronous, unfortunately.
 	if (info) {
 		INFO_LOG(SYSTEM, "GetInfo successful, waiting");
-		cache->WaitUntilDone(info);
+		while (!info->Ready(GameInfoFlags::PARAM_SFO)) {
+			sleep_ms(1);
+		}
 		INFO_LOG(SYSTEM, "Done waiting");
 		if (info->fileType != IdentifiedFileType::UNKNOWN) {
 			result = info->GetTitle();

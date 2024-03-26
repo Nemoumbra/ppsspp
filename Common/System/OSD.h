@@ -15,6 +15,7 @@ enum class OSDType {
 	MESSAGE_ERROR_DUMP,  // displays lots of text (after the first line), small size
 	MESSAGE_FILE_LINK,
 	MESSAGE_CENTERED_WARNING,
+	MESSAGE_CENTERED_ERROR,
 
 	ACHIEVEMENT_UNLOCKED,
 
@@ -61,7 +62,7 @@ public:
 	// Progress bar controls
 	// Set is both create and update. If you set maxValue <= minValue, you'll create an "indeterminate" progress
 	// bar that doesn't show a specific amount of progress.
-	void SetProgressBar(const std::string &id, std::string &&message, float minValue, float maxValue, float progress, float delay_s);
+	void SetProgressBar(std::string_view id, std::string_view message, float minValue, float maxValue, float progress, float delay_s);
 	void RemoveProgressBar(const std::string &id, bool success, float delay_s);
 
 	// Call every frame to keep the sidebar visible. Otherwise it'll fade out.

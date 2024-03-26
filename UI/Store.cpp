@@ -280,7 +280,6 @@ private:
 	UI::Button *installButton_ = nullptr;
 	UI::Button *launchButton_ = nullptr;
 	UI::Button *cancelButton_ = nullptr;
-	UI::TextView *speedView_ = nullptr;
 	bool wasInstalled_ = false;
 };
 
@@ -305,12 +304,9 @@ void ProductView::CreateViews() {
 		installButton_->OnClick.Handle(this, &ProductView::OnInstall);
 		uninstallButton_ = nullptr;
 
-		speedView_ = progressDisplay->Add(new TextView(""));
-		speedView_->SetVisibility(isDownloading ? V_VISIBLE : V_GONE);
 		Add(progressDisplay);
 	} else {
 		installButton_ = nullptr;
-		speedView_ = nullptr;
 		launchButton_ = new Button(st->T("Launch Game"));
 		launchButton_->OnClick.Handle(this, &ProductView::OnLaunchClick);
 		Add(launchButton_);
@@ -336,7 +332,7 @@ void ProductView::CreateViews() {
 	}
 
 	float size = entry_.size / (1024.f * 1024.f);
-	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T("Size"), size, st->T("MB"))));
+	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T_cstr("Size"), size, st->T_cstr("MB"))));
 }
 
 void ProductView::Update() {
@@ -349,16 +345,9 @@ void ProductView::Update() {
 	if (uninstallButton_) {
 		uninstallButton_->SetEnabled(g_GameManager.GetState() == GameManagerState::IDLE);
 	}
-	if (g_GameManager.GetState() == GameManagerState::DOWNLOADING) {
-		if (speedView_) {
-			float speed = g_GameManager.DownloadSpeedKBps();
-			speedView_->SetText(StringFromFormat("%0.1f KB/s", speed));
-		}
-	} else {
+	if (g_GameManager.GetState() != GameManagerState::DOWNLOADING) {
 		if (cancelButton_)
 			cancelButton_->SetVisibility(UI::V_GONE);
-		if (speedView_)
-			speedView_->SetVisibility(UI::V_GONE);
 	}
 	if (launchButton_)
 		launchButton_->SetEnabled(g_GameManager.GetState() == GameManagerState::IDLE);
@@ -382,10 +371,6 @@ UI::EventReturn ProductView::OnInstall(UI::EventParams &e) {
 	}
 	if (cancelButton_) {
 		cancelButton_->SetVisibility(UI::V_VISIBLE);
-	}
-	if (speedView_) {
-		speedView_->SetVisibility(UI::V_VISIBLE);
-		speedView_->SetText("");
 	}
 	INFO_LOG(SYSTEM, "Triggering install of '%s'", fileUrl.c_str());
 	g_GameManager.DownloadAndInstall(fileUrl);
@@ -509,7 +494,7 @@ void StoreScreen::CreateViews() {
 	if (connectionError_ || loading_) {
 		auto st = GetI18NCategory(I18NCat::STORE);
 		content = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
-		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T("Connection Error"), resultCode_)));
+		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T_cstr("Connection Error"), resultCode_)));
 		if (!loading_) {
 			content->Add(new Button(di->T("Retry")))->OnClick.Handle(this, &StoreScreen::OnRetry);
 

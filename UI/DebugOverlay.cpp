@@ -259,7 +259,7 @@ static const char *CPUCoreAsString(int core) {
 	case 0: return "Interpreter";
 	case 1: return "JIT";
 	case 2: return "IR Interpreter";
-	case 3: return "JIT Using IR";
+	case 3: return "JIT using IR";
 	default: return "N/A";
 	}
 }
@@ -277,7 +277,7 @@ void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
 	if (ctx->Draw()->GetFontAtlas()->getFont(ubuntu24))
 		ctx->BindFontTexture();
 	ctx->Draw()->SetFontScale(1.1f, 1.1f);
-	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T("Game crashed"), x, y, 0xFFFFFFFF);
+	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T_cstr("Game crashed"), x, y, 0xFFFFFFFF);
 
 	char statbuf[4096];
 	char versionString[256];
@@ -406,7 +406,7 @@ Invalid / Unknown (%d)
 	}
 	if (checkingISO) {
 		tips += "* (waiting for CRC...)\n";
-	} else if (!isoOK) {
+	} else if (!isoOK) {  // TODO: Should check that it actually is an ISO and not a homebrew
 		tips += "* Verify and possibly re-dump your ISO\n  (CRC not recognized)\n";
 	}
 	if (!tips.empty()) {
