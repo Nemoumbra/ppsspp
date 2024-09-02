@@ -118,6 +118,60 @@ static int Replace_ceilf() {
 	return 30;  // guess number of cycles
 }
 
+struct PTMF {
+	u32 this_delta;
+	s32 vtable_offset;
+	union {
+		u32 func_addr;
+		u32 ventry_offset;
+	} func_data;
+};
+
+static int Replace_ptmf_test() {
+	u32 arg = PARAM(0);
+	PTMF* ptmf = (PTMF*) Memory::GetPointer(arg);
+	u32 ret = (ptmf->this_delta | ptmf->vtable_offset | ptmf->func_data.ventry_offset) != 0;
+	RETURN(ret);
+	INFO_LOG(Log::Printf, "%d=__ptmf_test(%08x)", ret, arg);
+	return 20;  // guess number of cycles
+}
+
+static int Replace_ptmf_scall() {
+	// src -> {possible destinations}
+	static std::map<u32, std::set<u32>> mapping;
+
+	auto& a0 = PARAM(0);
+	auto ptmf = (PTMF*)Memory::GetPointer(currentMIPS->r[MIPS_REG_T9]);
+	a0 += ptmf->this_delta;
+
+	u32 src = currentMIPS->r[MIPS_REG_RA] - 8;
+	u32 dest = 0;
+
+	bool is_virtual = ptmf->vtable_offset >= 0;
+	if (is_virtual) {
+		u32 vtbl_ptr = Memory::Read_U32(a0 + ptmf->func_data.ventry_offset);
+		dest = Memory::Read_U32(vtbl_ptr + ptmf->vtable_offset);
+	}
+	else {
+		dest = ptmf->func_data.func_addr;
+	}
+	currentMIPS->pc = dest;
+
+	auto [it, _] = mapping.try_emplace(src, std::set<u32>());
+	auto& possible_values = it->second;
+	
+	if (possible_values.find(dest) == possible_values.end()) {
+		possible_values.emplace(dest);
+		if (is_virtual) {
+			INFO_LOG(Log::Printf, "__ptmf_scall (virtual): %08x -> %08x", src, dest);
+		}
+		else {
+			INFO_LOG(Log::Printf, "__ptmf_scall: %08x -> %08x", src, dest);
+		}
+	}
+	return -30;  // guess number of cycles
+}
+
 // Should probably do JIT versions of this, possibly ones that only delegate
 // large copies to a C function.
 static int Replace_memcpy() {
@@ -1500,12 +1554,12 @@ static const ReplacementTableEntry entries[] = {
 	{ "floorf", &Replace_floorf, 0, REPFLAG_DISABLED },
 	{ "ceilf", &Replace_ceilf, 0, REPFLAG_DISABLED },
 
-	{ "memcpy", &Replace_memcpy, 0, 0 },
+	//{ "memcpy", &Replace_memcpy, 0, 0 },
 	{ "memcpy_jak", &Replace_memcpy_jak, 0, REPFLAG_SLICED },
 	{ "memcpy16", &Replace_memcpy16, 0, 0 },
 	{ "memcpy_swizzled", &Replace_memcpy_swizzled, 0, 0 },
-	{ "memmove", &Replace_memmove, 0, 0 },
-	{ "memset", &Replace_memset, 0, 0 },
+	//{ "memmove", &Replace_memmove, 0, 0 },
+	//{ "memset", &Replace_memset, 0, 0 },
 	{ "memset_jak", &Replace_memset_jak, 0, REPFLAG_SLICED },
 	{ "strlen", &Replace_strlen, 0, REPFLAG_DISABLED },
 	{ "strcpy", &Replace_strcpy, 0, REPFLAG_DISABLED },
@@ -1600,6 +1654,8 @@ static const ReplacementTableEntry entries[] = {
 	{ "ZZT3_select_hack", &Hook_ZZT3_select_hack, 0, REPFLAG_HOOKENTER, 0xC4 },
 	{ "blitz_fps_hack", &Hook_blitz_fps_hack, 0, REPFLAG_HOOKEXIT , 0 },
 	{ "brian_lara_fps_hack", &Hook_brian_lara_fps_hack, 0, REPFLAG_HOOKEXIT , 0 },
+	// { "__ptmf_test", &Replace_ptmf_test, 0, 0 },
+	{ "__ptmf_scall", &Replace_ptmf_scall, 0, 0 },
 	{}
 };
 

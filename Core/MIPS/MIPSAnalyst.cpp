@@ -516,6 +516,8 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x7624dde603717640, 288, "ZZT3_select_hack", }, // Zettai Zetsumei Toshi 3 - bypasses softlock on character select screen #4901
 	{ 0x0dc5ca84f707863c, 452, "blitz_fps_hack", }, // Blitz: Overtime
 	{ 0xf93d3cd093595a6c, 856, "brian_lara_fps_hack", }, // Brian Lara 2007: Pressure Play
+	{ 0xcdf26af8df90592a, 28, "__ptmf_test", }, // Metrowerks games
+	{ 0x221d8793e1624815, 52, "__ptmf_scall", }, // Metrowerks games
 };
 
 namespace MIPSAnalyst {
