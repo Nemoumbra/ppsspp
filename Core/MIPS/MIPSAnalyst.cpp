@@ -538,6 +538,8 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x505ad2073e4381d7, 428, "takuyo_2_download_frame", },
 	{ 0x0f4dbf28320798d7, 1160, "takuyo_3_download_frame", },
 	{ 0xf2bbff4807c5dab2, 556, "kingdomhearts_download_frame", },
+	{ 0xcdf26af8df90592a, 28, "__ptmf_test", }, // Metrowerks games
+	{ 0x221d8793e1624815, 52, "__ptmf_scall", }, // Metrowerks games
 };
 
 namespace MIPSAnalyst {
