@@ -2255,6 +2255,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/NetAdhocCommon.h
 	Core/HLE/sceNetAdhoc.cpp
 	Core/HLE/sceNetAdhoc.h
+	Core/HLE/sceNetAdhocctl.cpp
+	Core/HLE/sceNetAdhocctl.h
 	Core/HLE/sceNetAdhocMatching.cpp
 	Core/HLE/sceNetAdhocMatching.h
 	Core/HLE/sceNetInet.cpp

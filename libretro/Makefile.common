@@ -741,6 +741,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/HLE/sceNet_lib.cpp \
 	       $(COREDIR)/HLE/NetAdhocCommon.cpp \
 	       $(COREDIR)/HLE/sceNetAdhoc.cpp \
+	       $(COREDIR)/HLE/sceNetAdhocctl.cpp \
 	       $(COREDIR)/HLE/sceNetAdhocMatching.cpp \
 	       $(COREDIR)/HLE/sceNetApctl.cpp \
 	       $(COREDIR)/HLE/sceNetInet.cpp \

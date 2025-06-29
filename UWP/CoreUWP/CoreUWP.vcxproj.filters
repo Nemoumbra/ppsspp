@@ -128,6 +128,7 @@
     <ClCompile Include="..\..\Core\HLE\sceNet_lib.cpp" />
     <ClCompile Include="..\..\Core\HLE\NetAdhocCommon.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNetAdhoc.cpp" />
+    <ClCompile Include="..\..\Core\HLE\sceNetAdhocctl.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNetAdhocMatching.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNp.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceOpenPSID.cpp" />
@@ -541,6 +542,7 @@
     <ClInclude Include="..\..\Core\HLE\sceNet_lib.h" />
     <ClInclude Include="..\..\Core\HLE\NetAdhocCommon.h" />
     <ClInclude Include="..\..\Core\HLE\sceNetAdhoc.h" />
+    <ClInclude Include="..\..\Core\HLE\sceNetAdhocctl.h" />
     <ClInclude Include="..\..\Core\HLE\sceNetAdhocMatching.h" />
     <ClInclude Include="..\..\Core\HLE\sceNp.h" />
     <ClInclude Include="..\..\Core\HLE\sceOpenPSID.h" />

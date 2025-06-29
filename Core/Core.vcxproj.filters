@@ -526,6 +526,9 @@
     <ClCompile Include="HLE\sceNetAdhoc.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
+    <ClCompile Include="HLE\sceNetAdhocctl.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
     <ClCompile Include="HLE\sceNetAdhocMatching.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
@@ -1765,6 +1768,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="HLE\sceNetAdhoc.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNetAdhocctl.h">
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="HLE\sceNetAdhocMatching.h">
