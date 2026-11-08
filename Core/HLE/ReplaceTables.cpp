@@ -142,24 +142,22 @@ static int Replace_ptmf_scall(MIPSState *mips) {
 	// src -> {possible destinations}
 	static std::map<u32, std::set<u32>> mapping;
 
-	auto& a0 = PARAM(0);
-	auto ptmf = (PTMF*)Memory::GetPointerOrException(currentMIPS->r[MIPS_REG_T9]);
-	a0 += ptmf->this_delta;
-
 	u32 src = currentMIPS->r[MIPS_REG_RA] - 8;
 	u32 dest = 0;
 
+	auto ptmf = (PTMF*)Memory::GetPointerOrException(mips->r[MIPS_REG_T9]);
 	bool is_virtual = ptmf->vtable_offset >= 0;
 	if (is_virtual) {
+		u32 a0 = PARAM(0);
+		a0 += ptmf->this_delta;
 		u32 vtbl_ptr = Memory::ReadOrException_U32(a0 + ptmf->func_data.ventry_offset);
 		dest = Memory::ReadOrException_U32(vtbl_ptr + ptmf->vtable_offset);
 	}
 	else {
 		dest = ptmf->func_data.func_addr;
 	}
-	currentMIPS->pc = dest;
 
-	auto [it, _] = mapping.try_emplace(src, std::set<u32>());
+	auto [it, _] = mapping.try_emplace(src);
 	auto& possible_values = it->second;
 
 	if (possible_values.find(dest) == possible_values.end()) {
@@ -171,7 +169,7 @@ static int Replace_ptmf_scall(MIPSState *mips) {
 			INFO_LOG(Log::Printf, "__ptmf_scall: %08x -> %08x", src, dest);
 		}
 	}
-	return -30;  // guess number of cycles
+	return 30;  // guess number of cycles
 }
 
 // Should probably do JIT versions of this, possibly ones that only delegate
@@ -2276,8 +2274,8 @@ static const ReplacementTableEntry entries[] = {
 	{ "syphonfilter_steer", &Hook_syphonfilter_steer_turn_rate, 0, REPFLAG_HOOK, 0x1610 },
 	{ "syphonfilterls_fade", &Hook_syphonfilterls_fade_hold, 0, REPFLAG_HOOK, 0x78 },
 	{ "syphonfilterls_fade", &Hook_syphonfilterls_fade_hold, 0, REPFLAG_HOOK, 0x18C },
-	// { "__ptmf_test", &Replace_ptmf_test, 0, 0 },
-	{ "__ptmf_scall", &Replace_ptmf_scall, 0, 0 },
+	{ "__ptmf_test", &Replace_ptmf_test, 0, REPFLAG_DISABLED },
+	{ "__ptmf_scall", &Replace_ptmf_scall, 0, REPFLAG_HOOK },
 	{}
 };
 
