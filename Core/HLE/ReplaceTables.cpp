@@ -172,6 +172,147 @@ static int Replace_ptmf_scall(MIPSState *mips) {
 	return 30;  // guess number of cycles
 }
 
+static const std::unordered_map<u32, std::string_view> PacSizesMap = {
+	{ 0x38, "actor/motionevent" },
+	{ 0x625c0, "azito" },
+	{ 0x76c, "bases" },
+	{ 0x5f3bc, "dlc_0000" },
+	{ 0x5be70, "dlc_0001" },
+	{ 0x5c000, "dlc_0002" },
+	{ 0x5bf38, "dlc_0003" },
+	{ 0x5c298, "dlc_0004" },
+	{ 0x5bcd8, "dlc_0005" },
+	{ 0x6042c, "dlc_0006" },
+	{ 0x631d8, "dlc_0007" },
+	{ 0x63d78, "dlc_0008" },
+	{ 0x5b808, "dlc_0010/dlc_0013/dlc_0014" },
+	{ 0x5b81c, "dlc_0011" },
+	{ 0x5b830, "dlc_0012" },
+	{ 0x5c054, "dlc_0016" },
+	{ 0x7aec, "dlc_worldmap" },
+	{ 0x6204, "effect" },
+	{ 0x10fc, "gimmick" },
+	{ 0x8acc, "labo" },
+	{ 0xc4c, "matching" },
+	{ 0x88, "memoryio" },
+	{ 0x5304, "mission" },
+	{ 0x68810, "mission_00_00" },
+	{ 0x9401c, "mission_01_00" },
+	{ 0x6c728, "mission_01_01" },
+	{ 0x7ae10, "mission_01_02" },
+	{ 0x74d68, "mission_01_03" },
+	{ 0x633c0, "mission_01_04" },
+	{ 0x71830, "mission_02_00" },
+	{ 0x7d8f4, "mission_02_01" },
+	{ 0x7a524, "mission_02_02" },
+	{ 0x61330, "mission_02_03" },
+	{ 0x731e0, "mission_03_00" },
+	{ 0x787b0, "mission_03_01" },
+	{ 0x8106c, "mission_03_02" },
+	{ 0x60204, "mission_03_03" },
+	{ 0x71ad0, "mission_04_00" },
+	{ 0x87838, "mission_04_01" },
+	{ 0x78da8, "mission_04_02" },
+	{ 0x613b4, "mission_04_03" },
+	{ 0x73c38, "mission_05_00" },
+	{ 0x821b0, "mission_05_01" },
+	{ 0x898d0, "mission_05_02" },
+	{ 0x707d4, "mission_05_03" },
+	{ 0x74778, "mission_06_00" },
+	{ 0x7a0f0, "mission_06_01" },
+	{ 0x7c964, "mission_06_02" },
+	{ 0x62614, "mission_06_03" },
+	{ 0x7bad4, "mission_07_00" },
+	{ 0x8170c, "mission_07_01" },
+	{ 0x7558c, "mission_07_02" },
+	{ 0x62ef0, "mission_07_03" },
+	{ 0xb30b0, "mission_99_00" },
+	{ 0x60d48, "mission_xxxx_0000" },
+	{ 0x5b1d4, "mission_xxxx_0001" },
+	{ 0x5cc28, "mission_xxxx_0002" },
+	{ 0x79f44, "mission_xxxx_0003" },
+	{ 0x5ca70, "mission_xxxx_0004" },
+	{ 0x64d08, "mission_xxxx_0005" },
+	{ 0x5e090, "mission_xxxx_0006" },
+	{ 0x5aef4, "mission_xxxx_0007" },
+	{ 0x5dd08, "mission_xxxx_0008" },
+	{ 0x5e9cc, "mission_xxxx_0009" },
+	{ 0x5c6a4, "mission_xxxx_0010" },
+	{ 0x60cc0, "mission_xxxx_0011" },
+	{ 0x4773c, "monster" },
+	{ 0x18, "system" },
+	{ 0x558, "test" },
+	{ 0x584, "title" },
+	{ 0x124, "world" },
+};
+
+static const char* FetchPacInstructionName(u32 ctl, u32 instr_id) {
+	u32 instructions_array_ptr = Memory::ReadOrException_U32(ctl + 8);
+	u32 instruction_ptr = instructions_array_ptr + 20 * instr_id;
+	u32 name_ptr = Memory::ReadOrException_U32(instruction_ptr + 16);
+
+	const char* name = Memory::GetCharPointer(name_ptr);
+	return name;
+}
+static std::pair<u32, u32> FetchPacPosition(u32 ctx) {
+	u32 stack_top_ptr = Memory::ReadOrException_U32(ctx + 8);
+	u32 pac_start = Memory::ReadOrException_U32(stack_top_ptr + 0);
+	u32 pac_pc = Memory::ReadOrException_U32(stack_top_ptr + 4);
+	// Account for the fact that the reader has processed the 1st 4 bytes of the instruction
+	return { pac_start, pac_pc - 4 };
+}
+static u32 EstimatePacSize(u32 pac_start) {
+	u32 chunk = Memory::ReadOrException_U32(pac_start - 4);
+	u32 next_chunk = Memory::ReadOrException_U32(chunk + 0);
+	return next_chunk - pac_start;
+}
+static std::optional<std::string_view> FindPacFilename(u32 size) {
+	auto it = PacSizesMap.find(size);
+	if (it != PacSizesMap.end()) {
+		return it->second;
+	}
+	return std::nullopt;
+}
+
+static int Replace_PataponPacReader(MIPSState* mips) {
+	static std::unordered_map<u32, u32> known_contexts;
+	u32 ctx = mips->r[MIPS_REG_S5];
+
+	u32 pac_block_ptr = mips->r[MIPS_REG_S3];
+	u32 class_id = Memory::ReadOrException_U32(pac_block_ptr + 0x104);
+
+	u32 arr_ptr = Memory::ReadOrException_U32(ctx + 0x4a8);
+	u32 arr_idx = Memory::ReadOrException_U32(ctx + 0x4ac);
+	for (u32 i = 0; i < arr_idx; ++i) {
+		u32 wrap_ptr = arr_ptr + 16 * i;
+
+		u32 ctl = Memory::ReadOrException_U32(wrap_ptr + 8);
+		if (Memory::ReadOrException_U32(ctl + 4) != class_id) {
+			continue;
+		}
+		// Correct controller
+		u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
+		const char* name = FetchPacInstructionName(ctl, instr_id);
+		const auto [pac_start, pac_pc] = FetchPacPosition(ctx);
+		u32 pac_offset = pac_pc - pac_start;
+		u32 pac_size = EstimatePacSize(pac_start);
+		auto actual_name = FindPacFilename(pac_size);
+
+		const auto [it, _] = known_contexts.try_emplace(ctx, known_contexts.size());
+		u32 ctx_id = it->second;
+
+		if (actual_name.has_value()) {
+			INFO_LOG(Log::Printf, "PAC: %s (%.*s:0x%x) id %d", name, STR_VIEW(*actual_name), pac_offset, ctx_id);
+		}
+		else {
+			INFO_LOG(Log::Printf, "PAC: %s (unk_0x%x:0x%x) id %d", name, pac_size, pac_offset, ctx_id);
+		}
+
+		return 0;
+	}
+	return 0;
+}
+
 // Should probably do JIT versions of this, possibly ones that only delegate
 // large copies to a C function.
 static int Replace_memcpy(MIPSState *mips) {
@@ -2311,6 +2452,7 @@ static const ReplacementTableEntry entries[] = {
 	{ "splitsecond_sun_visibility", &Hook_splitsecond_sun_visibility, 0, REPFLAG_HOOK, 0x744 },
 	{ "__ptmf_test", &Replace_ptmf_test, 0, REPFLAG_DISABLED },
 	{ "__ptmf_scall", &Replace_ptmf_scall, 0, REPFLAG_HOOK },
+	{ "PataponPacReader", &Replace_PataponPacReader, 0, REPFLAG_HOOK, 0x138 },
 	{}
 };
 
