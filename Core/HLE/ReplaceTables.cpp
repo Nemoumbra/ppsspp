@@ -41,6 +41,7 @@
 #include "Core/HLE/sceDisplay.h"
 #include "Core/HW/Display.h"
 #include "Core/HW/MMIO.h"
+#include "Core/Core.h"
 
 #include "GPU/Math3D.h"
 #include "GPU/GPU.h"
@@ -320,11 +321,27 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 				name, pac_size, pac_offset, ctx_id, block_idx
 			);
 		}
+
+		if (actual_name == "monster") {
+			/*static int hits = 0;
+			if (hits > 10) {
+				return;
+			}
+			else {
+				++hits;
+			}*/
+
+			Core_Break(BreakReason::HLEDebugBreak, pac_pc);
+			CoreTiming::ForceCheck(mips);
+		}
+
 		return;
 	}
 }
-static void Hook_PataponPacReader(MIPSState *mips) {
+
+static void OverrideFlowHook_PataponPacReader(MIPSState *mips) {
 	Impl_Hook_PataponPacReader(mips);
+	mips->pc += 4; // flow override means we gotta do it manually.
 }
 
 // Should probably do JIT versions of this, possibly ones that only delegate
@@ -2466,7 +2483,7 @@ static const ReplacementTableEntry entries[] = {
 	{ "splitsecond_sun_visibility", &Hook_splitsecond_sun_visibility, 0, REPFLAG_HOOK, 0x744 },
 	{ "__ptmf_test", &Replace_ptmf_test, 0, REPFLAG_DISABLED },
 	{ "__ptmf_scall", HookImpl<&Hook_ptmf_scall>, 0, REPFLAG_HOOK },
-	{ "PataponPacReader", HookImpl<&Hook_PataponPacReader>, 0, REPFLAG_HOOK, 0x138 },
+	{ "PataponPacReader", HookImpl<&OverrideFlowHook_PataponPacReader>, 0, REPFLAG_HOOK | REPFLAG_OVERRIDE_FLOW, 0x138 },
 	{}
 };
 
