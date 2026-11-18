@@ -46,7 +46,8 @@
 #include "Core/MemMap.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 
-typedef int (* ReplaceFunc)(MIPSState *mips);
+using ReplaceFunc = int (*)(MIPSState* mips);
+using HookReplaceFunc = void (*)(MIPSState* mips);
 
 enum {
 	// Used to keep things around but disable them.

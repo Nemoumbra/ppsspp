@@ -48,6 +48,13 @@
 #include "Common/Math/SIMDHeaders.h"
 #include "ext/xxhash.h"
 
+
+template <HookReplaceFunc func>
+int HookImpl(MIPSState* mips) {
+	func(mips);
+	return 0;
+}
+
 enum class GPUReplacementSkip {
 	MEMSET = 1,
 	MEMCPY = 2,
@@ -138,7 +145,8 @@ static int Replace_ptmf_test(MIPSState *mips) {
 	return 20;  // guess number of cycles
 }
 
-static int Hook_ptmf_scall(MIPSState *mips) {
+
+static void Hook_ptmf_scall(MIPSState *mips) {
 	// src -> {possible destinations}
 	static std::map<u32, std::set<u32>> mapping;
 
@@ -169,7 +177,6 @@ static int Hook_ptmf_scall(MIPSState *mips) {
 			INFO_LOG(Log::Printf, "__ptmf_scall: %08x -> %08x", src, dest);
 		}
 	}
-	return 0;
 }
 
 static const std::unordered_map<u32, std::string_view> PacSizesMap = {
@@ -274,7 +281,7 @@ static std::optional<std::string_view> FindPacFilename(u32 size) {
 	return std::nullopt;
 }
 
-static int Hook_PataponPacReader(MIPSState* mips) {
+static void Hook_PataponPacReader(MIPSState* mips) {
 	static std::unordered_map<u32, u32> known_contexts;
 	u32 ctx = mips->r[MIPS_REG_S5];
 
@@ -313,9 +320,8 @@ static int Hook_PataponPacReader(MIPSState* mips) {
 					 name, pac_size, pac_offset, ctx_id, block_idx
 					 );
 		}
-		return 0;
+		return;
 	}
-	return 0;
 }
 
 // Should probably do JIT versions of this, possibly ones that only delegate
@@ -2456,8 +2462,8 @@ static const ReplacementTableEntry entries[] = {
 	{ "socomftb3_read_luminance", &Hook_socomftb3_read_luminance, 0, REPFLAG_HOOK, 0x4C },
 	{ "splitsecond_sun_visibility", &Hook_splitsecond_sun_visibility, 0, REPFLAG_HOOK, 0x744 },
 	{ "__ptmf_test", &Replace_ptmf_test, 0, REPFLAG_DISABLED },
-	{ "__ptmf_scall", &Hook_ptmf_scall, 0, REPFLAG_HOOK },
-	{ "PataponPacReader", &Hook_PataponPacReader, 0, REPFLAG_HOOK, 0x138 },
+	{ "__ptmf_scall", HookImpl<&Hook_ptmf_scall>, 0, REPFLAG_HOOK },
+	{ "PataponPacReader", HookImpl<&Hook_PataponPacReader>, 0, REPFLAG_HOOK, 0x138 },
 	{}
 };
 
