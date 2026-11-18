@@ -281,7 +281,7 @@ static std::optional<std::string_view> FindPacFilename(u32 size) {
 	return std::nullopt;
 }
 
-static void Hook_PataponPacReader(MIPSState* mips) {
+static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 	static std::unordered_map<u32, u32> known_contexts;
 	u32 ctx = mips->r[MIPS_REG_S5];
 
@@ -310,18 +310,20 @@ static void Hook_PataponPacReader(MIPSState* mips) {
 		u32 block_idx = Memory::ReadOrException_U32(ctx + 0x360);
 		if (actual_name.has_value()) {
 			INFO_LOG(Log::Printf,
-					 "PAC: %s (%.*s:0x%x) id %d blk %d",
-					 name, STR_VIEW(*actual_name), pac_offset, ctx_id, block_idx
-					 );
+				"PAC: %s (%.*s:0x%x) id %d blk %d",
+				name, STR_VIEW(*actual_name), pac_offset, ctx_id, block_idx
+			);
 		}
 		else {
 			INFO_LOG(Log::Printf,
-					 "PAC: %s (unk_0x%x:0x%x) id %d blk %d",
-					 name, pac_size, pac_offset, ctx_id, block_idx
-					 );
+				"PAC: %s (unk_0x%x:0x%x) id %d blk %d",
+				name, pac_size, pac_offset, ctx_id, block_idx
+			);
 		}
-		return;
 	}
+}
+static void Hook_PataponPacReader(MIPSState *mips) {
+	Impl_Hook_PataponPacReader(mips);
 }
 
 // Should probably do JIT versions of this, possibly ones that only delegate
