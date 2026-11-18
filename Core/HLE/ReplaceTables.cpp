@@ -320,6 +320,7 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 				name, pac_size, pac_offset, ctx_id, block_idx
 			);
 		}
+		return;
 	}
 }
 static void Hook_PataponPacReader(MIPSState *mips) {
