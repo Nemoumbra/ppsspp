@@ -1359,17 +1359,31 @@ namespace MIPSInt {
 		int index = op.encoding & MIPS_REPLACEMENT_INDEX_MASK;
 		const ReplacementTableEntry *entry = GetReplacementFunc(index);
 		if (entry && entry->replaceFunc && (entry->flags & REPFLAG_DISABLED) == 0) {
+			// The replacements can sometimes modify PC, so remember the current location.
+			u32 oldPC = PC;
+
 			// Like a syscall, a replacement function is host code - see Int_Syscall.
 			RestoreHostRoundingMode();
 			int cycles = entry->replaceFunc(mips);
 			ApplyHostRoundingMode(mips);
 
 			if (entry->flags & (REPFLAG_HOOK | REPFLAG_HOOKEXIT)) {
+				u32 newPC = std::exchange(PC, oldPC);
+
 				// Interpret the original instruction under the hook.
 				MIPSInterpret(mips, Memory::Read_Instruction(PC));
+
+				if (entry->flags & REPFLAG_OVERRIDE_FLOW) {
+					// Respect the flow dictated by the replacement
+					PC = newPC;
+				}
 			} else if (cycles < 0) {
 				// Leave PC unchanged, call the replacement again (assumes args are modified.)
 				mips->downcount += cycles;
+			}
+			else if (entry->flags & REPFLAG_OVERRIDE_FLOW) {
+				// Don't jump to RA
+				mips->downcount -= cycles;
 			} else {
 				PC = mips->r[MIPS_REG_RA];
 				mips->downcount -= cycles;

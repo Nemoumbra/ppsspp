@@ -215,6 +215,19 @@ void IRFrontend::Comp_ReplacementFunc(MIPSOpcode op) {
 			// Compile the original instruction at this address.  We ignore cycles for hooks.
 			ApplyRoundingMode();
 			MIPSCompileOp(Memory::Read_Instruction(GetCompilerPC()), this);
+
+			// The hook claims to manually advance to the next instruction.
+			// Believe it and end the block after the instruction under the hook.
+			if (entry->flags & REPFLAG_OVERRIDE_FLOW) {
+				ir.Write(IROp::Downcount, 0, 0, 0, js.downcountAmount);
+				ir.Write(IROp::ExitToPC);
+				js.compiling = false;
+			}
+		} else if (entry->flags & REPFLAG_OVERRIDE_FLOW) {
+			// The replacement could have jumped to arbitrary PC
+			ir.Write(IROp::Downcount, 0, 0, 0, js.downcountAmount);
+			ir.Write(IROp::ExitToPC);
+			js.compiling = false;
 		} else {
 			ApplyRoundingMode();
 			// If IRTEMP_0 was set to 1, it means the replacement needs to run again (sliced.)

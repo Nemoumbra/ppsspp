@@ -57,6 +57,9 @@ enum {
 	REPFLAG_HOOKEXIT = 0x08,
 	// Function may take a lot of time and execute in slices (executed multiple times.)
 	REPFLAG_SLICED = 0x10,
+	// Function changes the control flow (and no automatic jump to RA is performed).
+	// If combined with the REPFLAG_HOOK, the next PC value must be the next instruction as if the replacement wasn't there.
+	REPFLAG_OVERRIDE_FLOW = 0x20,
 };
 
 // Kind of similar to HLE functions but with different data.
