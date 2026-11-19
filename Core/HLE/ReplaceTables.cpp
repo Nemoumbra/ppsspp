@@ -21,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <unordered_map>
+#include <charconv>
 
 #include "Common/CommonTypes.h"
 #include "Common/Log.h"
@@ -42,6 +43,8 @@
 #include "Core/HW/Display.h"
 #include "Core/HW/MMIO.h"
 #include "Core/Core.h"
+#include "Core/ELF/ParamSFO.h"
+#include "Common/StringUtils.h"
 
 #include "GPU/Math3D.h"
 #include "GPU/GPU.h"
@@ -185,6 +188,82 @@ static void Hook_ptmf_scall(MIPSState *mips) {
 	}
 }
 
+static void SplitSV(std::string_view strv, char delim, bool removeWhiteSpace, std::vector<std::string_view>* output) {
+	size_t first = 0;
+	while (first < strv.size()) {
+		const auto second = strv.find(delim, first);
+		if (first != second) {
+			std::string_view line = strv.substr(first, second - first);
+			_dbg_assert_(!line.empty());
+			if (line.back() == '\r') {
+				line.remove_suffix(1);
+			}
+			if (removeWhiteSpace) {
+				line = StripSpaces(line);
+			}
+			if (!line.empty()) {
+				output->emplace_back(line);
+			}
+		}
+		if (second == std::string_view::npos)
+			break;
+		first = second + 1;
+	}
+}
+
+template <typename T>
+std::from_chars_result ReadValueFromSV(std::string_view s, T* result) {
+	const char* start = s.data();
+	const char* end = start + s.size();
+	return std::from_chars(start, end, *result);
+}
+template <typename T>
+std::from_chars_result ReadHexValueFromSV(std::string_view s, T* result) {
+	const char* start = s.data();
+	const char* end = start + s.size();
+	return std::from_chars(start, end, *result, 16);
+}
+
+
+static std::unordered_map<u32, std::string> KnownPacInstructions;
+
+static void PacLoadKnownInstructions(const Path& path) {
+	KnownPacInstructions.clear();
+
+	if (!File::Exists(path)) {
+		return;
+	}
+	std::string file_data;
+	if (!File::ReadTextFileToString(path, &file_data)) {
+		WARN_LOG(Log::Printf, "Unable to load the Pac instructions file: %s", path.c_str());
+		return;
+	}
+	std::vector<std::string_view> lines;
+	lines.reserve(1024);
+	SplitSV(file_data, '\n', true, &lines);
+
+	std::vector<std::string_view> line_chunks;
+	for (const auto& line : lines) {
+		SplitSV(line, ';', false, &line_chunks);
+		if (line_chunks.size() < 2) {
+			WARN_LOG(Log::Printf, "Unable to load the Pac instructions file due to bogus line: %.*s", STR_VIEW(line));
+			return;
+		}
+
+		u32 signature;
+		auto result = ReadHexValueFromSV(line_chunks[0], &signature);
+		if (result.ec != std::errc()) {
+			WARN_LOG(Log::Printf, "Unable to load the Pac instructions file due to bogus line: %.*s", STR_VIEW(line));
+			return;
+		}
+		KnownPacInstructions.emplace(signature, line_chunks[1]);
+
+		line_chunks.clear();
+	}
+
+	INFO_LOG(Log::Printf, "Successfully loaded %llu PAC instructions", KnownPacInstructions.size());
+}
+
 struct FileDisambiguator {
 	std::string_view name;
 	u32 offset = 0;
@@ -278,7 +357,8 @@ static const std::unordered_multimap<u32, FileDisambiguator> KnownPacFiles = {
 	{ 0x124, {"world"} },
 };
 
-static const char* FetchPacInstructionName(u32 ctl, u32 instr_id) {
+
+static const char* GetPacInstructionNameFromCtl(u32 ctl, u32 instr_id) {
 	u32 instructions_array_ptr = Memory::ReadOrException_U32(ctl + 8);
 	u32 instruction_ptr = instructions_array_ptr + 20 * instr_id;
 	u32 name_ptr = Memory::ReadOrException_U32(instruction_ptr + 16);
@@ -286,6 +366,37 @@ static const char* FetchPacInstructionName(u32 ctl, u32 instr_id) {
 	const char* name = Memory::GetCharPointer(name_ptr);
 	return name;
 }
+static const char* FetchPacInstructionNameFromMemory(u32 ctx, u32 class_id, u32 instr_id) {
+	u32 arr_ptr = ctx + 0x364;
+	u32 arr_idx = Memory::ReadOrException_U32(ctx + 0x4ac);
+	// TODO: validate it's not an off-by-one
+	for (u32 i = 0; i < arr_idx; ++i) {
+		u32 wrap_ptr = arr_ptr + 16 * i;
+
+		u32 ctl = Memory::ReadOrException_U32(wrap_ptr + 8);
+		if (Memory::ReadOrException_U32(ctl + 4) != class_id) {
+			continue;
+		}
+		// Correct controller
+		const char* name = GetPacInstructionNameFromCtl(ctl, instr_id);
+		return name;
+	}
+	return nullptr;
+}
+static const char* FetchPacInstructionName(u32 ctx, u8 class_id, u16 instr_id) {
+	if (KnownPacInstructions.empty()) {
+		return FetchPacInstructionNameFromMemory(ctx, class_id, instr_id);
+	}
+
+	u32 signature = (0x25 << 24) | (class_id << 16) | (instr_id & 0xFF) << 8 | (instr_id >> 8);
+
+	auto it = KnownPacInstructions.find(signature);
+	if (it != KnownPacInstructions.end()) {
+		return it->second.data();
+	}
+	return nullptr;
+}
+
 static std::pair<u32, u32> FetchPacPosition(u32 ctx) {
 	u32 stack_top_ptr = Memory::ReadOrException_U32(ctx + 8);
 	u32 pac_start = Memory::ReadOrException_U32(stack_top_ptr + 0);
@@ -325,56 +436,64 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 	static std::unordered_map<u32, u32> known_contexts;
 	u32 ctx = mips->r[MIPS_REG_S5];
 
+	const auto [pac_start, pac_pc] = FetchPacPosition(ctx);
+	u32 pac_offset = pac_pc - pac_start;
+	u32 pac_size = EstimatePacSize(pac_start);
+	auto actual_name = FindPacFilename(pac_start, pac_size);
+
 	u32 pac_block_ptr = mips->r[MIPS_REG_S3];
 	u32 class_id = Memory::ReadOrException_U32(pac_block_ptr + 0x104);
-
-	u32 arr_ptr = Memory::ReadOrException_U32(ctx + 0x4a8);
-	u32 arr_idx = Memory::ReadOrException_U32(ctx + 0x4ac);
-	for (u32 i = 0; i < arr_idx; ++i) {
-		u32 wrap_ptr = arr_ptr + 16 * i;
-
-		u32 ctl = Memory::ReadOrException_U32(wrap_ptr + 8);
-		if (Memory::ReadOrException_U32(ctl + 4) != class_id) {
-			continue;
-		}
-		// Correct controller
-		u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
-		const char* name = FetchPacInstructionName(ctl, instr_id);
-		const auto [pac_start, pac_pc] = FetchPacPosition(ctx);
-		u32 pac_offset = pac_pc - pac_start;
-		u32 pac_size = EstimatePacSize(pac_start);
-		auto actual_name = FindPacFilename(pac_start, pac_size);
-
-		const auto [it, _] = known_contexts.try_emplace(ctx, known_contexts.size());
-		u32 ctx_id = it->second;
-		u32 block_idx = Memory::ReadOrException_U32(ctx + 0x360);
-		if (actual_name.has_value()) {
-			INFO_LOG(Log::Printf,
-				"PAC: %s (%.*s:0x%x) id %d blk %d",
-				name, STR_VIEW(*actual_name), pac_offset, ctx_id, block_idx
-			);
-		}
-		else {
-			INFO_LOG(Log::Printf,
-				"PAC: %s (unk_0x%x:0x%x) id %d blk %d",
-				name, pac_size, pac_offset, ctx_id, block_idx
-			);
-		}
-
-		if (actual_name == "monster") {
-			/*static int hits = 0;
-			if (hits > 10) {
-				return;
-			}
-			else {
-				++hits;
-			}*/
-
-			EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
-		}
-
+	u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
+	if (class_id > 0xFF) {
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Pac class id doesn't fit in 1 byte");
 		return;
 	}
+	if (instr_id > 0xFFFF) {
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Pac instr id doesn't fit in 2 bytes");
+		return;
+	}
+	const char* name = FetchPacInstructionName(ctx, (u8)class_id, (u16)instr_id);
+
+
+	const auto [it, _] = known_contexts.try_emplace(ctx, known_contexts.size());
+	u32 ctx_id = it->second;
+
+	u32 blocks_start_ptr = ctx + 0x18;
+	u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
+
+	if (!name) {
+		// What
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Unknown PAC instruction executed");
+		return;
+	}
+	if (actual_name.has_value()) {
+		INFO_LOG(Log::Printf,
+			"PAC: %s (%.*s:0x%x) id %d blk %d",
+			name, STR_VIEW(*actual_name), pac_offset, ctx_id, block_idx
+		);
+	}
+	else {
+		INFO_LOG(Log::Printf,
+			"PAC: %s (unk_0x%x:0x%x) id %d blk %d",
+			name, pac_size, pac_offset, ctx_id, block_idx
+		);
+	}
+
+	if (actual_name == "monster") {
+		/*static int hits = 0;
+		if (hits > 10) {
+			return;
+		}
+		else {
+			++hits;
+		}*/
+
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+	}
+
 }
 
 static void OverrideFlowHook_PataponPacReader(MIPSState *mips) {
@@ -2600,6 +2719,13 @@ void Replacement_Init() {
 	}
 
 	skipGPUReplacements = 0;
+
+
+	// Patapon stuff
+	Path current_game_plugins = GetSysDirectory(DIRECTORY_PLUGINS) / g_paramSFO.GetDiscID();
+	Path pac_dir = current_game_plugins / "patapon_hacks";
+	Path signatures_path = pac_dir / "signatures.txt";
+	PacLoadKnownInstructions(signatures_path);
 }
 
 void Replacement_Shutdown() {
