@@ -56,6 +56,11 @@ int HookImpl(MIPSState* mips) {
 	return 0;
 }
 
+static void EnterStepping(MIPSState* mips, BreakReason reason, u32 relatedAddress) {
+	Core_Break(reason, relatedAddress);
+	CoreTiming::ForceCheck(mips);
+}
+
 enum class GPUReplacementSkip {
 	MEMSET = 1,
 	MEMCPY = 2,
@@ -365,8 +370,7 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 				++hits;
 			}*/
 
-			Core_Break(BreakReason::HLEDebugBreak, pac_pc);
-			CoreTiming::ForceCheck(mips);
+			EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
 		}
 
 		return;
