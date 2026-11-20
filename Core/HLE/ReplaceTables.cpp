@@ -372,7 +372,7 @@ static const char* GetPacInstructionNameFromCtl(u32 ctl, u32 instr_id) {
 static const char* FetchPacInstructionNameFromMemory(u32 ctx, u32 class_id, u32 instr_id) {
 	u32 arr_ptr = ctx + 0x364;
 	u32 arr_idx = Memory::ReadOrException_U32(ctx + 0x4ac);
-	// TODO: validate it's not an off-by-one
+
 	for (u32 i = 0; i < arr_idx; ++i) {
 		u32 wrap_ptr = arr_ptr + 16 * i;
 
@@ -468,23 +468,26 @@ struct PacState {
 	}
 };
 
-using PacHookFunc = void (*)(PacState*, MIPSState*);
+using PacHookFunc = void (*)(PacState&, MIPSState*);
 static std::vector<PacHookFunc> pac_hooks;
 
-void PacHook(PacState* state, MIPSState* mips) {
-	const auto& top = state->get_top();
-	if (top.file_name.has_value()) {
+static void DefaultPacLog(const PacState& state, const PacPosition& pos) {
+	if (pos.file_name.has_value()) {
 		INFO_LOG(Log::Printf,
 			"PAC: %s (%.*s:0x%x) id %d blk %d",
-			top.instruction_name, STR_VIEW(*top.file_name), top.offset, state->ctx_id, state->blk
+			pos.instruction_name, STR_VIEW(*pos.file_name), pos.offset, state.ctx_id, state.blk
 		);
 	}
 	else {
 		INFO_LOG(Log::Printf,
 			"PAC: %s (unk_0x%x:0x%x) id %d blk %d",
-			top.instruction_name, top.file_size, top.offset, state->ctx_id, state->blk
+			pos.instruction_name, pos.file_size, pos.offset, state.ctx_id, state.blk
 		);
 	}
+}
+void PacHook(PacState& state, MIPSState* mips) {
+	const auto& top = state.get_top();
+	DefaultPacLog(state, top);
 
 	if (top.file_name == "monster") {
 		/*static int hits = 0;
@@ -570,7 +573,7 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 	}
 	auto& stats = known_contexts[ctx];
 	for (const auto& hook : pac_hooks) {
-		hook(&stats, mips);
+		hook(stats, mips);
 	}
 }
 
