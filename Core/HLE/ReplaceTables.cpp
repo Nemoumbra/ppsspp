@@ -357,6 +357,9 @@ static const std::unordered_multimap<u32, FileDisambiguator> KnownPacFiles = {
 	{ 0x124, {"world"} },
 };
 
+static constexpr u32 MAKE_PAC_SIGNATURE(u8 class_id, u16 instr_id) {
+	return (0x25 << 24) | (class_id << 16) | (instr_id & 0xFF) << 8 | (instr_id >> 8);
+}
 
 static const char* GetPacInstructionNameFromCtl(u32 ctl, u32 instr_id) {
 	u32 instructions_array_ptr = Memory::ReadOrException_U32(ctl + 8);
@@ -387,8 +390,7 @@ static const char* FetchPacInstructionName(u32 ctx, u8 class_id, u16 instr_id) {
 	if (KnownPacInstructions.empty()) {
 		return FetchPacInstructionNameFromMemory(ctx, class_id, instr_id);
 	}
-
-	u32 signature = (0x25 << 24) | (class_id << 16) | (instr_id & 0xFF) << 8 | (instr_id >> 8);
+	u32 signature = MAKE_PAC_SIGNATURE(class_id, instr_id);
 
 	auto it = KnownPacInstructions.find(signature);
 	if (it != KnownPacInstructions.end()) {
@@ -397,8 +399,7 @@ static const char* FetchPacInstructionName(u32 ctx, u8 class_id, u16 instr_id) {
 	return nullptr;
 }
 
-static std::pair<u32, u32> FetchPacPosition(u32 ctx) {
-	u32 stack_top_ptr = Memory::ReadOrException_U32(ctx + 8);
+static std::pair<u32, u32> FetchPacPosition(u32 stack_top_ptr) {
 	u32 pac_start = Memory::ReadOrException_U32(stack_top_ptr + 0);
 	u32 pac_pc = Memory::ReadOrException_U32(stack_top_ptr + 4);
 	// Account for the fact that the reader has processed the 1st 4 bytes of the instruction
@@ -432,57 +433,60 @@ static std::optional<std::string_view> FindPacFilename(u32 pac_addr, u32 size) {
 	}
 }
 
-static void Impl_Hook_PataponPacReader(MIPSState *mips) {
-	static std::unordered_map<u32, u32> known_contexts;
-	u32 ctx = mips->r[MIPS_REG_S5];
 
-	const auto [pac_start, pac_pc] = FetchPacPosition(ctx);
-	u32 pac_offset = pac_pc - pac_start;
-	u32 pac_size = EstimatePacSize(pac_start);
-	auto actual_name = FindPacFilename(pac_start, pac_size);
+struct PacPosition {
+	u32 pac_start;
+	u32 offset;
+	std::optional<std::string_view> file_name;
+	u32 file_size;
+	u32 instruction_signature;
+	const char* instruction_name;
+};
 
-	u32 pac_block_ptr = mips->r[MIPS_REG_S3];
-	u32 class_id = Memory::ReadOrException_U32(pac_block_ptr + 0x104);
-	u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
-	if (class_id > 0xFF) {
-		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
-		WARN_LOG(Log::Printf, "Pac class id doesn't fit in 1 byte");
-		return;
+struct PacState {
+	u32 ctx_id;
+	u32 ctx_addr;
+
+	u32 blk;
+	u32 callstack_size;
+	PacPosition callstack[15];
+
+	const PacPosition& get_callstack_item(u32 level) const {
+		_assert_msg_(level < 15, "Invalid PAC stack item requested: %d", level);
+		return callstack[level];
 	}
-	if (instr_id > 0xFFFF) {
-		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
-		WARN_LOG(Log::Printf, "Pac instr id doesn't fit in 2 bytes");
-		return;
+	PacPosition& get_callstack_item(u32 level) {
+		_assert_msg_(level < 15, "Invalid PAC stack item requested: %d", level);
+		return callstack[level];
 	}
-	const char* name = FetchPacInstructionName(ctx, (u8)class_id, (u16)instr_id);
 
-
-	const auto [it, _] = known_contexts.try_emplace(ctx, known_contexts.size());
-	u32 ctx_id = it->second;
-
-	u32 blocks_start_ptr = ctx + 0x18;
-	u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
-
-	if (!name) {
-		// What
-		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
-		WARN_LOG(Log::Printf, "Unknown PAC instruction executed");
-		return;
+	const PacPosition& get_top() const {
+		return callstack[callstack_size - 1];
 	}
-	if (actual_name.has_value()) {
+	PacPosition& get_top() {
+		return callstack[callstack_size - 1];
+	}
+};
+
+using PacHookFunc = void (*)(PacState*, MIPSState*);
+static std::vector<PacHookFunc> pac_hooks;
+
+void PacHook(PacState* state, MIPSState* mips) {
+	const auto& top = state->get_top();
+	if (top.file_name.has_value()) {
 		INFO_LOG(Log::Printf,
 			"PAC: %s (%.*s:0x%x) id %d blk %d",
-			name, STR_VIEW(*actual_name), pac_offset, ctx_id, block_idx
+			top.instruction_name, STR_VIEW(*top.file_name), top.offset, state->ctx_id, state->blk
 		);
 	}
 	else {
 		INFO_LOG(Log::Printf,
 			"PAC: %s (unk_0x%x:0x%x) id %d blk %d",
-			name, pac_size, pac_offset, ctx_id, block_idx
+			top.instruction_name, top.file_size, top.offset, state->ctx_id, state->blk
 		);
 	}
 
-	if (actual_name == "monster") {
+	if (top.file_name == "monster") {
 		/*static int hits = 0;
 		if (hits > 10) {
 			return;
@@ -491,9 +495,83 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 			++hits;
 		}*/
 
+		EnterStepping(mips, BreakReason::HLEDebugBreak, top.pac_start + top.offset);
+	}
+}
+
+static std::unordered_map<u32, PacState> known_contexts;
+static std::unordered_map<u32, u32> context_ids;
+
+static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
+	u32 stack_top_ptr = Memory::ReadOrException_U32(ctx + 8);
+	const auto [pac_start, pac_pc] = FetchPacPosition(stack_top_ptr);
+	u32 pac_offset = pac_pc - pac_start;
+	u32 pac_size = EstimatePacSize(pac_start);
+	auto actual_name = FindPacFilename(pac_start, pac_size);
+
+	u32 class_id = Memory::ReadOrException_U32(pac_block_ptr + 0x104);
+	u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
+	if (class_id > 0xFF) {
 		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Pac class id doesn't fit in 1 byte");
+		return false;
+	}
+	if (instr_id > 0xFFFF) {
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Pac instr id doesn't fit in 2 bytes");
+		return false;
 	}
 
+	const char* name = FetchPacInstructionName(ctx, (u8)class_id, (u16)instr_id);
+	if (!name) {
+		// What
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		WARN_LOG(Log::Printf, "Unknown PAC instruction executed");
+		return false;
+	}
+
+	u32 blocks_start_ptr = ctx + 0x18;
+	u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
+	if (block_idx != 0) {
+		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
+		NOTICE_LOG(Log::Printf, "Hell yes, found some Pac running non-zero block!");
+		return false;
+	}
+
+	const auto [it, _] = context_ids.try_emplace(ctx, context_ids.size());
+	u32 ctx_id = it->second;
+
+	auto& pac_state = known_contexts[ctx];
+	/// Update the state ///
+	pac_state.ctx_addr = ctx;
+	pac_state.ctx_id = ctx_id;
+	pac_state.blk = block_idx;
+
+	u32 pac_stack_start = pac_block_ptr;
+	pac_state.callstack_size = 1 + (stack_top_ptr - pac_stack_start) / 8;
+	PacPosition& top = pac_state.get_top();
+	top.offset = pac_offset;
+	top.pac_start = pac_start;
+	top.file_name = actual_name;
+	top.file_size = pac_size;
+	top.instruction_name = name;
+	top.instruction_signature = MAKE_PAC_SIGNATURE(class_id, instr_id);
+	////////////////////////
+
+	return true;
+}
+
+
+static void Impl_Hook_PataponPacReader(MIPSState *mips) {
+	u32 ctx = mips->r[MIPS_REG_S5];
+	u32 pac_block_ptr = mips->r[MIPS_REG_S3];
+	if (!UpdatePacStats(mips, ctx, pac_block_ptr)) {
+		return;
+	}
+	auto& stats = known_contexts[ctx];
+	for (const auto& hook : pac_hooks) {
+		hook(&stats, mips);
+	}
 }
 
 static void OverrideFlowHook_PataponPacReader(MIPSState *mips) {
@@ -2726,6 +2804,7 @@ void Replacement_Init() {
 	Path pac_dir = current_game_plugins / "patapon_hacks";
 	Path signatures_path = pac_dir / "signatures.txt";
 	PacLoadKnownInstructions(signatures_path);
+	pac_hooks.push_back(PacHook);
 }
 
 void Replacement_Shutdown() {
@@ -2733,6 +2812,12 @@ void Replacement_Shutdown() {
 	replacementNameLookup.clear();
 	syphonFilterArrivals.clear();
 	syphonFilterFadeHolds.clear();
+
+	// Patapon stuff
+	KnownPacInstructions.clear();
+	known_contexts.clear();
+	context_ids.clear();
+	pac_hooks.clear();
 }
 
 void Replacement_SetBlockShadowHook(u32 value) {
