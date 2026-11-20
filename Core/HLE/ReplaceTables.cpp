@@ -441,15 +441,16 @@ struct PacPosition {
 	u32 file_size;
 	u32 instruction_signature;
 	const char* instruction_name;
+
+	u32 get_pc() const {
+		return pac_start + offset;
+	}
 };
 
-struct PacState {
-	u32 ctx_id;
-	u32 ctx_addr;
-
-	u32 blk;
+struct PacExecBlock {
 	u32 callstack_size;
 	PacPosition callstack[15];
+	u32 status;
 
 	const PacPosition& get_callstack_item(u32 level) const {
 		_assert_msg_(level < 15, "Invalid PAC stack item requested: %d", level);
@@ -461,10 +462,34 @@ struct PacState {
 	}
 
 	const PacPosition& get_top() const {
-		return callstack[callstack_size - 1];
+		return get_callstack_item(callstack_size - 1);
 	}
 	PacPosition& get_top() {
-		return callstack[callstack_size - 1];
+		return get_callstack_item(callstack_size - 1);
+	}
+};
+
+struct PacState {
+	u32 ctx_id;
+	u32 ctx_addr;
+
+	u32 blk;
+	PacExecBlock blocks[3];
+
+	const PacExecBlock& get_block(u32 index) const {
+		_assert_msg_(index < 3, "Invalid PAC block requested: %d", index);
+		return blocks[index];
+	}
+	PacExecBlock& get_block(u32 index) {
+		_assert_msg_(index < 3, "Invalid PAC block requested: %d", index);
+		return blocks[index];
+	}
+
+	const PacExecBlock& cur_block() const {
+		return get_block(blk);
+	}
+	PacExecBlock& cur_block() {
+		return get_block(blk);
 	}
 };
 
@@ -486,8 +511,14 @@ static void DefaultPacLog(const PacState& state, const PacPosition& pos) {
 	}
 }
 void PacHook(PacState& state, MIPSState* mips) {
-	const auto& top = state.get_top();
+	const auto& top = state.cur_block().get_top();
 	DefaultPacLog(state, top);
+
+	if (state.blk != 0) {
+		EnterStepping(mips, BreakReason::HLEDebugBreak, top.get_pc());
+		NOTICE_LOG(Log::Printf, "Hell yes, found some Pac running non-zero block!");
+		return;
+	}
 
 	if (top.file_name == "monster") {
 		/*static int hits = 0;
@@ -498,7 +529,7 @@ void PacHook(PacState& state, MIPSState* mips) {
 			++hits;
 		}*/
 
-		EnterStepping(mips, BreakReason::HLEDebugBreak, top.pac_start + top.offset);
+		EnterStepping(mips, BreakReason::HLEDebugBreak, top.get_pc());
 	}
 }
 
@@ -535,11 +566,6 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 
 	u32 blocks_start_ptr = ctx + 0x18;
 	u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
-	if (block_idx != 0) {
-		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
-		NOTICE_LOG(Log::Printf, "Hell yes, found some Pac running non-zero block!");
-		return false;
-	}
 
 	const auto [it, _] = context_ids.try_emplace(ctx, context_ids.size());
 	u32 ctx_id = it->second;
@@ -550,9 +576,13 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 	pac_state.ctx_id = ctx_id;
 	pac_state.blk = block_idx;
 
-	u32 pac_stack_start = pac_block_ptr;
-	pac_state.callstack_size = 1 + (stack_top_ptr - pac_stack_start) / 8;
-	PacPosition& top = pac_state.get_top();
+	auto& cur_block = pac_state.cur_block();
+	u32 pac_status = Memory::ReadOrException_U32(pac_block_ptr + 0x100);
+	cur_block.status = pac_status;
+
+	u32 block_stack_start = pac_block_ptr;
+	cur_block.callstack_size = 1 + (stack_top_ptr - block_stack_start) / 8;
+	PacPosition& top = cur_block.get_top();
 	top.offset = pac_offset;
 	top.pac_start = pac_start;
 	top.file_name = actual_name;
