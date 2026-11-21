@@ -392,12 +392,12 @@ static const char* GetPacInstructionNameFromCtl(u32 ctl, u32 instr_id) {
 }
 static const char* FetchPacInstructionNameFromMemory(u32 ctx, u32 class_id, u32 instr_id) {
 	u32 arr_ptr = ctx + 0x364;
-	u32 arr_idx = Memory::ReadOrException_U32(ctx + 0x4ac);
+	u32 arr_idx = Memory::ReadUnchecked_U32(ctx + 0x4ac);
 
 	for (u32 i = 0; i < arr_idx; ++i) {
 		u32 wrap_ptr = arr_ptr + 16 * i;
 
-		u32 ctl = Memory::ReadOrException_U32(wrap_ptr + 8);
+		u32 ctl = Memory::ReadUnchecked_U32(wrap_ptr + 8);
 		if (Memory::ReadOrException_U32(ctl + 4) != class_id) {
 			continue;
 		}
@@ -421,13 +421,13 @@ static const char* FetchPacInstructionName(u32 ctx, u8 class_id, u16 instr_id) {
 }
 
 static std::pair<u32, u32> FetchPacPosition(u32 stack_top_ptr) {
-	u32 pac_start = Memory::ReadOrException_U32(stack_top_ptr + 0);
-	u32 pac_pc = Memory::ReadOrException_U32(stack_top_ptr + 4);
+	u32 pac_start = Memory::ReadUnchecked_U32(stack_top_ptr + 0);
+	u32 pac_pc = Memory::ReadUnchecked_U32(stack_top_ptr + 4);
 	// Account for the fact that the reader has processed the 1st 4 bytes of the instruction
 	return { pac_start, pac_pc - 4 };
 }
 static u32 EstimatePacSize(u32 pac_start) {
-	u32 chunk = Memory::ReadOrException_U32(pac_start - 4);
+	u32 chunk = Memory::ReadUnchecked_U32(pac_start - 4);
 	u32 next_chunk = Memory::ReadOrException_U32(chunk + 0);
 	return next_chunk - pac_start;
 }
@@ -511,6 +511,13 @@ struct PacState {
 	}
 	PacExecBlock& cur_block() {
 		return get_block(blk);
+	}
+
+	const PacPosition& top() const {
+		return cur_block().get_top();
+	}
+	PacPosition& top() {
+		return cur_block().get_top();
 	}
 };
 
@@ -815,14 +822,21 @@ static std::unordered_map<u32, PacState> known_contexts;
 static std::unordered_map<u32, u32> context_ids;
 
 static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
-	u32 stack_top_ptr = Memory::ReadOrException_U32(ctx + 8);
+	const u32 stack_top_ptr = Memory::ReadUnchecked_U32(ctx + 8);
+	if (!Memory::IsValid4AlignedAddress(stack_top_ptr)) {
+		return false;
+	}
 	const auto [pac_start, pac_pc] = FetchPacPosition(stack_top_ptr);
-	u32 pac_offset = pac_pc - pac_start;
-	u32 pac_size = EstimatePacSize(pac_start);
-	auto actual_name = FindPacFilename(pac_start, pac_size);
+	if (!Memory::IsValid4AlignedAddress(pac_start) || !Memory::IsValid4AlignedAddress(pac_pc)) {
+		return false;
+	}
 
-	u32 class_id = Memory::ReadOrException_U32(pac_block_ptr + 0x104);
-	u32 instr_id = Memory::ReadOrException_U32(pac_block_ptr + 0x108);
+	const u32 pac_offset = pac_pc - pac_start;
+	const u32 pac_size = EstimatePacSize(pac_start);
+	const auto actual_name = FindPacFilename(pac_start, pac_size);
+
+	const u32 class_id = Memory::ReadUnchecked_U32(pac_block_ptr + 0x104);
+	const u32 instr_id = Memory::ReadUnchecked_U32(pac_block_ptr + 0x108);
 	if (class_id > 0xFF) {
 		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
 		WARN_LOG(Log::Printf, "Pac class id doesn't fit in 1 byte");
@@ -834,7 +848,7 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 		return false;
 	}
 
-	const char* name = FetchPacInstructionName(ctx, (u8)class_id, (u16)instr_id);
+	const char* const name = FetchPacInstructionName(ctx, (u8)class_id, (u16)instr_id);
 	if (!name) {
 		// What
 		EnterStepping(mips, BreakReason::HLEDebugBreak, pac_pc);
@@ -842,11 +856,11 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 		return false;
 	}
 
-	u32 blocks_start_ptr = ctx + 0x18;
-	u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
+	const u32 blocks_start_ptr = ctx + 0x18;
+	const u32 block_idx = (pac_block_ptr - blocks_start_ptr) / 280; // sizeof of block
 
 	const auto [it, _] = context_ids.try_emplace(ctx, context_ids.size());
-	u32 ctx_id = it->second;
+	const u32 ctx_id = it->second;
 
 	auto& pac_state = known_contexts[ctx];
 	/// Update the state ///
@@ -855,10 +869,10 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 	pac_state.blk = block_idx;
 
 	auto& cur_block = pac_state.cur_block();
-	u32 pac_status = Memory::ReadOrException_U32(pac_block_ptr + 0x100);
+	const u32 pac_status = Memory::ReadOrException_U32(pac_block_ptr + 0x100);
 	cur_block.status = pac_status;
 
-	u32 block_stack_start = pac_block_ptr;
+	const u32 block_stack_start = pac_block_ptr;
 	cur_block.callstack_size = 1 + (stack_top_ptr - block_stack_start) / 8;
 	PacPosition& top = cur_block.get_top();
 	top.offset = pac_offset;
@@ -874,9 +888,15 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 
 
 static void Impl_Hook_PataponPacReader(MIPSState *mips) {
-	u32 ctx = mips->r[MIPS_REG_S5];
-	u32 pac_block_ptr = mips->r[MIPS_REG_S3];
+	const u32 ctx = mips->r[MIPS_REG_S5];
+	const u32 pac_block_ptr = mips->r[MIPS_REG_S3];
+	if (!Memory::IsValid4AlignedAddress(ctx) || !Memory::IsValid4AlignedAddress(pac_block_ptr)) {
+		ERROR_LOG(Log::Printf, "Pac: invalid context values");
+		return;
+	}
 	if (!UpdatePacStats(mips, ctx, pac_block_ptr)) {
+		// Something's wrong
+		ERROR_LOG(Log::Printf, "Pac: invalid context values");
 		return;
 	}
 	auto& stats = known_contexts[ctx];
