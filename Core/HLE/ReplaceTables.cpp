@@ -85,6 +85,10 @@ static void EnterStepping(MIPSState* mips, BreakReason reason, u32 relatedAddres
 	CoreTiming::ForceCheck(mips);
 }
 
+static CoreState GetCoreState() {
+	return coreState;
+}
+
 enum class GPUReplacementSkip {
 	MEMSET = 1,
 	MEMCPY = 2,
@@ -583,6 +587,7 @@ namespace func_sig {
 	using v_f32u32 = void (*)(float, u32);
 
 	using BreakFunc = void (*)(MIPSState*, BreakReason, u32);
+	using CoreStateFunc = CoreState(*)();
 
 	using EmuLogFunc = void (*)(Log, LogLevel, const char*);
 	using OutputDebugStrFunc = void (*)(const char*);
@@ -651,6 +656,7 @@ struct EmuFuncs {
 	func_sig::v_f32u32 WriteUnchecked_Float;
 
 	func_sig::BreakFunc EnterStepping;
+	func_sig::CoreStateFunc GetCoreState;
 
 	func_sig::EmuLogFunc EmuLog;
 	func_sig::OutputDebugStrFunc OutputDebugStringUTF8;
@@ -712,6 +718,7 @@ static EmuFuncs BuildBindings() {
 		&Memory::WriteUnchecked_Float,
 
 		&EnterStepping,
+		&GetCoreState,
 
 		&ExternalLog,
 		&OutputDebugStringUTF8,
