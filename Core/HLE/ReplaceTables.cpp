@@ -45,6 +45,7 @@
 #include "Core/Core.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Common/StringUtils.h"
+#include "Common/Data/Encoding/Utf8.h"
 
 #include "GPU/Math3D.h"
 #include "GPU/GPU.h"
@@ -57,6 +58,26 @@ template <HookReplaceFunc func>
 int HookImpl(MIPSState* mips) {
 	func(mips);
 	return 0;
+}
+
+#ifdef _WIN32
+#include "Common/CommonWindows.h"
+#include <sys/stat.h>
+#if PPSSPP_PLATFORM(UWP)
+#include <fileapifromapp.h>
+#endif
+#else
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <ctype.h>
+#if PLATFORM_SUPPORTS_FILE_HANDLER_PLUGINS
+#include <dlfcn.h>
+#endif
+#endif
+
+static void ExternalLog(Log type, LogLevel level, const char* msg) {
+	GENERIC_LOG(type, level, "%s", msg);
 }
 
 static void EnterStepping(MIPSState* mips, BreakReason reason, u32 relatedAddress) {
@@ -493,7 +514,7 @@ struct PacState {
 	}
 };
 
-using PacHookFunc = void (*)(PacState&, MIPSState*);
+using PacHookFunc = void (*)(PacState&, MIPSState&);
 static std::vector<PacHookFunc> pac_hooks;
 
 static void DefaultPacLog(const PacState& state, const PacPosition& pos) {
@@ -510,12 +531,12 @@ static void DefaultPacLog(const PacState& state, const PacPosition& pos) {
 		);
 	}
 }
-void PacHook(PacState& state, MIPSState* mips) {
+void PacHook(PacState& state, MIPSState& mips) {
 	const auto& top = state.cur_block().get_top();
 	DefaultPacLog(state, top);
 
 	if (state.blk != 0) {
-		EnterStepping(mips, BreakReason::HLEDebugBreak, top.get_pc());
+		EnterStepping(&mips, BreakReason::HLEDebugBreak, top.get_pc());
 		NOTICE_LOG(Log::Printf, "Hell yes, found some Pac running non-zero block!");
 		return;
 	}
@@ -529,8 +550,265 @@ void PacHook(PacState& state, MIPSState* mips) {
 			++hits;
 		}*/
 
-		EnterStepping(mips, BreakReason::HLEDebugBreak, top.get_pc());
+		EnterStepping(&mips, BreakReason::HLEDebugBreak, top.get_pc());
 	}
+}
+
+namespace func_sig {
+	using u8ptr_u32 = u8 * (*)(u32);
+	using cu8ptr_u32 = const u8* (*)(u32);
+	using u8ptr_u32u32 = u8 * (*)(u32, u32);
+	using cu8ptr_u32u32 = const u8 * (*)(u32, u32);
+
+	using b_u32 = bool (*)(u32);
+	using b_u32u32 = bool (*)(u32, u32);
+
+	using u8_u32 = u8(*)(u32);
+	using u16_u32 = u16(*)(u32);
+	using u32_u32 = u32(*)(u32);
+	using u64_u32 = u64(*)(u32);
+	using f32_u32 = float (*)(u32);
+
+	using v_u8u32 = void (*)(u8, u32);
+	using v_u16u32 = void (*)(u16, u32);
+	using v_u32u32 = void (*)(u32, u32);
+	using v_u64u32 = void (*)(u64, u32);
+	using v_f32u32 = void (*)(float, u32);
+
+	using BreakFunc = void (*)(MIPSState*, BreakReason, u32);
+
+	using EmuLogFunc = void (*)(Log, LogLevel, const char*);
+	using OutputDebugStrFunc = void (*)(const char*);
+
+	using HandleAssertFunc = ATTR_FORMAT_PRINTF(6, 7) bool (*)(
+		bool isDebugAssert, const char* function, const char* file, int line, const char* expression,
+		MSVC_FORMAT_PRINTF const char* format, ...);
+
+
+	// TODO: pass HandleAssert
+
+} // namespace func_sig
+
+struct EmuFuncs {
+	///////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// slower psp -> host ptrs
+	func_sig::u8ptr_u32 GetPointerWriteOrException;
+	func_sig::cu8ptr_u32 GetPointerOrException;
+
+	// faster psp -> host ptrs
+	func_sig::u8ptr_u32 GetPointerWriteUnchecked;
+	func_sig::cu8ptr_u32 GetPointerUnchecked;
+
+	// psp -> host ptrs to span
+	func_sig::u8ptr_u32u32 GetPointerWriteRangeOrException;
+	func_sig::cu8ptr_u32u32 GetPointerRangeOrException;
+
+	// ptr tests
+	func_sig::b_u32 IsRAMAddress;
+	func_sig::b_u32 IsScratchpadAddress;
+
+	// ptr validity
+	func_sig::b_u32 IsValidAddress;
+	func_sig::b_u32 IsValid2AlignedAddress;
+	func_sig::b_u32 IsValid4AlignedAddress;
+
+	// range validity
+	func_sig::b_u32u32 IsValidRange;
+	func_sig::b_u32u32 IsValid4AlignedRange;
+
+	// slower reads
+	func_sig::u8_u32 ReadOrException_U8;
+	func_sig::u16_u32 ReadOrException_U16;
+	func_sig::u32_u32 ReadOrException_U32;
+	func_sig::u64_u32 ReadOrException_U64;
+
+	// slower writes
+	func_sig::v_u8u32 WriteOrException_U8;
+	func_sig::v_u16u32 WriteOrException_U16;
+	func_sig::v_u32u32 WriteOrException_U32;
+	func_sig::v_u64u32 WriteOrException_U64;
+
+	// faster reads
+	func_sig::u8_u32 ReadUnchecked_U8;
+	func_sig::u16_u32 ReadUnchecked_U16;
+	func_sig::u32_u32 ReadUnchecked_U32;
+	func_sig::u64_u32 ReadUnchecked_U64;
+	func_sig::f32_u32 ReadUnchecked_Float;
+
+	// faster writes
+	func_sig::v_u8u32 WriteUnchecked_U8;
+	func_sig::v_u16u32 WriteUnchecked_U16;
+	func_sig::v_u32u32 WriteUnchecked_U32;
+	func_sig::v_u64u32 WriteUnchecked_U64;
+	func_sig::v_f32u32 WriteUnchecked_Float;
+
+	func_sig::BreakFunc EnterStepping;
+
+	func_sig::EmuLogFunc EmuLog;
+	func_sig::OutputDebugStrFunc OutputDebugStringUTF8;
+
+	// TODO HandleAssert
+};
+
+static EmuFuncs BuildBindings() {
+	return {
+		// // slower psp -> host ptrs
+		&Memory::GetPointerWriteOrException,
+		&Memory::GetPointerOrException,
+
+		// faster psp -> host ptrs
+		&Memory::GetPointerWriteUnchecked,
+		&Memory::GetPointerUnchecked,
+
+		// psp -> host ptrs to span
+		&Memory::GetPointerWriteRangeOrException,
+		&Memory::GetPointerRangeOrException,
+
+		// ptr tests
+		&Memory::IsRAMAddress,
+		&Memory::IsScratchpadAddress,
+
+		// ptr validity
+		&Memory::IsValidAddress,
+		&Memory::IsValid2AlignedAddress,
+		&Memory::IsValid4AlignedAddress,
+
+		// range validity
+		&Memory::IsValidRange,
+		&Memory::IsValid4AlignedRange,
+
+		// slower reads
+		&Memory::ReadOrException_U8,
+		&Memory::ReadOrException_U16,
+		&Memory::ReadOrException_U32,
+		&Memory::ReadOrException_U64,
+
+		// slower writes
+		&Memory::WriteOrException_U8,
+		&Memory::WriteOrException_U16,
+		&Memory::WriteOrException_U32,
+		&Memory::WriteOrException_U64,
+
+		// faster reads
+		&Memory::ReadUnchecked_U8,
+		&Memory::ReadUnchecked_U16,
+		&Memory::ReadUnchecked_U32,
+		&Memory::ReadUnchecked_U64,
+		&Memory::ReadUnchecked_Float,
+
+		// faster writes
+		&Memory::WriteUnchecked_U8,
+		&Memory::WriteUnchecked_U16,
+		&Memory::WriteUnchecked_U32,
+		&Memory::WriteUnchecked_U64,
+		&Memory::WriteUnchecked_Float,
+
+		&EnterStepping,
+
+		&ExternalLog,
+		&OutputDebugStringUTF8,
+		// TODO HandleAssert
+	};
+}
+
+class PacExternalHandler {
+public:
+	using InitFunc = void (*)(EmuFuncs&);
+	using TermFunc = void (*)();
+	using HookFunc = void (*)(PacState&, MIPSState&);
+
+private:
+	using Library = void*;
+	Library library = nullptr;
+
+	InitFunc Init = nullptr;
+	TermFunc Term = nullptr;
+	HookFunc Hook = nullptr;
+
+	// more pending
+
+public:
+	PacExternalHandler() = default;
+	bool IsLoaded() const {
+		return library != nullptr;
+	}
+
+	bool Load(const char* filename) {
+#ifdef _WIN32
+#if PPSSPP_PLATFORM(UWP)
+#define dlopen(name, ignore) (void *)LoadPackagedLibrary(ConvertUTF8ToWString(name).c_str(), 0)
+#define dlsym(mod, name) GetProcAddress((HMODULE)mod, name)
+#define dlclose(mod) FreeLibrary((HMODULE)mod)
+#else
+#define dlopen(name, ignore) (void *)LoadLibrary(ConvertUTF8ToWString(name).c_str())
+#define dlsym(mod, name) GetProcAddress((HMODULE)mod, name)
+#define dlclose(mod) FreeLibrary((HMODULE)mod)
+#endif
+#endif
+		library = dlopen(filename, RTLD_LOCAL | RTLD_NOW);
+		if (library == nullptr) {
+			WARN_LOG(Log::Printf, "Unable to load pac external handler '%s'", filename /*, GetLastErrorMsg().c_str() */);
+			return false;
+		}
+
+		Init = (InitFunc)dlsym(library, "Init");
+		Term = (TermFunc)dlsym(library, "Term");
+		Hook = (HookFunc)dlsym(library, "Hook");
+		// More pending
+
+		if (!Init || !Term || !Hook) {
+			ERROR_LOG(Log::Printf, "Unable to find all handler functions: %s", filename);
+			dlclose(library);
+			library = nullptr;
+			return false;
+		}
+
+		// Handler initialization
+		EmuFuncs funcs = BuildBindings();
+		Init(funcs);
+		pac_hooks.push_back(Hook);
+
+		return true;
+#ifdef _WIN32
+#undef dlopen
+#undef dlsym
+#undef dlclose
+#endif
+	}
+
+	void Unload() {
+		if (IsLoaded()) {
+			Term();
+
+#ifdef _WIN32
+			FreeLibrary((HMODULE)library);
+#else
+			dlclose(library);
+#endif
+		}
+		library = nullptr;
+	}
+
+	~PacExternalHandler() {
+		Unload();
+	}
+};
+
+PacExternalHandler pac_external_handler;
+
+static void PacLoadExternalHandler(const Path& path) {
+	if (!File::Exists(path)) {
+		return;
+	}
+
+	pac_external_handler.Unload();
+	if (pac_external_handler.Load(path.c_str())) {
+		INFO_LOG(Log::Printf, "Successfully loaded the external pac handler %s", path.c_str());
+	}
+}
+static void PacUnloadExternalHandler() {
+	pac_external_handler.Unload();
 }
 
 static std::unordered_map<u32, PacState> known_contexts;
@@ -603,7 +881,7 @@ static void Impl_Hook_PataponPacReader(MIPSState *mips) {
 	}
 	auto& stats = known_contexts[ctx];
 	for (const auto& hook : pac_hooks) {
-		hook(stats, mips);
+		hook(stats, *mips);
 	}
 }
 
@@ -2837,6 +3115,8 @@ void Replacement_Init() {
 	Path pac_dir = current_game_plugins / "patapon_hacks";
 	Path signatures_path = pac_dir / "signatures.txt";
 	PacLoadKnownInstructions(signatures_path);
+	Path dll_handler_path = pac_dir / "pacdll.dll";
+	PacLoadExternalHandler(dll_handler_path);
 	pac_hooks.push_back(PacHook);
 }
 
@@ -2851,6 +3131,7 @@ void Replacement_Shutdown() {
 	known_contexts.clear();
 	context_ids.clear();
 	pac_hooks.clear();
+	PacUnloadExternalHandler();
 }
 
 void Replacement_SetBlockShadowHook(u32 value) {

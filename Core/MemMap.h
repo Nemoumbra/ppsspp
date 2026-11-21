@@ -213,6 +213,7 @@ Opcode ReadUnchecked_Instruction(const u32 _Address);
 u8  ReadOrException_U8(const u32 _Address);
 u16 ReadOrException_U16(const u32 _Address);
 u32 ReadOrException_U32(const u32 _Address);
+u64 ReadOrException_U64(const u32 _Address);
 
 inline u8* GetPointerWriteUnchecked(const u32 address) {
 #ifdef MASKED_PSP_MEMORY
