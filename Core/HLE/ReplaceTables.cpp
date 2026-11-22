@@ -385,6 +385,13 @@ static const std::unordered_multimap<u32, FileDisambiguator> KnownPacFiles = {
 static constexpr u32 MAKE_PAC_SIGNATURE(u8 class_id, u16 instr_id) {
 	return (0x25 << 24) | (class_id << 16) | (instr_id & 0xFF) << 8 | (instr_id >> 8);
 }
+static constexpr u8 PAC_CLASS_ID(u32 signature) {
+	return (signature >> 16) & 0xFF;
+}
+static constexpr u16 PAC_INSTR_ID(u32 signature) {
+	u16 byteswapped = signature & 0xFFFF;
+	return (byteswapped & 0xFF) << 8 | (byteswapped >> 8);
+}
 
 static const char* GetPacInstructionNameFromCtl(u32 ctl, u32 instr_id) {
 	u32 instructions_array_ptr = Memory::ReadOrException_U32(ctl + 8);
@@ -470,6 +477,12 @@ struct PacPosition {
 	u32 get_pc() const {
 		return pac_start + offset;
 	}
+	u8 get_class_id() const {
+		return PAC_CLASS_ID(instruction_signature);
+	}
+	u16 get_instr_id() const {
+		return PAC_INSTR_ID(instruction_signature);
+	}
 };
 
 struct PacExecBlock {
@@ -543,7 +556,7 @@ static void DefaultPacLog(const PacState& state, const PacPosition& pos) {
 	}
 }
 void PacHook(PacState& state, MIPSState& mips) {
-	const auto& top = state.cur_block().get_top();
+	const auto& top = state.top();
 	DefaultPacLog(state, top);
 
 	if (state.blk != 0) {
