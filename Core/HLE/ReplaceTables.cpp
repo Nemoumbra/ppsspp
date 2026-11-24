@@ -465,6 +465,22 @@ static std::optional<std::string_view> FindPacFilename(u32 pac_addr, u32 size) {
 	}
 }
 
+struct PacFlags {
+	u32 ptr;
+	u32 capacity;
+};
+struct PacVars {
+	u32 iptr;
+	u32 icount;
+
+	u32 fptr;
+	u32 fcount;
+};
+struct PacArray {
+	u32 ptr;
+	u32 count;
+	u32 current;
+};
 
 struct PacPosition {
 	u32 pac_start;
@@ -513,6 +529,11 @@ struct PacState {
 
 	u32 blk;
 	PacExecBlock blocks[3];
+
+	PacFlags flags;
+	PacVars globals;
+	PacVars locals;
+	PacArray array;
 
 	const PacExecBlock& get_block(u32 index) const {
 		_assert_msg_(index < 3, "Invalid PAC block requested: %d", index);
@@ -883,13 +904,39 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 	const u32 ctx_id = it->second;
 
 	auto& pac_state = known_contexts[ctx];
-	/// Update the state ///
+	///////////////////////////// Update the state /////////////////////////////
 	pac_state.ctx_addr = ctx;
 	pac_state.ctx_id = ctx_id;
 	pac_state.blk = block_idx;
 
+	const u32 global_struct_ptr = Memory::ReadUnchecked_U32(ctx + 0x4b0);
+	if (!Memory::IsValid4AlignedAddress(global_struct_ptr)) {
+		return false;
+	}
+
+	auto& flags = pac_state.flags;
+	flags.capacity = 0x400; // sorry for hardcoding, xd
+	flags.ptr = Memory::ReadUnchecked_U32(global_struct_ptr + 0x1ac);
+
+	auto& globals = pac_state.globals;
+	globals.icount = 0x200; // sorry for hardcoding, xd
+	globals.fcount = 0x200; // sorry for hardcoding, xd
+	globals.iptr = Memory::ReadUnchecked_U32(global_struct_ptr + 0x1c0);
+	globals.fptr = Memory::ReadUnchecked_U32(global_struct_ptr + 0x1cc);
+
+	auto& array = pac_state.array;
+	array.count = 0x100; // sorry for hardcoding, xd
+	array.ptr = Memory::ReadUnchecked_U32(global_struct_ptr + 0x1dc);
+	array.current = Memory::ReadUnchecked_U32(global_struct_ptr + 0x1e8);
+
+	auto& locals = pac_state.locals;
+	locals.icount = 0x48; // sorry for hardcoding, xd
+	locals.fcount = 0x48; // sorry for hardcoding, xd
+	locals.iptr = Memory::ReadUnchecked_U32(ctx + 0x4bc);
+	locals.fptr = Memory::ReadUnchecked_U32(ctx + 0x4c8);
+
 	auto& cur_block = pac_state.cur_block();
-	const u32 pac_status = Memory::ReadOrException_U32(pac_block_ptr + 0x100);
+	const u32 pac_status = Memory::ReadUnchecked_U32(pac_block_ptr + 0x100);
 	cur_block.status = pac_status;
 
 	const u32 block_stack_start = pac_block_ptr;
@@ -901,7 +948,7 @@ static bool UpdatePacStats(MIPSState *mips, u32 ctx, u32 pac_block_ptr) {
 	top.file_size = pac_size;
 	top.instruction_name = name;
 	top.instruction_signature = MAKE_PAC_SIGNATURE(class_id, instr_id);
-	////////////////////////
+	////////////////////////////////////////////////////////////////////////////
 
 	return true;
 }
